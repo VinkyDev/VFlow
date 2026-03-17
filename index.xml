@@ -1,0 +1,22 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+
+    <!-- 基建层 -->
+    <Include file="Infra\index.xml" />
+
+    <!-- 业务核心 -->
+    <Include file="Core\index.xml" />
+
+    <!-- 业务模块 -->
+    <Script file="Modules\GeneralHomeModule.lua" />
+    <Script file="Modules\GeneralConfigModule.lua" />
+    <Script file="Modules\Style\StyleIconModule.lua" />
+    <Script file="Modules\Style\StyleGlowModule.lua" />
+    <Script file="Modules\Style\StyleDisplayModule.lua" />
+    <Script file="Modules\SkillsModule.lua" />
+    <Script file="Modules\BuffsModule.lua" />
+    <Script file="Modules\BuffBarModule.lua" />
+    <Script file="Modules\CustomMonitorModule.lua" />
+
+    <!-- 主UI入口 -->
+    <Script file="Core\MainUI.lua" />
+</Ui>

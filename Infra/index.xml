@@ -1,0 +1,11 @@
+<Ui>
+    <Script file="Infra\Core.lua"/>
+    <Script file="Infra\State.lua"/>
+    <Script file="Infra\Store.lua"/>
+    <Script file="Infra\Pool.lua"/>
+    <Script file="Infra\PixelPerfect.lua"/>
+    <Script file="Infra\UI.lua"/>
+    <Script file="Infra\LayoutUtils.lua"/>
+    <Script file="Infra\Grid.lua"/>
+    <Script file="Infra\DragFrame.lua"/>
+</Ui>

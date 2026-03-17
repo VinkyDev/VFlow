@@ -1,0 +1,16 @@
+## Interface: 120000,120001
+## Title: |cffff0000VFlow|r
+## Version: 0.1.0
+## Author: Vinky
+## Notes: 强大的冷却管理增强插件
+## LoadSavedVariablesFirst: 1
+## OptionalDeps: LibSharedMedia-3.0
+## DefaultState: Enabled
+## SavedVariables: VFlowDB
+## IconTexture: Interface\AddOns\VFlow\Assets\Logo.png
+
+# 依赖库
+Libs\index.xml
+
+# 入口
+index.xml

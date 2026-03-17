@@ -1,0 +1,18 @@
+<Ui>
+    <Script file="Core\Keybind.lua"/>
+    <Script file="Core\StyleApply.lua"/>
+    <Script file="Core\StyleLayout.lua"/>
+    <Script file="Core\BuffRuntime.lua"/>
+    <Script file="Core\BuffBarRuntime.lua"/>
+    <Script file="Core\BuffScanner.lua"/>
+    <Script file="Core\SkillScanner.lua"/>
+    <Script file="Core\BuffGroups.lua"/>
+    <Script file="Core\TrinketPotionMonitor.lua"/>
+    <Script file="Core\SkillGroups.lua"/>
+    <Script file="Core\CooldownStyle.lua"/>
+    <Script file="Core\EditModeBridge.lua"/>
+    <Script file="Core\CustomMonitorGroups.lua"/>
+    <Script file="Core\CustomMonitorRuntime.lua"/>
+    <Script file="Core\VisibilityControl.lua"/>
+    <Script file="Core\Minimap.lua"/>
+</Ui>
