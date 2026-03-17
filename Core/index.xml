@@ -1,4 +1,5 @@
 <Ui>
+    <Script file="Core\MasqueSupport.lua"/>
     <Script file="Core\Keybind.lua"/>
     <Script file="Core\StyleApply.lua"/>
     <Script file="Core\StyleLayout.lua"/>
