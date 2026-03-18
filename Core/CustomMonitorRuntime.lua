@@ -446,6 +446,8 @@ local function ClearAllHooks()
     end
     wipe(_auraKeyToBars)
     wipe(_barToAuraKey)
+    wipe(_spellToCooldownID)
+    wipe(_cooldownIDToFrame)
 end
 
 -- =========================================================

@@ -13,12 +13,16 @@ local MODULE_KEY = "VFlow.Buffs"
 
 local _groupSpellMap = {}   -- {[spellID] = groupIndex}
 local _groupContainers = {} -- {[groupIndex] = frame}
+local _spellMapDirty = true
 
 -- =========================================================
 -- Spell ID映射构建
 -- =========================================================
 
 local function RebuildSpellMap()
+    if not _spellMapDirty then return _groupSpellMap end
+    _spellMapDirty = false
+
     wipe(_groupSpellMap)
 
     local db = VFlow.getDB(MODULE_KEY)
@@ -470,6 +474,6 @@ VFlow.Store.watch(MODULE_KEY, "BuffGroups", function(key, value)
         return
     end
 
-    -- 其他配置变化：重新构建映射表（不需要脏标记，直接重建）
-    RebuildSpellMap()
+    -- 其他配置变化：标记映射表需要重建
+    _spellMapDirty = true
 end)
