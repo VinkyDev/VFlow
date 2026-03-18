@@ -207,6 +207,40 @@ function StyleApply.ApplyKeybind(button, cfg)
     end
 end
 
+-- 应用遮罩层颜色（hook button实例的刷新函数）
+function StyleApply.ApplyAuraSwipeColor(button, groupCfg)
+    if not button or not groupCfg then return end
+
+    button._vf_buffMaskColor = groupCfg.buffMaskColor
+    button._vf_cooldownMaskColor = groupCfg.cooldownMaskColor
+
+    -- 技能按钮：RefreshSpellCooldownInfo（区分冷却/增益两种颜色）
+    if button.RefreshSpellCooldownInfo and not button._vf_refreshColorHooked then
+        hooksecurefunc(button, "RefreshSpellCooldownInfo", function(self)
+            local cd = self.Cooldown
+            if not cd or not cd.SetSwipeColor then return end
+            local color = self.cooldownUseAuraDisplayTime and self._vf_buffMaskColor or self._vf_cooldownMaskColor
+            if type(color) == "table" then
+                cd:SetSwipeColor(color.r or 1, color.g or 1, color.b or 1, color.a or 1)
+            end
+        end)
+        button._vf_refreshColorHooked = true
+    end
+
+    -- BUFF按钮：RefreshCooldownInfo（只有持续时间遮罩颜色）
+    if button.RefreshCooldownInfo and not button._vf_refreshColorHooked then
+        hooksecurefunc(button, "RefreshCooldownInfo", function(self)
+            local cd = self.Cooldown
+            if not cd or not cd.SetSwipeColor then return end
+            local color = self._vf_cooldownMaskColor
+            if type(color) == "table" then
+                cd:SetSwipeColor(color.r or 1, color.g or 1, color.b or 1, color.a or 1)
+            end
+        end)
+        button._vf_refreshColorHooked = true
+    end
+end
+
 -- 应用完整样式到单个按钮
 function StyleApply.ApplyButtonStyle(button, cfg)
     if not button or not cfg then return end
@@ -245,8 +279,13 @@ function StyleApply.ApplyButtonStyle(button, cfg)
         StyleApply.ApplyKeybind(button, cfg)
     end
 
+    -- 增益遮罩层颜色
+    if cfg.buffMaskColor or cfg.cooldownMaskColor then
+        StyleApply.ApplyAuraSwipeColor(button, cfg)
+    end
+
     -- 应用全局美化设置
-    StyleApply.ApplyBeautify(button)
+    StyleApply.ApplyBeautify(button, cfg)
 end
 
 -- =========================================================
@@ -259,6 +298,14 @@ local function GetBeautifyConfig()
         return VFlow.Store.getModuleRef("VFlow.StyleIcon")
     end
     return nil
+end
+
+local function GetMaskColorForButton(groupCfg)
+    local color = groupCfg and groupCfg.cooldownMaskColor
+    if type(color) ~= "table" then
+        return 1, 1, 1, 1
+    end
+    return color.r or 1, color.g or 1, color.b or 1, color.a or 1
 end
 
 -- 保持比例的纹理坐标计算
@@ -280,14 +327,14 @@ local function GetAspectPreservingTexCoord(frameW, frameH, zoomPadding)
 end
 
 -- 应用图标缩放
-function StyleApply.ApplyIconZoom(button, cfg)
+function StyleApply.ApplyIconZoom(button, beautifyCfg, groupCfg)
     local tex = button.Icon
     if not tex or not tex.SetTexCoord then return end
 
     local w, h = button:GetSize()
     local zoomAmount = 0
-    if cfg and cfg.zoomIcons then
-        zoomAmount = cfg.zoomAmount or 0.08
+    if beautifyCfg and beautifyCfg.zoomIcons then
+        zoomAmount = beautifyCfg.zoomAmount or 0.08
     end
 
     local left, right, top, bottom = GetAspectPreservingTexCoord(w, h, zoomAmount)
@@ -307,12 +354,23 @@ function StyleApply.ApplyIconZoom(button, cfg)
 
         -- 当启用缩放时，使用纯白纹理替代默认的Swipe纹理
         if button.Cooldown.SetSwipeTexture then
-            local useWhiteTexture = cfg and cfg.zoomIcons
+            local useWhiteTexture = beautifyCfg and beautifyCfg.zoomIcons
             local targetTexture = useWhiteTexture and "Interface\\Buttons\\WHITE8x8" or "Interface\\HUD\\UI-HUD-CoolDownManager-Icon-Swipe"
 
             if button._vf_swipeTexture ~= targetTexture then
                 button.Cooldown:SetSwipeTexture(targetTexture)
                 button._vf_swipeTexture = targetTexture
+            end
+        end
+
+        if button.Cooldown.SetSwipeColor then
+            local r, g, b, a = GetMaskColorForButton(groupCfg)
+            if button._vf_swipeR ~= r or button._vf_swipeG ~= g or button._vf_swipeB ~= b or button._vf_swipeA ~= a then
+                button.Cooldown:SetSwipeColor(r, g, b, a)
+                button._vf_swipeR = r
+                button._vf_swipeG = g
+                button._vf_swipeB = b
+                button._vf_swipeA = a
             end
         end
 
@@ -510,13 +568,13 @@ function StyleApply.ApplyVisualHides(button, cfg)
 end
 
 -- 主入口：应用美化
-function StyleApply.ApplyBeautify(button)
-    local cfg = GetBeautifyConfig()
+function StyleApply.ApplyBeautify(button, groupCfg)
+    local beautifyCfg = GetBeautifyConfig()
 
-    StyleApply.ApplyIconZoom(button, cfg)
-    StyleApply.ApplyOverlayHides(button, cfg)
-    StyleApply.ApplyBorder(button, cfg)
-    StyleApply.ApplyVisualHides(button, cfg)
+    StyleApply.ApplyIconZoom(button, beautifyCfg, groupCfg)
+    StyleApply.ApplyOverlayHides(button, beautifyCfg)
+    StyleApply.ApplyBorder(button, beautifyCfg)
+    StyleApply.ApplyVisualHides(button, beautifyCfg)
 end
 
 -- =========================================================

@@ -54,6 +54,7 @@ local function getDefaultGroupConfig()
         spellIDs = {},
         x = 0,
         y = 0,
+        cooldownMaskColor = { r = 0, g = 0, b = 0, a = 0.7 },
         stackFont = {
             size = 12,
             font = "默认",
@@ -350,6 +351,14 @@ local function renderGroupConfig(container, groupConfig, groupName, options)
             Grid.fontGroup("stackFont", "堆叠文字字体"),
             { type = "spacer", height = 10, cols = 24 },
             Grid.fontGroup("cooldownFont", "冷却读秒字体"),
+        },
+
+        -- 遮罩层配置
+        {
+            { type = "spacer", height = 10, cols = 24 },
+            { type = "subtitle", text = "遮罩层配置", cols = 24 },
+            { type = "separator", cols = 24 },
+            { type = "colorPicker", key = "cooldownMaskColor", label = "持续时间遮罩层颜色", hasAlpha = true, cols = 12 },
         }
     )
 
@@ -653,6 +662,14 @@ local function renderTrinketPotionConfig(container, groupConfig)
         -- 字体设置
         {
             Grid.fontGroup("cooldownFont", "冷却读秒字体"),
+        },
+
+        -- 遮罩层配置
+        {
+            { type = "spacer", height = 10, cols = 24 },
+            { type = "subtitle", text = "遮罩层配置", cols = 24 },
+            { type = "separator", cols = 24 },
+            { type = "colorPicker", key = "cooldownMaskColor", label = "持续时间遮罩层颜色", hasAlpha = true, cols = 12 },
         }
     )
 

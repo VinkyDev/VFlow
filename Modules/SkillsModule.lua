@@ -85,6 +85,8 @@ local function getDefaultGroupConfig()
             offsetX = 0,
             offsetY = 0,
         },
+        cooldownMaskColor = { r = 0, g = 0, b = 0, a = 0.7 },
+        buffMaskColor = { r = 1, g = 0.95, b = 0.57, a = 0.7 },
     }
 end
 
@@ -366,6 +368,14 @@ local function renderGroupConfig(container, groupConfig, groupName, options)
             Grid.fontGroup("cooldownFont", "冷却文本样式"),
             { type = "spacer", height = 10, cols = 24 },
             Grid.fontGroup("keybindFont", "键位文本样式"),
+        },
+
+        {
+            { type = "spacer", height = 10, cols = 24 },
+            { type = "subtitle", text = "遮罩层配置", cols = 24 },
+            { type = "separator", cols = 24 },
+            { type = "colorPicker", key = "cooldownMaskColor", label = "常规冷却遮罩层颜色", hasAlpha = true, cols = 12 },
+            { type = "colorPicker", key = "buffMaskColor", label = "增益遮罩层颜色", hasAlpha = true, cols = 12 },
         }
     )
 
