@@ -87,12 +87,7 @@ local function getTrinketPotionConfig()
     config.autoTrinkets = true
     config.itemIDs = {}
     config.itemDurations = {}
-
-    -- 使用常量初始化默认药水
-    for itemID, duration in pairs(DEFAULT_POTIONS) do
-        config.itemIDs[itemID] = true
-        config.itemDurations[itemID] = duration
-    end
+    config.defaultPotionsInitialized = false
 
     return config
 end
@@ -104,6 +99,32 @@ local defaults = {
 }
 
 local db = VFlow.getDB(MODULE_KEY, defaults)
+
+local function ensureDefaultPotionsInitialized()
+    local config = db.trinketPotion
+    if config.defaultPotionsInitialized then
+        return
+    end
+
+    config.itemIDs = config.itemIDs or {}
+    config.itemDurations = config.itemDurations or {}
+
+    for itemID, duration in pairs(DEFAULT_POTIONS) do
+        if config.itemIDs[itemID] == nil then
+            config.itemIDs[itemID] = true
+        end
+        if config.itemDurations[itemID] == nil then
+            config.itemDurations[itemID] = duration
+        end
+    end
+
+    config.defaultPotionsInitialized = true
+    VFlow.Store.set(MODULE_KEY, "trinketPotion.itemIDs", config.itemIDs)
+    VFlow.Store.set(MODULE_KEY, "trinketPotion.itemDurations", config.itemDurations)
+    VFlow.Store.set(MODULE_KEY, "trinketPotion.defaultPotionsInitialized", true)
+end
+
+ensureDefaultPotionsInitialized()
 
 -- =========================================================
 -- SECTION 4: 数据源函数
