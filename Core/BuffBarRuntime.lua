@@ -1,6 +1,8 @@
 local VFlow = _G.VFlow
 if not VFlow then return end
 
+local Profiler = VFlow.Profiler
+
 local BuffBarRuntime = {}
 VFlow.BuffBarRuntime = BuffBarRuntime
 
@@ -14,6 +16,12 @@ local handlers = nil
 local cachedFrames = {}
 local cachedLayoutIndex = {}
 local cachedCount = 0
+local cachedChildCount = 0
+
+-- viewer/cfg 缓存（避免每帧调 getViewer/getConfig）
+local cachedViewer = nil
+local cachedCfg = nil
+local needRefetchRefs = true
 
 local BURST_TICKS = 5
 local BURST_THROTTLE = 0.033
@@ -52,6 +60,7 @@ end
 
 function BuffBarRuntime.markDirty()
     dirty = true
+    needRefetchRefs = true
     burst = BURST_TICKS
     nextUpdate = 0
 end
@@ -65,6 +74,9 @@ function BuffBarRuntime.disable()
     burst = 0
     nextUpdate = 0
     cachedCount = 0
+    cachedViewer = nil
+    cachedCfg = nil
+    needRefetchRefs = true
     wipe(cachedFrames)
     wipe(cachedLayoutIndex)
 end
@@ -72,46 +84,70 @@ end
 function BuffBarRuntime.enable()
     if enabled then return end
     enabled = true
+    needRefetchRefs = true
     frame:SetScript("OnUpdate", function()
+        local _pt = Profiler.start("BuffBarRT:OnUpdate")
         if not handlers then
             BuffBarRuntime.disable()
+            Profiler.stop(_pt)
             return
         end
 
-        local viewer = handlers.getViewer and handlers.getViewer() or nil
-        local cfg = handlers.getConfig and handlers.getConfig() or nil
+        -- 只在 dirty 或首次时重新获取 viewer/cfg 引用
+        if needRefetchRefs then
+            cachedViewer = handlers.getViewer and handlers.getViewer() or nil
+            cachedCfg = handlers.getConfig and handlers.getConfig() or nil
+            needRefetchRefs = false
+        end
+
+        local viewer = cachedViewer
+        local cfg = cachedCfg
         if not viewer or not cfg then
             BuffBarRuntime.disable()
+            Profiler.stop(_pt)
             return
         end
-        if not viewer:IsShown() then return end
-        if viewer._vf_refreshing then return end
+        if not viewer:IsShown() then Profiler.stop(_pt) return end
+        if viewer._vf_refreshing then Profiler.stop(_pt) return end
 
         -- 只在动态布局时运行
         if not cfg.dynamicLayout then
             BuffBarRuntime.disable()
+            Profiler.stop(_pt)
             return
         end
 
         local now = GetTime()
         local throttle = (dirty or burst > 0) and BURST_THROTTLE or WATCHDOG_THROTTLE
-        if now < nextUpdate then return end
+        if now < nextUpdate then Profiler.stop(_pt) return end
         nextUpdate = now + throttle
 
-        local visible = handlers.collectVisible and handlers.collectVisible(viewer) or {}
+        -- 快速路径：watchdog 阶段只检查 children 数量
+        if not dirty and burst == 0 then
+            local cc = select('#', viewer:GetChildren())
+            if cc == cachedChildCount then
+                Profiler.stop(_pt)
+                return
+            end
+        end
+
+        local visible = handlers.collectVisible and handlers.collectVisible(viewer, dirty) or {}
         local changed = dirty or hasVisibleChanged(visible)
         if changed then
             if handlers.refresh then
                 handlers.refresh(viewer, cfg)
             end
             cacheVisible(visible)
+            cachedChildCount = select('#', viewer:GetChildren())
             dirty = false
             burst = BURST_TICKS
+            Profiler.stop(_pt)
             return
         end
 
         if burst > 0 then
             burst = burst - 1
         end
+        Profiler.stop(_pt)
     end)
 end

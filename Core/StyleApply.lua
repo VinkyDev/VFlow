@@ -14,6 +14,7 @@ local StyleApply = {}
 VFlow.StyleApply = StyleApply
 
 local abs = math.abs
+local Profiler = VFlow.Profiler
 
 -- =========================================================
 -- 工具函数
@@ -110,6 +111,7 @@ end
 -- =========================================================
 
 function StyleApply.ApplyIconSize(button, w, h)
+    Profiler.count("SA:ApplyIconSize")
     if button._vf_w == w and button._vf_h == h then return end
     button:SetSize(w, h)
     button._vf_w = w
@@ -117,7 +119,8 @@ function StyleApply.ApplyIconSize(button, w, h)
 end
 
 function StyleApply.ApplyFontStyle(fs, cfg, cachePrefix)
-    if not fs or not cfg then return end
+    local _pt = Profiler.start("SA:ApplyFontStyle")
+    if not fs or not cfg then Profiler.stop(_pt) return end
     local prefix = cachePrefix or "_vf"
 
     local size = cfg.size or 14
@@ -177,6 +180,7 @@ function StyleApply.ApplyFontStyle(fs, cfg, cachePrefix)
         fs:SetPoint(position, parent, position, ox, oy)
         fs[posKey] = position; fs[oxKey] = ox; fs[oyKey] = oy
     end
+    Profiler.stop(_pt)
 end
 
 -- =========================================================
@@ -184,11 +188,13 @@ end
 -- =========================================================
 
 function StyleApply.ApplyKeybind(button, cfg)
-    if not button or not cfg then return end
+    local _pt = Profiler.start("SA:ApplyKeybind")
+    if not button or not cfg then Profiler.stop(_pt) return end
 
     local show = cfg.showKeybind
     if not show then
         if button._vf_keybindFrame then button._vf_keybindFrame:Hide() end
+        Profiler.stop(_pt)
         return
     end
 
@@ -225,6 +231,7 @@ function StyleApply.ApplyKeybind(button, cfg)
     else
         button._vf_keybindFrame:Hide()
     end
+    Profiler.stop(_pt)
 end
 
 -- =========================================================
@@ -232,7 +239,8 @@ end
 -- =========================================================
 
 function StyleApply.ApplyAuraSwipeColor(button, groupCfg)
-    if not button or not groupCfg then return end
+    local _pt = Profiler.start("SA:ApplyAuraSwipeColor")
+    if not button or not groupCfg then Profiler.stop(_pt) return end
 
     button._vf_buffMaskColor = groupCfg.buffMaskColor
     button._vf_cooldownMaskColor = groupCfg.cooldownMaskColor
@@ -260,6 +268,7 @@ function StyleApply.ApplyAuraSwipeColor(button, groupCfg)
         end)
         button._vf_refreshColorHooked = true
     end
+    Profiler.stop(_pt)
 end
 
 -- =========================================================
@@ -267,7 +276,8 @@ end
 -- =========================================================
 
 function StyleApply.ApplyButtonStyle(button, cfg)
-    if not button or not cfg then return end
+    local _pt = Profiler.start("SA:ApplyButtonStyle")
+    if not button or not cfg then Profiler.stop(_pt) return end
 
     if cfg.stackFont then
         local stackFS = StyleApply.GetStackFontString(button)
@@ -304,11 +314,11 @@ function StyleApply.ApplyButtonStyle(button, cfg)
 
     -- 全局美化
     StyleApply.ApplyBeautify(button, cfg)
+    Profiler.stop(_pt)
 end
 
 -- =========================================================
--- 美化功能（全部读 styleCache，不再传 cfg 参数）
--- =========================================================
+-- 美化功能
 
 local function GetAspectPreservingTexCoord(frameW, frameH, zoomPadding)
     if not frameH or frameH <= 0 then return 0, 1, 0, 1 end
@@ -544,15 +554,17 @@ end
 -- =========================================================
 
 function StyleApply.ApplyBeautify(button, groupCfg)
+    local _pt = Profiler.start("SA:ApplyBeautify")
     RefreshStyleCache()
 
-    if button._vf_styleVer == styleCacheVersion then return end
+    if button._vf_styleVer == styleCacheVersion then Profiler.stop(_pt) return end
     button._vf_styleVer = styleCacheVersion
 
     ApplyIconZoom(button, groupCfg)
     ApplyOverlayHides(button)
     ApplyBorder(button)
     ApplyVisualHides(button)
+    Profiler.stop(_pt)
 end
 
 -- =========================================================

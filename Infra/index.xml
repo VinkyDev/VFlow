@@ -8,4 +8,5 @@
     <Script file="Infra\LayoutUtils.lua"/>
     <Script file="Infra\Grid.lua"/>
     <Script file="Infra\DragFrame.lua"/>
+    <Script file="Infra\Profiler.lua"/>
 </Ui>

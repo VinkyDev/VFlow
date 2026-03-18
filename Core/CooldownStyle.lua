@@ -13,23 +13,47 @@ local MasqueSupport = VFlow.MasqueSupport
 local PP = VFlow.PixelPerfect
 local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
 local abs = math.abs
+local Profiler = VFlow.Profiler
 local RequestBuffRefresh
 local RequestBuffBarRefresh
 local IsViewerReady
 local MAX_BUFF_READY_RETRIES = 20
 local MAX_BUFFBAR_READY_RETRIES = 20
 
+-- =========================================================
+-- 按钮样式版本号（配置变更时递增，用于跳过无变化的 ApplyButtonStyle）
+-- =========================================================
+local _buttonStyleVersion = 0
+
+local function BumpButtonStyleVersion()
+    _buttonStyleVersion = _buttonStyleVersion + 1
+    VFlow._buttonStyleVersion = _buttonStyleVersion
+end
+
+-- =========================================================
+-- 模块级 DB 引用缓存（避免热路径上反复 Store.getModuleRef）
+-- =========================================================
+local _cachedBuffsDB
+local _cachedBuffBarDB
+
+local function InvalidateDBCache()
+    local store = VFlow and VFlow.Store
+    if not store or not store.getModuleRef then return end
+    _cachedBuffsDB  = store.getModuleRef("VFlow.Buffs")
+    _cachedBuffBarDB = store.getModuleRef("VFlow.BuffBar")
+end
+
 local function GetBuffViewerAndConfig()
+    Profiler.count("CDS:GetBuffViewerAndConfig")
     local viewer = _G.BuffIconCooldownViewer
-    local db = VFlow and VFlow.Store and VFlow.Store.getModuleRef and VFlow.Store.getModuleRef("VFlow.Buffs")
-    local cfg = db and db.buffMonitor
+    local cfg = _cachedBuffsDB and _cachedBuffsDB.buffMonitor
     return viewer, cfg
 end
 
 local function GetBuffBarViewerAndConfig()
+    Profiler.count("CDS:GetBuffBarViewerAndConfig")
     local viewer = _G.BuffBarCooldownViewer
-    local cfg = VFlow and VFlow.Store and VFlow.Store.getModuleRef and VFlow.Store.getModuleRef("VFlow.BuffBar")
-    return viewer, cfg
+    return viewer, _cachedBuffBarDB
 end
 
 local function ResolveStatusBarTexture(textureName)
@@ -54,6 +78,7 @@ local function ResolveBuffBarWidth(cfg)
 end
 
 local function CollectBuffBarFrames(viewer)
+    Profiler.count("CDS:CollectBuffBarFrames")
     local frames = {}
     if not viewer then
         return frames
@@ -321,9 +346,10 @@ local function ApplyBuffBarFrameStyle(frame, cfg, frameWidth, frameHeight)
 end
 
 local function RefreshBuffBarViewer(viewer, cfg)
-    if not viewer or not cfg then return false end
-    if viewer._vf_refreshing then return false end
-    if not IsViewerReady(viewer) then return false end
+    local _pt = Profiler.start("CDS:RefreshBuffBarViewer")
+    if not viewer or not cfg then Profiler.stop(_pt) return false end
+    if viewer._vf_refreshing then Profiler.stop(_pt) return false end
+    if not IsViewerReady(viewer) then Profiler.stop(_pt) return false end
     viewer._vf_refreshing = true
 
     local frames = CollectBuffBarFrames(viewer)
@@ -368,6 +394,7 @@ local function RefreshBuffBarViewer(viewer, cfg)
     -- 静态布局时不干预位置，让系统默认处理
 
     viewer._vf_refreshing = false
+    Profiler.stop(_pt)
     return true
 end
 
@@ -376,8 +403,9 @@ end
 -- =========================================================
 
 local function RefreshSkillViewer(viewer, cfg)
-    if not viewer or not cfg then return end
-    if viewer._vf_refreshing then return end
+    local _pt = Profiler.start("CDS:RefreshSkillViewer")
+    if not viewer or not cfg then Profiler.stop(_pt) return end
+    if viewer._vf_refreshing then Profiler.stop(_pt) return end
     viewer._vf_refreshing = true
 
     local allIcons = StyleLayout.CollectIcons(viewer)
@@ -462,7 +490,10 @@ local function RefreshSkillViewer(viewer, cfg)
             end
 
             StyleLayout.SetPointCached(button, "TOPLEFT", viewer, "TOPLEFT", x, y)
-            StyleApply.ApplyButtonStyle(button, cfg)
+            if button._vf_btnStyleVer ~= _buttonStyleVersion then
+                StyleApply.ApplyButtonStyle(button, cfg)
+                button._vf_btnStyleVer = _buttonStyleVersion
+            end
 
             if MasqueSupport and MasqueSupport:IsActive() then
                 MasqueSupport:RegisterButton(button, button.Icon)
@@ -480,6 +511,7 @@ local function RefreshSkillViewer(viewer, cfg)
     end
 
     viewer._vf_refreshing = false
+    Profiler.stop(_pt)
 end
 
 -- =========================================================
@@ -533,6 +565,7 @@ local function ComputeSlotOffset(slot, totalSlots, isH, w, h, spacingX, spacingY
 end
 
 local function ProvisionalPlaceBuffFrame(frame, viewer, cfg)
+    Profiler.count("CDS:ProvisionalPlaceBuffFrame")
     if not frame or not viewer or not cfg then return end
     if not frame:IsShown() then return end
     if not (frame.Icon and frame.Icon:GetTexture()) then return end
@@ -594,7 +627,10 @@ local function ProvisionalPlaceBuffFrame(frame, viewer, cfg)
 
     -- 1. 先应用样式（帧还在原parent下）
     StyleApply.ApplyIconSize(frame, w, h)
-    StyleApply.ApplyButtonStyle(frame, cfg)
+    if frame._vf_btnStyleVer ~= _buttonStyleVersion then
+        StyleApply.ApplyButtonStyle(frame, cfg)
+        frame._vf_btnStyleVer = _buttonStyleVersion
+    end
     frame._vf_slot = slot
 
     -- 2. 再改父级
@@ -607,9 +643,10 @@ local function ProvisionalPlaceBuffFrame(frame, viewer, cfg)
 end
 
 local function RefreshBuffViewer(viewer, cfg)
-    if not viewer or not cfg then return false end
-    if viewer._vf_refreshing then return false end
-    if not IsViewerReady(viewer) then return false end
+    local _pt = Profiler.start("CDS:RefreshBuffViewer")
+    if not viewer or not cfg then Profiler.stop(_pt) return false end
+    if viewer._vf_refreshing then Profiler.stop(_pt) return false end
+    if not IsViewerReady(viewer) then Profiler.stop(_pt) return false end
     viewer._vf_refreshing = true
 
     local allIcons = StyleLayout.CollectIcons(viewer)
@@ -708,7 +745,11 @@ local function RefreshBuffViewer(viewer, cfg)
 
         -- 1. 先应用样式（帧还在原parent下，避免样式操作触发UIParent下的重渲染）
         StyleApply.ApplyIconSize(button, w, h)
-        StyleApply.ApplyButtonStyle(button, cfg)
+        -- 版本号跳过：按钮已在当前配置版本下完成样式化则跳过
+        if button._vf_btnStyleVer ~= _buttonStyleVersion then
+            StyleApply.ApplyButtonStyle(button, cfg)
+            button._vf_btnStyleVer = _buttonStyleVersion
+        end
 
         if MasqueSupport and MasqueSupport:IsActive() then
             MasqueSupport:RegisterButton(button, button.Icon)
@@ -737,6 +778,7 @@ local function RefreshBuffViewer(viewer, cfg)
         end)
     end
 
+    Profiler.stop(_pt)
     return true
 end
 
@@ -748,14 +790,17 @@ local hooked = false
 local refreshPending = false
 local SetupHooks
 local buffRefreshPending = false
-local buffRefreshFollowupPending = false
 local buffBarRefreshPending = false
-local buffBarRefreshFollowupPending = false
 local DoBuffRefresh
 local DoBuffBarRefresh
 
 local function SetupBuffRuntimeHandlers()
     if not BuffRuntime then return end
+
+    -- CollectIcons 缓存：只在 children 数量变化或 dirty 时重新收集
+    local iconCache = {}
+    local iconCacheChildCount = -1
+
     BuffRuntime.setHandlers({
         getViewer = function()
             local viewer = GetBuffViewerAndConfig()
@@ -765,10 +810,17 @@ local function SetupBuffRuntimeHandlers()
             local _, cfg = GetBuffViewerAndConfig()
             return cfg
         end,
-        collectVisible = function(viewer)
-            return StyleLayout.FilterVisible(StyleLayout.CollectIcons(viewer))
+        collectVisible = function(viewer, isDirty)
+            local cc = select('#', viewer:GetChildren())
+            if cc ~= iconCacheChildCount or isDirty then
+                iconCache = StyleLayout.CollectIcons(viewer)
+                iconCacheChildCount = cc
+            end
+            return StyleLayout.FilterVisible(iconCache)
         end,
         refresh = function(viewer, cfg)
+            -- refresh 后强制刷新缓存（布局可能改变了 children）
+            iconCacheChildCount = -1
             RefreshBuffViewer(viewer, cfg)
         end,
     })
@@ -776,6 +828,11 @@ end
 
 local function SetupBuffBarRuntimeHandlers()
     if not BuffBarRuntime then return end
+
+    -- CollectBuffBarFrames 缓存
+    local barCache = {}
+    local barCacheChildCount = -1
+
     BuffBarRuntime.setHandlers({
         getViewer = function()
             local viewer = GetBuffBarViewerAndConfig()
@@ -785,23 +842,29 @@ local function SetupBuffBarRuntimeHandlers()
             local _, cfg = GetBuffBarViewerAndConfig()
             return cfg
         end,
-        collectVisible = function(viewer)
-            local frames = CollectBuffBarFrames(viewer)
+        collectVisible = function(viewer, isDirty)
+            local cc = select('#', viewer:GetChildren())
+            if cc ~= barCacheChildCount or isDirty then
+                barCache = CollectBuffBarFrames(viewer)
+                barCacheChildCount = cc
+            end
             local visible = {}
-            for i = 1, #frames do
-                if frames[i]:IsShown() then
-                    visible[#visible + 1] = frames[i]
+            for i = 1, #barCache do
+                if barCache[i]:IsShown() then
+                    visible[#visible + 1] = barCache[i]
                 end
             end
             return visible
         end,
         refresh = function(viewer, cfg)
+            barCacheChildCount = -1
             RefreshBuffBarViewer(viewer, cfg)
         end,
     })
 end
 
 DoBuffRefresh = function(attempt)
+    Profiler.count("CDS:DoBuffRefresh")
     local viewer, cfg = GetBuffViewerAndConfig()
     if not viewer or not cfg then
         if BuffRuntime then BuffRuntime.disable() end
@@ -832,21 +895,18 @@ DoBuffRefresh = function(attempt)
 end
 
 RequestBuffRefresh = function()
+    Profiler.count("CDS:RequestBuffRefresh")
     if buffRefreshPending then return end
     buffRefreshPending = true
     C_Timer.After(0, function()
         buffRefreshPending = false
         DoBuffRefresh(0)
     end)
-    if buffRefreshFollowupPending then return end
-    buffRefreshFollowupPending = true
-    C_Timer.After(0.06, function()
-        buffRefreshFollowupPending = false
-        DoBuffRefresh(0)
-    end)
+    -- followup 由 BuffRuntime.enable() 的 watchdog 机制保证，不再双重调度
 end
 
 DoBuffBarRefresh = function(attempt)
+    Profiler.count("CDS:DoBuffBarRefresh")
     local viewer, cfg = GetBuffBarViewerAndConfig()
     if not viewer or not cfg then
         if BuffBarRuntime then BuffBarRuntime.disable() end
@@ -881,20 +941,14 @@ DoBuffBarRefresh = function(attempt)
 end
 
 RequestBuffBarRefresh = function()
+    Profiler.count("CDS:RequestBuffBarRefresh")
     if buffBarRefreshPending then return end
     buffBarRefreshPending = true
 
     -- 同步执行，避免闪烁
     DoBuffBarRefresh(0)
     buffBarRefreshPending = false
-
-    -- 延迟跟进刷新
-    if buffBarRefreshFollowupPending then return end
-    buffBarRefreshFollowupPending = true
-    C_Timer.After(0.06, function()
-        buffBarRefreshFollowupPending = false
-        DoBuffBarRefresh(0)
-    end)
+    -- followup 由 BuffBarRuntime.enable() 的 watchdog 机制保证
 end
 
 local function DoRefresh()
@@ -951,9 +1005,20 @@ SetupHooks = function()
         DoBuffBarRefresh(0)
     end
 
+    -- 帧末尾合并刷新：同一帧内多次 provisionalPlaceAndQueue 只做一次 DoBuffRefresh
+    local _pendingSyncRefresh = false
+    local _syncRefreshFrame = CreateFrame("Frame")
+    _syncRefreshFrame:Hide()
+    _syncRefreshFrame:SetScript("OnUpdate", function(self)
+        self:Hide()
+        _pendingSyncRefresh = false
+        DoBuffRefresh(0)
+    end)
+
     -- OnCooldownIDSet时：先ApplyStyle建立缓存，再ProvisionalPlace定位
     -- 确保样式初始化在定位之前完成，首次触发不会因样式操作触发重渲染
     local provisionalPlaceAndQueue = function(frame)
+        Profiler.count("CDS:provisionalPlaceAndQueue")
         if not frame then return end
         local viewer, cfg = GetBuffViewerAndConfig()
         if not viewer or not cfg then return end
@@ -964,10 +1029,13 @@ SetupHooks = function()
         end
         StyleApply.ApplyIconSize(frame, cfg.width or 40, cfg.height or 40)
         StyleApply.ApplyButtonStyle(frame, cfg)
+        frame._vf_btnStyleVer = _buttonStyleVersion
         ProvisionalPlaceBuffFrame(frame, viewer, cfg)
-        -- 同步刷新，和之前的buffImmediateHandler一致，防止暴雪在异步刷新前移动帧
-        DoBuffRefresh(0)
-        RequestBuffRefresh()
+        -- 合并同一帧内的多次刷新：OnUpdate 在当前帧末尾触发一次 DoBuffRefresh
+        if not _pendingSyncRefresh then
+            _pendingSyncRefresh = true
+            _syncRefreshFrame:Show()
+        end
     end
 
     local function enforceScaleOnViewer(viewer)
@@ -1125,6 +1193,8 @@ end
 -- =========================================================
 
 VFlow.on("PLAYER_ENTERING_WORLD", "VFlow.SkillStyle", function()
+    InvalidateDBCache()
+    BumpButtonStyleVersion()
     SetupHooks()
     RequestRefresh(0.5)
 end)
@@ -1135,19 +1205,24 @@ end)
 
 -- 监听技能模块配置变更
 VFlow.Store.watch("VFlow.Skills", "CooldownStyle_Skills", function(key, value)
+    BumpButtonStyleVersion()
     RequestRefresh(0)
 end)
 
 -- 监听BUFF模块配置变更
 VFlow.Store.watch("VFlow.Buffs", "CooldownStyle_Buffs", function(key, value)
+    InvalidateDBCache()
     -- x/y坐标变化不需要触发样式引擎刷新
     if key:find("%.x$") or key:find("%.y$") then
         return
     end
+    BumpButtonStyleVersion()
     RequestRefresh(0)
 end)
 
 VFlow.Store.watch("VFlow.BuffBar", "CooldownStyle_BuffBar", function(key, value)
+    InvalidateDBCache()
+    BumpButtonStyleVersion()
     RequestBuffBarRefresh()
 end)
 
@@ -1161,5 +1236,6 @@ end)
 
 -- 监听美化模块配置变更
 VFlow.Store.watch("VFlow.StyleIcon", "CooldownStyle_StyleIcon", function(key, value)
+    BumpButtonStyleVersion()
     RequestRefresh(0)
 end)

@@ -6,6 +6,7 @@ local VFlow = _G.VFlow
 if not VFlow then return end
 
 local MODULE_KEY = "VFlow.Skills"
+local Profiler = VFlow.Profiler
 
 -- =========================================================
 -- 模块状态
@@ -20,7 +21,8 @@ local _spellMapDirty = true -- 脏标志：只在配置变更时重建
 -- =========================================================
 
 local function RebuildSpellMap()
-    if not _spellMapDirty then return _groupSpellMap end
+    local _pt = Profiler.start("SG:RebuildSpellMap")
+    if not _spellMapDirty then Profiler.stop(_pt) return _groupSpellMap end
     _spellMapDirty = false
 
     wipe(_groupSpellMap)
@@ -62,6 +64,7 @@ local function RebuildSpellMap()
         end
     end
 
+    Profiler.stop(_pt)
     return _groupSpellMap
 end
 
@@ -113,6 +116,7 @@ local function GetGroupIdxForIcon(icon, spellMap)
 end
 
 local function ClassifyIcons(allIcons)
+    Profiler.count("SG:ClassifyIcons")
     local spellMap = RebuildSpellMap()
     local mainVisible = {}
     local groupBuckets = {}

@@ -14,6 +14,7 @@ if not VFlow then return end
 
 local MODULE_KEY = "VFlow.CustomMonitor"
 local PP = VFlow.PixelPerfect  -- 完美像素工具
+local Profiler = VFlow.Profiler
 
 -- =========================================================
 -- SECTION 1: 常量
@@ -40,6 +41,7 @@ local RING_TEXTURE_FMT = "Interface\\AddOns\\VFlow\\Assets\\Ring\\Ring_%spx.tga"
 
 -- 判断是否应该显示条
 local function ShouldShowBar(cfg, isBuffActive)
+    Profiler.count("CMR:ShouldShowBar")
     local mode = cfg.visibilityMode or "hide"
     local conditionMet = false
 
@@ -1473,7 +1475,9 @@ _updateFrame:SetScript("OnUpdate", function(_, dt)
     _elapsed = _elapsed + dt
     if _elapsed < UPDATE_INTERVAL then return end
     _elapsed = 0
+    local _pt = Profiler.start("CMR:UpdateAllBars")
     UpdateAllBars()
+    Profiler.stop(_pt)
 end)
 _updateFrame:Hide()
 
