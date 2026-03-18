@@ -101,6 +101,30 @@ function PixelPerfect.CreateBorder(frame, thickness, color, inset)
     color = color or { r = 0, g = 0, b = 0, a = 1 }
     if inset == nil then inset = true end
 
+    -- 对齐 TOPLEFT 角落到像素网格（仅对单锚点帧有效）
+    -- CENTER 对齐无法保证 TOPLEFT 在像素边界（帧尺寸为奇数像素时偏移半像素），
+    -- 导致边框纹理跨两个物理像素而变粗。
+    -- 多锚点帧（SetAllPoints）跳过：其位置由父帧决定，不能破坏多锚点布局。
+    if frame.GetNumPoints and frame:GetNumPoints() == 1 then
+        local frameLeft = frame:GetLeft()
+        local frameTop  = frame:GetTop()
+        if frameLeft and frameTop then
+            local onePixel = GetOnePixelSize(frame)
+            local snappedLeft = math.floor(frameLeft / onePixel + 0.5) * onePixel
+            local snappedTop  = math.floor(frameTop  / onePixel + 0.5) * onePixel
+            local dx = snappedLeft - frameLeft
+            local dy = snappedTop  - frameTop
+            if math.abs(dx) > 1e-5 or math.abs(dy) > 1e-5 then
+                local pt, rel, relPt, x, y = frame:GetPoint(1)
+                if pt then
+                    frame:ClearAllPoints()
+                    frame:SetPoint(pt, rel or UIParent, relPt or pt,
+                                   (x or 0) + dx, (y or 0) + dy)
+                end
+            end
+        end
+    end
+
     -- 清理旧边框
     if frame._ppBorders then
         for _, border in ipairs(frame._ppBorders) do
