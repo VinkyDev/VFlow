@@ -1,5 +1,8 @@
 -- =========================================================
 -- VFlow StyleApply - 样式应用
+--   1. 全局 styleCache flat table，配置变更时整体刷新一次
+--   2. 帧级 styleCacheVersion 对比，决定是否需要 visual update
+--   3. hook 回调直接读 styleCache
 -- =========================================================
 
 local VFlow = _G.VFlow
@@ -12,6 +15,10 @@ VFlow.StyleApply = StyleApply
 
 local abs = math.abs
 
+-- =========================================================
+-- 工具函数
+-- =========================================================
+
 local function SafeEquals(v, expected)
     if type(v) == "number" and issecretvalue and issecretvalue(v) then
         return false
@@ -20,9 +27,7 @@ local function SafeEquals(v, expected)
 end
 
 local function SafeSetShadow(fs, enabled)
-    if not fs or not fs.SetShadowColor or not fs.SetShadowOffset then
-        return
-    end
+    if not fs or not fs.SetShadowColor or not fs.SetShadowOffset then return end
     if enabled then
         pcall(fs.SetShadowColor, fs, 0, 0, 0, 1)
         pcall(fs.SetShadowOffset, fs, 1, -1)
@@ -33,10 +38,48 @@ local function SafeSetShadow(fs, enabled)
 end
 
 -- =========================================================
--- 工具函数
+-- 全局样式缓存
 -- =========================================================
 
--- 获取冷却读秒FontString
+local styleCache = {}
+local styleCacheVersion = 0
+local lastRefreshedVersion = -1
+
+local DEFAULT_SWIPE_TEXTURE = "Interface\\HUD\\UI-HUD-CoolDownManager-Icon-Swipe"
+local WHITE8X8 = "Interface\\Buttons\\WHITE8x8"
+local BLIZZARD_ICON_OVERLAY_ATLAS = "UI-HUD-CoolDownManager-IconOverlay"
+local BLIZZARD_ICON_MASK_ATLAS = "UI-HUD-CoolDownManager-Mask"
+local BLIZZARD_ICON_OVERLAY_TEXTURE_FILE_ID = 6707800
+
+local function RefreshStyleCache()
+    if lastRefreshedVersion == styleCacheVersion then return end
+    lastRefreshedVersion = styleCacheVersion
+
+    local db = VFlow.Store and VFlow.Store.getModuleRef and VFlow.Store.getModuleRef("VFlow.StyleIcon")
+    if not db then return end
+
+    styleCache.zoomIcons              = db.zoomIcons or false
+    styleCache.zoomAmount             = db.zoomAmount or 0.08
+    styleCache.hideIconOverlay        = db.hideIconOverlay or false
+    styleCache.hideIconOverlayTexture = db.hideIconOverlayTexture or false
+    styleCache.hideDebuffBorder       = db.hideDebuffBorder or false
+    styleCache.hidePandemicIndicator  = db.hidePandemicIndicator or false
+    styleCache.hideCooldownBling      = db.hideCooldownBling or false
+    styleCache.borderFile             = db.borderFile
+    styleCache.borderSize             = db.borderSize or 1
+    styleCache.borderOffsetX          = db.borderOffsetX or 0
+    styleCache.borderOffsetY          = db.borderOffsetY or 0
+    styleCache.borderColor            = db.borderColor
+end
+
+function StyleApply.InvalidateStyleCache()
+    styleCacheVersion = styleCacheVersion + 1
+end
+
+-- =========================================================
+-- FontString 查找
+-- =========================================================
+
 function StyleApply.GetCooldownFontString(button)
     if not button or not button.Cooldown then return nil end
     local cd = button.Cooldown
@@ -52,7 +95,6 @@ function StyleApply.GetCooldownFontString(button)
     return nil
 end
 
--- 获取堆叠数FontString
 function StyleApply.GetStackFontString(button)
     if button.Applications and button.Applications.Applications then
         return button.Applications.Applications
@@ -64,10 +106,9 @@ function StyleApply.GetStackFontString(button)
 end
 
 -- =========================================================
--- 样式应用函数（幂等，缓存上次值）
+-- 幂等样式应用
 -- =========================================================
 
--- 应用图标尺寸
 function StyleApply.ApplyIconSize(button, w, h)
     if button._vf_w == w and button._vf_h == h then return end
     button:SetSize(w, h)
@@ -75,13 +116,10 @@ function StyleApply.ApplyIconSize(button, w, h)
     button._vf_h = h
 end
 
--- 应用字体样式到FontString
 function StyleApply.ApplyFontStyle(fs, cfg, cachePrefix)
     if not fs or not cfg then return end
-
     local prefix = cachePrefix or "_vf"
 
-    -- 字体与字号
     local size = cfg.size or 14
     local fontToken = cfg.font
     local outline = cfg.outline or "OUTLINE"
@@ -94,8 +132,8 @@ function StyleApply.ApplyFontStyle(fs, cfg, cachePrefix)
     local outlineKey = prefix .. "_outline"
 
     if fs[sizeKey] ~= size or fs[fontKey] ~= fontToken or fs[outlineKey] ~= outline then
-        local currentFont, _, flags = fs:GetFont()
-        local fontPath = nil
+        local currentFont = fs:GetFont()
+        local fontPath
         if type(fontToken) == "string" and fontToken ~= "" then
             if VFlow.UI and VFlow.UI.resolveFontPath then
                 fontPath = VFlow.UI.resolveFontPath(fontToken)
@@ -103,103 +141,85 @@ function StyleApply.ApplyFontStyle(fs, cfg, cachePrefix)
                 fontPath = fontToken
             end
         end
-
-        local ok = false
-        if fontPath then
-            ok = pcall(fs.SetFont, fs, fontPath, size, requestedFlags)
-        elseif currentFont then
-            ok = pcall(fs.SetFont, fs, currentFont, size, requestedFlags)
+        local ok = fontPath and pcall(fs.SetFont, fs, fontPath, size, requestedFlags)
+        if not ok and currentFont then
+            pcall(fs.SetFont, fs, currentFont, size, requestedFlags)
         end
-        if ok then
-            fs[sizeKey] = size
-            fs[fontKey] = fontToken
-            fs[outlineKey] = outline
+        if outline == "SHADOW" then
+            SafeSetShadow(fs, true)
+        else
+            SafeSetShadow(fs, false)
         end
+        fs[sizeKey] = size
+        fs[fontKey] = fontToken
+        fs[outlineKey] = outline
     end
 
-    local shadowMode = (outline == "SHADOW" or outline == "OUTLINE_SHADOW")
-    local shadowKey = prefix .. "_shadow"
-    if fs[shadowKey] ~= shadowMode then
-        SafeSetShadow(fs, shadowMode)
-        fs[shadowKey] = shadowMode
-    end
-
-    -- 颜色
     if cfg.color then
         local c = cfg.color
         local r, g, b, a = c.r or 1, c.g or 1, c.b or 1, c.a or 1
         local rKey, gKey, bKey, aKey = prefix .. "_r", prefix .. "_g", prefix .. "_b", prefix .. "_a"
-
         if fs[rKey] ~= r or fs[gKey] ~= g or fs[bKey] ~= b or fs[aKey] ~= a then
             fs:SetTextColor(r, g, b, a)
-            fs[rKey] = r
-            fs[gKey] = g
-            fs[bKey] = b
-            fs[aKey] = a
+            fs[rKey] = r; fs[gKey] = g; fs[bKey] = b; fs[aKey] = a
         end
     end
 
-    -- 位置
     local position = cfg.position or "CENTER"
     local ox = cfg.offsetX or 0
     local oy = cfg.offsetY or 0
     local posKey = prefix .. "_pos"
     local oxKey = prefix .. "_ox"
     local oyKey = prefix .. "_oy"
-
     if fs[posKey] ~= position or fs[oxKey] ~= ox or fs[oyKey] ~= oy then
         fs:ClearAllPoints()
         local parent = fs:GetParent()
         fs:SetPoint(position, parent, position, ox, oy)
-        fs[posKey] = position
-        fs[oxKey] = ox
-        fs[oyKey] = oy
+        fs[posKey] = position; fs[oxKey] = ox; fs[oyKey] = oy
     end
 end
 
--- 应用键位显示
+-- =========================================================
+-- 键位显示
+-- =========================================================
+
 function StyleApply.ApplyKeybind(button, cfg)
     if not button or not cfg then return end
 
     local show = cfg.showKeybind
     if not show then
-        if button._vf_keybindFrame then
-            button._vf_keybindFrame:Hide()
-        end
+        if button._vf_keybindFrame then button._vf_keybindFrame:Hide() end
         return
     end
 
-    -- 获取键位文本
     local keyText = ""
     if VFlow.Keybind then
         local spellID = VFlow.Keybind.GetSpellIDFromIcon(button)
         if spellID then
-            keyText = VFlow.Keybind.GetKeyForSpell(spellID)
+            keyText = VFlow.Keybind.GetKeybindForSpell(spellID) or ""
         end
     end
 
-    -- 创建键位显示框架
     if not button._vf_keybindFrame then
         local f = CreateFrame("Frame", nil, button)
         f:SetAllPoints(button)
-        f:SetFrameLevel(button:GetFrameLevel() + 3)
-        local fs = f:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
-        fs:SetTextColor(1, 1, 1, 1)
-        fs:SetShadowColor(0, 0, 0, 1)
-        fs:SetShadowOffset(1, -1)
-        f.text = fs
+        f:SetFrameLevel(button:GetFrameLevel() + 2)
+        local fs = f:CreateFontString(nil, "OVERLAY")
+        fs:SetPoint("TOPRIGHT", f, "TOPRIGHT", -1, -1)
+        f._text = fs
         button._vf_keybindFrame = f
     end
 
-    local fs = button._vf_keybindFrame.text
-    fs:SetText(keyText or "")
+    local fs = button._vf_keybindFrame._text
+    if fs and keyText ~= (fs._vf_lastText or "") then
+        fs:SetText(keyText)
+        fs._vf_lastText = keyText
+    end
 
-    -- 应用字体样式
     if cfg.keybindFont then
         StyleApply.ApplyFontStyle(fs, cfg.keybindFont, "_vf_kb")
     end
 
-    -- 显示/隐藏
     if keyText and keyText ~= "" then
         button._vf_keybindFrame:Show()
     else
@@ -207,14 +227,16 @@ function StyleApply.ApplyKeybind(button, cfg)
     end
 end
 
--- 应用遮罩层颜色（hook button实例的刷新函数）
+-- =========================================================
+-- 遮罩层颜色 Hook（一次性）
+-- =========================================================
+
 function StyleApply.ApplyAuraSwipeColor(button, groupCfg)
     if not button or not groupCfg then return end
 
     button._vf_buffMaskColor = groupCfg.buffMaskColor
     button._vf_cooldownMaskColor = groupCfg.cooldownMaskColor
 
-    -- 技能按钮：RefreshSpellCooldownInfo（区分冷却/增益两种颜色）
     if button.RefreshSpellCooldownInfo and not button._vf_refreshColorHooked then
         hooksecurefunc(button, "RefreshSpellCooldownInfo", function(self)
             local cd = self.Cooldown
@@ -227,7 +249,6 @@ function StyleApply.ApplyAuraSwipeColor(button, groupCfg)
         button._vf_refreshColorHooked = true
     end
 
-    -- BUFF按钮：RefreshCooldownInfo（只有持续时间遮罩颜色）
     if button.RefreshCooldownInfo and not button._vf_refreshColorHooked then
         hooksecurefunc(button, "RefreshCooldownInfo", function(self)
             local cd = self.Cooldown
@@ -241,15 +262,16 @@ function StyleApply.ApplyAuraSwipeColor(button, groupCfg)
     end
 end
 
--- 应用完整样式到单个按钮
+-- =========================================================
+-- ApplyButtonStyle - 组配置样式（字体/键位/遮罩色）
+-- =========================================================
+
 function StyleApply.ApplyButtonStyle(button, cfg)
     if not button or not cfg then return end
 
-    -- 堆叠文字
     if cfg.stackFont then
         local stackFS = StyleApply.GetStackFontString(button)
         if stackFS then
-            -- 提高堆叠文字父Frame的frameLevel，确保在发光之上（发光是 frameLevel + 5）
             local parent = stackFS:GetParent()
             if parent and parent.SetFrameLevel then
                 local targetLevel = button:GetFrameLevel() + 7
@@ -257,7 +279,6 @@ function StyleApply.ApplyButtonStyle(button, cfg)
                     parent:SetFrameLevel(targetLevel)
                 end
             end
-
             if stackFS.GetDrawLayer and stackFS.SetDrawLayer then
                 local layer, subLevel = stackFS:GetDrawLayer()
                 if layer ~= "OVERLAY" or (subLevel or 0) < 7 then
@@ -268,147 +289,114 @@ function StyleApply.ApplyButtonStyle(button, cfg)
         end
     end
 
-    -- 冷却读秒
     if cfg.cooldownFont then
         local cdFS = StyleApply.GetCooldownFontString(button)
         StyleApply.ApplyFontStyle(cdFS, cfg.cooldownFont, "_vf_cd")
     end
 
-    -- 键位显示
     if cfg.showKeybind ~= nil then
         StyleApply.ApplyKeybind(button, cfg)
     end
 
-    -- 增益遮罩层颜色
     if cfg.buffMaskColor or cfg.cooldownMaskColor then
         StyleApply.ApplyAuraSwipeColor(button, cfg)
     end
 
-    -- 应用全局美化设置
+    -- 全局美化
     StyleApply.ApplyBeautify(button, cfg)
 end
 
 -- =========================================================
--- 美化功能
+-- 美化功能（全部读 styleCache，不再传 cfg 参数）
 -- =========================================================
 
--- 获取美化配置
-local function GetBeautifyConfig()
-    if VFlow and VFlow.Store and VFlow.Store.getModuleRef then
-        return VFlow.Store.getModuleRef("VFlow.StyleIcon")
-    end
-    return nil
-end
-
-local function GetMaskColorForButton(groupCfg)
-    local color = groupCfg and groupCfg.cooldownMaskColor
-    if type(color) ~= "table" then
-        return 1, 1, 1, 1
-    end
-    return color.r or 1, color.g or 1, color.b or 1, color.a or 1
-end
-
--- 保持比例的纹理坐标计算
 local function GetAspectPreservingTexCoord(frameW, frameH, zoomPadding)
     if not frameH or frameH <= 0 then return 0, 1, 0, 1 end
     local padding = zoomPadding or 0
     local texWidth = 1 - (padding * 2)
-
     local aspectRatio = frameW / frameH
     local xRatio = aspectRatio < 1 and aspectRatio or 1
     local yRatio = aspectRatio > 1 and 1 / aspectRatio or 1
-
     local left   = -0.5 * texWidth * xRatio + 0.5
     local right  =  0.5 * texWidth * xRatio + 0.5
     local top    = -0.5 * texWidth * yRatio + 0.5
     local bottom =  0.5 * texWidth * yRatio + 0.5
-
     return left, right, top, bottom
 end
 
--- 应用图标缩放
-function StyleApply.ApplyIconZoom(button, beautifyCfg, groupCfg)
+local function GetMaskColorForButton(groupCfg)
+    local color = groupCfg and groupCfg.cooldownMaskColor
+    if type(color) ~= "table" then return 1, 1, 1, 1 end
+    return color.r or 1, color.g or 1, color.b or 1, color.a or 1
+end
+
+-- 图标缩放 + Cooldown 锚点 + Swipe 纹理
+local function ApplyIconZoom(button, groupCfg)
     local tex = button.Icon
     if not tex or not tex.SetTexCoord then return end
 
     local w, h = button:GetSize()
-    local zoomAmount = 0
-    if beautifyCfg and beautifyCfg.zoomIcons then
-        zoomAmount = beautifyCfg.zoomAmount or 0.08
+    local zoomAmount = styleCache.zoomIcons and styleCache.zoomAmount or 0
+
+    local zoomKey = w .. "z" .. zoomAmount
+    if button._vf_zoomKey ~= zoomKey then
+        tex:SetTexCoord(GetAspectPreservingTexCoord(w, h, zoomAmount))
+        button._vf_zoomKey = zoomKey
     end
 
-    local left, right, top, bottom = GetAspectPreservingTexCoord(w, h, zoomAmount)
-    tex:SetTexCoord(left, right, top, bottom)
+    local cd = button.Cooldown
+    if not cd then return end
 
-    -- 当启用图标缩放时，需要调整Cooldown
-    if button.Cooldown then
-        -- 每次尺寸变化时都重新设置Cooldown锚点
-        -- 避免首次战斗时尺寸为0导致锚点设置错误
-        local w2, h2 = button:GetSize()
-        local sizeKey = (w2 or 0) .. "x" .. (h2 or 0)
-        if button._vf_cooldownSizeKey ~= sizeKey then
-            button.Cooldown:ClearAllPoints()
-            button.Cooldown:SetAllPoints(button)
-            button._vf_cooldownSizeKey = sizeKey
-        end
+    local sizeKey = w .. "x" .. h
+    if button._vf_cdSizeKey ~= sizeKey then
+        cd:ClearAllPoints()
+        cd:SetAllPoints(button)
+        button._vf_cdSizeKey = sizeKey
+    end
 
-        -- 当启用缩放时，使用纯白纹理替代默认的Swipe纹理
-        if button.Cooldown.SetSwipeTexture then
-            local useWhiteTexture = beautifyCfg and beautifyCfg.zoomIcons
-            local targetTexture = useWhiteTexture and "Interface\\Buttons\\WHITE8x8" or "Interface\\HUD\\UI-HUD-CoolDownManager-Icon-Swipe"
-
-            if button._vf_swipeTexture ~= targetTexture then
-                button.Cooldown:SetSwipeTexture(targetTexture)
-                button._vf_swipeTexture = targetTexture
-            end
-        end
-
-        if button.Cooldown.SetSwipeColor then
-            local r, g, b, a = GetMaskColorForButton(groupCfg)
-            if button._vf_swipeR ~= r or button._vf_swipeG ~= g or button._vf_swipeB ~= b or button._vf_swipeA ~= a then
-                button.Cooldown:SetSwipeColor(r, g, b, a)
-                button._vf_swipeR = r
-                button._vf_swipeG = g
-                button._vf_swipeB = b
-                button._vf_swipeA = a
-            end
-        end
-
-        -- 禁用边缘绘制
-        if button.Cooldown.SetDrawEdge then
-            button.Cooldown:SetDrawEdge(false)
+    if cd.SetSwipeTexture then
+        local target = styleCache.zoomIcons and WHITE8X8 or DEFAULT_SWIPE_TEXTURE
+        if button._vf_swipeTex ~= target then
+            cd:SetSwipeTexture(target)
+            button._vf_swipeTex = target
         end
     end
+
+    if cd.SetSwipeColor then
+        local r, g, b, a = GetMaskColorForButton(groupCfg)
+        if button._vf_swR ~= r or button._vf_swG ~= g or button._vf_swB ~= b or button._vf_swA ~= a then
+            cd:SetSwipeColor(r, g, b, a)
+            button._vf_swR = r; button._vf_swG = g; button._vf_swB = b; button._vf_swA = a
+        end
+    end
+
+    if cd.SetDrawEdge then cd:SetDrawEdge(false) end
 end
 
--- 移除遮罩与覆盖层
-function StyleApply.ApplyOverlayHides(button, cfg)
-    if not cfg then return end
+-- 遮罩与覆盖层移除
+local function ApplyOverlayHides(button)
+    local hideAtlas   = styleCache.hideIconOverlay
+    local hideTexture = styleCache.hideIconOverlayTexture
 
-    local hideOverlay = cfg.hideIconOverlay
-    local hideTexture = cfg.hideIconOverlayTexture
-
-    -- 缓存键：避免在配置不变时重复遍历所有 region
-    local cacheKey = (hideOverlay and 1 or 0) + (hideTexture and 2 or 0)
-    if button._vf_overlayHideKey == cacheKey then return end
-    button._vf_overlayHideKey = cacheKey
+    if button._vf_overlayAtlasHidden == hideAtlas
+        and button._vf_overlayTextureHidden == hideTexture then
+        return
+    end
 
     for _, region in ipairs({ button:GetRegions() }) do
         if region and region.IsObjectType then
             if region:IsObjectType("Texture") then
                 local atlas = region.GetAtlas and region:GetAtlas()
-                if SafeEquals(atlas, "UI-HUD-CoolDownManager-IconOverlay") then
-                    if hideOverlay then region:Hide() else region:Show() end
+                if SafeEquals(atlas, BLIZZARD_ICON_OVERLAY_ATLAS) then
+                    if hideAtlas then region:Hide() else region:Show() end
                 end
-
                 local texID = region.GetTexture and region:GetTexture()
-                if SafeEquals(texID, 6707800) then -- BLIZZARD_ICON_OVERLAY_TEXTURE_FILE_ID
+                if SafeEquals(texID, BLIZZARD_ICON_OVERLAY_TEXTURE_FILE_ID) then
                     if hideTexture then region:Hide() else region:Show() end
                 end
             elseif region:IsObjectType("MaskTexture") then
                 local atlas = region.GetAtlas and region:GetAtlas()
-                if SafeEquals(atlas, "UI-HUD-CoolDownManager-Mask") then
-                    -- 只移除一次，避免每帧重复调用触发渲染状态变更
+                if SafeEquals(atlas, BLIZZARD_ICON_MASK_ATLAS) then
                     if hideTexture and button.Icon and button.Icon.RemoveMaskTexture
                         and not button._vf_maskRemoved then
                         button._vf_maskRemoved = true
@@ -418,23 +406,36 @@ function StyleApply.ApplyOverlayHides(button, cfg)
             end
         end
     end
+
+    button._vf_overlayAtlasHidden   = hideAtlas
+    button._vf_overlayTextureHidden = hideTexture
 end
 
--- 应用边框
-function StyleApply.ApplyBorder(button, cfg)
-    -- 如果 Masque 激活，则不应用自定义边框
+-- 边框
+local function ApplyBorder(button)
     if VFlow.MasqueSupport and VFlow.MasqueSupport:IsActive() then
         if button._vf_border then button._vf_border:Hide() end
         return
     end
 
-    if not cfg then return end
-
-    local borderFile = cfg.borderFile
+    local borderFile = styleCache.borderFile
     if not borderFile or borderFile == "None" or borderFile == "无" then
         if button._vf_border then button._vf_border:Hide() end
         return
     end
+
+    local size    = styleCache.borderSize
+    local offsetX = styleCache.borderOffsetX
+    local offsetY = styleCache.borderOffsetY
+    local color   = styleCache.borderColor or { r = 0, g = 0, b = 0, a = 1 }
+
+    local borderKey = borderFile .. "|" .. size .. "|" .. offsetX .. "|" .. offsetY
+        .. "|" .. (color.r or 0) .. (color.g or 0) .. (color.b or 0) .. (color.a or 1)
+    if button._vf_borderKey == borderKey and button._vf_border then
+        button._vf_border:Show()
+        return
+    end
+    button._vf_borderKey = borderKey
 
     if not button._vf_border then
         local b = CreateFrame("Frame", nil, button, "BackdropTemplate")
@@ -442,147 +443,116 @@ function StyleApply.ApplyBorder(button, cfg)
         b:SetAllPoints(button)
         button._vf_border = b
     end
-    
+
     local b = button._vf_border
     b:Show()
-    
-    local size = cfg.borderSize or 1
-    local offsetX = cfg.borderOffsetX or 0
-    local offsetY = cfg.borderOffsetY or 0
-    local color = cfg.borderColor or { r = 0, g = 0, b = 0, a = 1 }
+
     local anchorOffsetX = offsetX
     local anchorOffsetY = offsetY
 
     if borderFile == "1PX" then
-        -- 使用 PixelPerfect 创建 1PX 边框
-        -- 清除 Backdrop
         b:SetBackdrop(nil)
-        -- 使用 PixelPerfect 创建边框纹理
         if PixelPerfect then
-            -- 这里我们直接利用 PixelPerfect 的 CreateBorder 功能
-            -- 但是 PixelPerfect.CreateBorder 是直接在 frame 上创建纹理
-            -- 我们为了不污染 button，在 b 上创建
-            PixelPerfect.CreateBorder(b, size, color, true) -- true = inset (内嵌)
+            PixelPerfect.CreateBorder(b, size, color, true)
             anchorOffsetX = PixelPerfect.PixelSnap(offsetX, button)
             anchorOffsetY = PixelPerfect.PixelSnap(offsetY, button)
         else
-            -- 降级处理
-            local edgeFile = "Interface\\Buttons\\WHITE8x8"
-            b:SetBackdrop({
-                edgeFile = edgeFile,
-                edgeSize = 1,
-                bgFile = nil,
-            })
+            b:SetBackdrop({ edgeFile = WHITE8X8, edgeSize = 1, bgFile = nil })
             b:SetBackdropBorderColor(color.r, color.g, color.b, color.a)
         end
     else
-        -- 传统 Backdrop 模式
-        -- 清理可能存在的 PixelPerfect 边框
         if b._ppBorders then
-            for _, border in ipairs(b._ppBorders) do
-                border:Hide()
-            end
+            for _, border in ipairs(b._ppBorders) do border:Hide() end
         end
-
-        -- 获取材质路径
         local edgeFile = borderFile
         if LSM then
             local p = LSM:Fetch("border", borderFile)
             if p then edgeFile = p end
         end
-        
-        -- 简单的回退机制
         if edgeFile and not edgeFile:find("\\") then
-            edgeFile = "Interface\\Buttons\\WHITE8x8"
+            edgeFile = WHITE8X8
         end
-
-        b:SetBackdrop({
-            edgeFile = edgeFile,
-            edgeSize = size,
-            bgFile = nil,
-        })
+        b:SetBackdrop({ edgeFile = edgeFile, edgeSize = size, bgFile = nil })
         b:SetBackdropBorderColor(color.r, color.g, color.b, color.a)
     end
-    
+
     b:ClearAllPoints()
-    -- 注意：Backdrop是向内绘制的，如果要做外边框可能需要调整SetPoint
-    -- 这里简单实现为覆盖在图标之上
     b:SetPoint("TOPLEFT", button, "TOPLEFT", -anchorOffsetX, anchorOffsetY)
     b:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", anchorOffsetX, -anchorOffsetY)
 end
 
--- 应用视觉隐藏
-function StyleApply.ApplyVisualHides(button, cfg)
-    if not cfg then return end
-
-    if button.DebuffBorder then
-        if cfg.hideDebuffBorder then
-            if not button._vf_hook_debuff then
-                hooksecurefunc(button.DebuffBorder, "Show", function(self)
-                    local db = GetBeautifyConfig()
-                    if db and db.hideDebuffBorder then self:Hide() end
-                end)
-                if button.DebuffBorder.UpdateFromAuraData then
-                     hooksecurefunc(button.DebuffBorder, "UpdateFromAuraData", function(self)
-                        local db = GetBeautifyConfig()
-                        if db and db.hideDebuffBorder then self:Hide() end
-                    end)
-                end
-                button._vf_hook_debuff = true
-            end
-            button.DebuffBorder:Hide()
+-- 视觉隐藏（DebuffBorder / PandemicIcon / CooldownFlash）
+-- hook 回调直接读 styleCache，不再调用 GetBeautifyConfig()
+local function SetupVisualHideHooks(button)
+    if button.DebuffBorder and not button._vf_hook_debuff then
+        hooksecurefunc(button.DebuffBorder, "Show", function(self)
+            if styleCache.hideDebuffBorder then self:Hide() end
+        end)
+        if button.DebuffBorder.UpdateFromAuraData then
+            hooksecurefunc(button.DebuffBorder, "UpdateFromAuraData", function(self)
+                if styleCache.hideDebuffBorder then self:Hide() end
+            end)
         end
+        button._vf_hook_debuff = true
     end
 
-    if button.PandemicIcon then
-        if cfg.hidePandemicIndicator then
-             if not button._vf_hook_pandemic then
-                hooksecurefunc(button, "ShowPandemicStateFrame", function(self)
-                    local db = GetBeautifyConfig()
-                    if db and db.hidePandemicIndicator and self.PandemicIcon then 
-                        self.PandemicIcon:Hide() 
-                    end
-                end)
-                button._vf_hook_pandemic = true
-             end
-             button.PandemicIcon:Hide()
-        end
+    if button.PandemicIcon and button.ShowPandemicStateFrame and not button._vf_hook_pandemic then
+        hooksecurefunc(button, "ShowPandemicStateFrame", function(self)
+            if styleCache.hidePandemicIndicator and self.PandemicIcon then
+                self.PandemicIcon:Hide()
+            end
+        end)
+        button._vf_hook_pandemic = true
     end
 
-    if button.CooldownFlash then
-        if cfg.hideCooldownBling then
-            if not button._vf_hook_bling then
-                hooksecurefunc(button.CooldownFlash, "Show", function(self)
-                    local db = GetBeautifyConfig()
-                    if db and db.hideCooldownBling then 
-                        self:Hide()
-                        if self.FlashAnim then self.FlashAnim:Stop() end
-                    end
-                end)
-                if button.CooldownFlash.FlashAnim and button.CooldownFlash.FlashAnim.Play then
-                    hooksecurefunc(button.CooldownFlash.FlashAnim, "Play", function(self)
-                        local db = GetBeautifyConfig()
-                        if db and db.hideCooldownBling then 
-                            self:Stop()
-                            button.CooldownFlash:Hide()
-                        end
-                    end)
-                end
-                button._vf_hook_bling = true
+    if button.CooldownFlash and not button._vf_hook_bling then
+        hooksecurefunc(button.CooldownFlash, "Show", function(self)
+            if styleCache.hideCooldownBling then
+                self:Hide()
+                if self.FlashAnim then self.FlashAnim:Stop() end
             end
-            button.CooldownFlash:Hide()
+        end)
+        if button.CooldownFlash.FlashAnim and button.CooldownFlash.FlashAnim.Play then
+            hooksecurefunc(button.CooldownFlash.FlashAnim, "Play", function(self)
+                if styleCache.hideCooldownBling then
+                    self:Stop()
+                    button.CooldownFlash:Hide()
+                end
+            end)
         end
+        button._vf_hook_bling = true
     end
 end
 
--- 主入口：应用美化
-function StyleApply.ApplyBeautify(button, groupCfg)
-    local beautifyCfg = GetBeautifyConfig()
+local function ApplyVisualHides(button)
+    SetupVisualHideHooks(button)
 
-    StyleApply.ApplyIconZoom(button, beautifyCfg, groupCfg)
-    StyleApply.ApplyOverlayHides(button, beautifyCfg)
-    StyleApply.ApplyBorder(button, beautifyCfg)
-    StyleApply.ApplyVisualHides(button, beautifyCfg)
+    if button.DebuffBorder and styleCache.hideDebuffBorder then
+        button.DebuffBorder:Hide()
+    end
+    if button.PandemicIcon and styleCache.hidePandemicIndicator then
+        button.PandemicIcon:Hide()
+    end
+    if button.CooldownFlash and styleCache.hideCooldownBling then
+        button.CooldownFlash:Hide()
+    end
+end
+
+-- =========================================================
+-- ApplyBeautify 主入口
+-- 帧级版本号对比：styleCacheVersion 不变 → 跳过全部美化
+-- =========================================================
+
+function StyleApply.ApplyBeautify(button, groupCfg)
+    RefreshStyleCache()
+
+    if button._vf_styleVer == styleCacheVersion then return end
+    button._vf_styleVer = styleCacheVersion
+
+    ApplyIconZoom(button, groupCfg)
+    ApplyOverlayHides(button)
+    ApplyBorder(button)
+    ApplyVisualHides(button)
 end
 
 -- =========================================================
@@ -592,253 +562,102 @@ end
 local LCG = LibStub and LibStub("LibCustomGlow-1.0", true)
 local GLOW_KEY = "VFlow_Glow"
 
--- 发光缓存
 local glowCache = {
     type = "proc",
     useCustomColor = false,
     color = nil,
-
-    -- Pixel Glow
-    pixelLines = 8,
-    pixelFrequency = 0.2,
-    pixelLength = 0,
-    pixelThickness = 2,
-    pixelXOffset = 0,
-    pixelYOffset = 0,
-
-    -- Autocast Glow
-    autocastParticles = 4,
-    autocastFrequency = 0.2,
-    autocastScale = 1,
-    autocastXOffset = 0,
-    autocastYOffset = 0,
-
-    -- Button Glow
+    pixelLines = 8, pixelFrequency = 0.2, pixelLength = 0,
+    pixelThickness = 2, pixelXOffset = 0, pixelYOffset = 0,
+    autocastParticles = 4, autocastFrequency = 0.2, autocastScale = 1,
+    autocastXOffset = 0, autocastYOffset = 0,
     buttonFrequency = 0,
-
-    -- Proc Glow
-    procDuration = 1,
-    procXOffset = 0,
-    procYOffset = 0,
+    procDuration = 1, procXOffset = 0, procYOffset = 0,
 }
 
--- 活跃发光帧集合
-local activeGlowFrames = setmetatable({}, { __mode = "k" })
+local activeGlowFrames = {}
 
--- 颜色数组缓存
-local glowColorArrayCache = setmetatable({}, { __mode = "k" })
-
--- 获取缓存的颜色数组
-local function GetCachedGlowColorArray(color)
-    if type(color) ~= "table" then
-        return nil
-    end
-
-    local arr = glowColorArrayCache[color]
-    if not arr then
-        arr = { 1, 1, 1, 1 }
-        glowColorArrayCache[color] = arr
-    end
-
-    arr[1] = color.r or 1
-    arr[2] = color.g or 1
-    arr[3] = color.b or 1
-    arr[4] = color.a or 1
-    return arr
-end
-
--- 获取发光颜色
-local function GetGlowColor(overrideColor)
-    if overrideColor then
-        return GetCachedGlowColorArray(overrideColor)
-    end
+local function GetGlowColor()
     if glowCache.useCustomColor and glowCache.color then
-        return GetCachedGlowColorArray(glowCache.color)
+        local c = glowCache.color
+        return { c.r or 1, c.g or 0.84, c.b or 0, c.a or 1 }
     end
     return nil
 end
 
--- Proc Glow 选项
-local procGlowOpts = {
-    color = nil,
-    startAnim = false,
-    duration = 1,
-    xOffset = 0,
-    yOffset = 0,
-    key = GLOW_KEY,
-    frameLevel = 0,
-}
+local glowStartFunctions, glowStopFunctions
 
--- 发光启动函数
-local glowStartFunctions = {
-    pixel = function(frame, frameLevel, overrideColor)
+glowStartFunctions = {
+    pixel = function(frame, color)
         if not LCG then return end
-        local color = GetGlowColor(overrideColor)
-        local length = glowCache.pixelLength
-        if length == 0 then length = nil end
-        LCG.PixelGlow_Start(
-            frame,
-            color,
-            glowCache.pixelLines,
-            glowCache.pixelFrequency,
-            length,
-            glowCache.pixelThickness,
-            glowCache.pixelXOffset,
-            glowCache.pixelYOffset,
-            false, -- pixelBorder
-            GLOW_KEY,
-            frameLevel
-        )
+        LCG.PixelGlow_Start(frame, color,
+            glowCache.pixelLines, glowCache.pixelFrequency,
+            glowCache.pixelLength, glowCache.pixelThickness,
+            glowCache.pixelXOffset, glowCache.pixelYOffset, false, GLOW_KEY)
     end,
-
-    autocast = function(frame, frameLevel, overrideColor)
+    autocast = function(frame, color)
         if not LCG then return end
-        local color = GetGlowColor(overrideColor)
-        LCG.AutoCastGlow_Start(
-            frame,
-            color,
-            glowCache.autocastParticles,
-            glowCache.autocastFrequency,
+        LCG.AutoCastGlow_Start(frame, color,
+            glowCache.autocastParticles, glowCache.autocastFrequency,
             glowCache.autocastScale,
-            glowCache.autocastXOffset,
-            glowCache.autocastYOffset,
-            GLOW_KEY,
-            frameLevel
-        )
+            glowCache.autocastXOffset, glowCache.autocastYOffset, GLOW_KEY)
     end,
-
-    button = function(frame, frameLevel, overrideColor)
+    button = function(frame, color)
         if not LCG then return end
-        local color = GetGlowColor(overrideColor)
-        local freq = glowCache.buttonFrequency
-        if freq == 0 then freq = nil end
-        LCG.ButtonGlow_Start(
-            frame,
-            color,
-            freq,
-            frameLevel
-        )
+        LCG.ButtonGlow_Start(frame, color, glowCache.buttonFrequency)
     end,
-
-    proc = function(frame, frameLevel, overrideColor)
+    proc = function(frame, color)
         if not LCG then return end
-        local color = GetGlowColor(overrideColor)
-        procGlowOpts.color = color
-        procGlowOpts.duration = glowCache.procDuration
-        procGlowOpts.xOffset = glowCache.procXOffset
-        procGlowOpts.yOffset = glowCache.procYOffset
-        procGlowOpts.frameLevel = frameLevel
-        LCG.ProcGlow_Start(frame, procGlowOpts)
+        LCG.ProcGlow_Start(frame, {
+            color = color,
+            duration = glowCache.procDuration,
+            startAnim = false,
+            xOffset = glowCache.procXOffset,
+            yOffset = glowCache.procYOffset,
+            key = GLOW_KEY,
+        })
     end,
 }
 
--- 发光停止函数
-local glowStopFunctions = {
-    pixel = function(frame)
-        if not LCG then return end
-        LCG.PixelGlow_Stop(frame, GLOW_KEY)
-    end,
-
-    autocast = function(frame)
-        if not LCG then return end
-        LCG.AutoCastGlow_Stop(frame, GLOW_KEY)
-    end,
-
-    button = function(frame)
-        if not LCG then return end
-        LCG.ButtonGlow_Stop(frame)
-    end,
-
-    proc = function(frame)
-        if not LCG then return end
-        LCG.ProcGlow_Stop(frame, GLOW_KEY)
-    end,
+glowStopFunctions = {
+    pixel    = function(f) if LCG then LCG.PixelGlow_Stop(f, GLOW_KEY) end end,
+    autocast = function(f) if LCG then LCG.AutoCastGlow_Stop(f, GLOW_KEY) end end,
+    button   = function(f) if LCG then LCG.ButtonGlow_Stop(f) end end,
+    proc     = function(f) if LCG then LCG.ProcGlow_Stop(f, GLOW_KEY) end end,
 }
 
--- 颜色是否匹配
-local function ColorsMatch(a, b)
-    if a == b then return true end
-    if not a or not b then return false end
-    return a.r == b.r and a.g == b.g and a.b == b.b
-end
-
--- 显示发光
-function StyleApply.ShowGlow(frame, overrideColor)
-    if not LCG or not frame then return end
-
-    -- 检查是否需要更新
-    if frame._vf_glowActive and frame._vf_glowType == glowCache.type
-       and ColorsMatch(frame._vf_glowColor, overrideColor) then
-        return
-    end
-
-    -- 停止旧的发光
-    if frame._vf_glowActive then
-        local stopFn = glowStopFunctions[frame._vf_glowType]
-        if stopFn then stopFn(frame) end
-        frame._vf_glowActive = false
-        frame._vf_glowType = nil
-    end
-
-    -- 检查帧尺寸
-    if frame:GetWidth() < 1 or frame:GetHeight() < 1 then
-        return
-    end
-
-    -- 启动新的发光
-    local fn = glowStartFunctions[glowCache.type]
-    if fn then
-        -- 使用 frameLevel + 5，让发光效果在边框之上，但在堆叠文字之下（堆叠文字是 frameLevel + 7）
-        local frameLevel = frame:GetFrameLevel() + 5
-        fn(frame, frameLevel, overrideColor)
+function StyleApply.ShowGlow(frame)
+    if not frame or not LCG then return end
+    if frame._vf_glowActive then StyleApply.HideGlow(frame) end
+    local color = GetGlowColor()
+    local startFn = glowStartFunctions[glowCache.type]
+    if startFn then
+        startFn(frame, color)
         frame._vf_glowActive = true
         frame._vf_glowType = glowCache.type
-        frame._vf_glowColor = overrideColor
         activeGlowFrames[frame] = true
     end
 end
 
--- 隐藏发光
 function StyleApply.HideGlow(frame)
-    if not LCG or not frame then return end
-
-    if not frame._vf_glowActive then return end
-
-    local fn = glowStopFunctions[frame._vf_glowType]
-    if fn then
-        fn(frame)
-    end
-
+    if not frame or not frame._vf_glowActive then return end
+    local stopFn = glowStopFunctions[frame._vf_glowType]
+    if stopFn then stopFn(frame) end
     frame._vf_glowActive = false
     frame._vf_glowType = nil
-    frame._vf_glowColor = nil
     activeGlowFrames[frame] = nil
 end
 
--- 刷新所有活跃的发光
 function StyleApply.RefreshActiveGlows()
-    if not LCG then return end
-
-    local snapshot = {}
-    local count = 0
     for frame in pairs(activeGlowFrames) do
-        count = count + 1
-        snapshot[count] = frame
-    end
-
-    for i = 1, count do
-        local frame = snapshot[i]
         if frame._vf_glowActive then
-            StyleApply.ShowGlow(frame, frame._vf_glowColor)
-        else
-            activeGlowFrames[frame] = nil
+            StyleApply.HideGlow(frame)
+            StyleApply.ShowGlow(frame)
         end
     end
 end
 
--- 从Store刷新发光缓存
 function StyleApply.RefreshGlowCache()
-    local db = VFlow and VFlow.Store and VFlow.Store.getModuleRef and VFlow.Store.getModuleRef("VFlow.StyleGlow")
+    local db = VFlow.Store and VFlow.Store.getModuleRef and VFlow.Store.getModuleRef("VFlow.StyleGlow")
     if not db then return end
 
     glowCache.type = db.glowType or "proc"
@@ -864,16 +683,13 @@ function StyleApply.RefreshGlowCache()
     glowCache.procXOffset = db.procXOffset or 0
     glowCache.procYOffset = db.procYOffset or 0
 
-    -- 验证发光类型
     if not glowStartFunctions[glowCache.type] then
         glowCache.type = "proc"
     end
 
-    -- 刷新所有活跃的发光
     StyleApply.RefreshActiveGlows()
 end
 
--- 隐藏暴雪原生发光
 local function HideBlizzardGlow(frame)
     if not frame then return end
     local alert = frame.SpellActivationAlert
@@ -882,76 +698,57 @@ local function HideBlizzardGlow(frame)
     alert:Hide()
 end
 
--- 检查是否是支持的发光帧
 local function IsSupportedGlowFrame(frame)
     if not frame then return false end
-
-    -- 检查父容器
     local parent = frame:GetParent()
     if not parent then return false end
-
     local parentName = parent:GetName()
     if not parentName then return false end
-
-    -- 支持暴雪的Essential/Utility/Buff Viewer
-    local supported = parentName == "EssentialCooldownViewer"
-                   or parentName == "UtilityCooldownViewer"
-                   or parentName == "BuffIconCooldownViewer"
-
-    return supported
+    return parentName == "EssentialCooldownViewer"
+        or parentName == "UtilityCooldownViewer"
+        or parentName == "BuffIconCooldownViewer"
 end
 
--- Hook暴雪的发光管理器
 local alertManagerHooked = false
 function StyleApply.HookAlertManager()
     if alertManagerHooked then return end
     if not LCG then return end
-
     local alertManager = _G.ActionButtonSpellAlertManager
     if not alertManager then return end
 
-    -- Hook ShowAlert - 当暴雪想显示发光时
     hooksecurefunc(alertManager, "ShowAlert", function(_, frame)
         if not IsSupportedGlowFrame(frame) then return end
-
-        -- 隐藏暴雪的发光
         HideBlizzardGlow(frame)
-
-        -- 如果已经有相同类型的发光，不重复应用
-        if frame._vf_glowActive and frame._vf_glowType == glowCache.type then
-            return
-        end
-
-        -- 显示自定义发光
+        if frame._vf_glowActive and frame._vf_glowType == glowCache.type then return end
         StyleApply.ShowGlow(frame)
     end)
 
-    -- Hook HideAlert - 当暴雪想隐藏发光时
     hooksecurefunc(alertManager, "HideAlert", function(_, frame)
         if not IsSupportedGlowFrame(frame) then return end
-
-        -- 隐藏暴雪的发光
         HideBlizzardGlow(frame)
-
-        -- 隐藏自定义发光
         StyleApply.HideGlow(frame)
     end)
 
     alertManagerHooked = true
 end
 
--- 初始化发光系统
 function StyleApply.InitializeGlow()
     StyleApply.RefreshGlowCache()
     StyleApply.HookAlertManager()
 end
 
--- 监听Store变化
-VFlow.Store.watch("VFlow.StyleGlow", "StyleApply_Glow", function(key, value)
+-- =========================================================
+-- Store 监听
+-- =========================================================
+
+VFlow.Store.watch("VFlow.StyleGlow", "StyleApply_Glow", function()
     StyleApply.RefreshGlowCache()
 end)
 
--- 在PLAYER_LOGIN时初始化
+VFlow.Store.watch("VFlow.StyleIcon", "StyleApply_Style", function()
+    StyleApply.InvalidateStyleCache()
+end)
+
 VFlow.on("PLAYER_LOGIN", "StyleApply_Glow", function()
     C_Timer.After(1, function()
         StyleApply.InitializeGlow()

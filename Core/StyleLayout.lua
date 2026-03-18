@@ -59,7 +59,8 @@ end
 -- 过滤可见图标
 function StyleLayout.FilterVisible(icons)
     local visible = {}
-    for _, icon in ipairs(icons) do
+    for i = 1, #icons do
+        local icon = icons[i]
         if icon:IsShown() then
             local tex = icon.Icon and icon.Icon:GetTexture()
             if tex then
