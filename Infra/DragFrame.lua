@@ -223,9 +223,6 @@ updateAllSelections = function()
         if isEditMode then
             local isSelected = (_selectedFrame == frame)
             data.selection:EnableKeyboard(isSelected)
-            if data.selection.SetPropagateKeyboardInput then
-                data.selection:SetPropagateKeyboardInput(not isSelected)
-            end
             if isSelected then
                 showSelected(data.selection, data.options)
             else
@@ -233,9 +230,6 @@ updateAllSelections = function()
             end
         else
             data.selection:EnableKeyboard(false)
-            if data.selection.SetPropagateKeyboardInput then
-                data.selection:SetPropagateKeyboardInput(true)
-            end
             data.selection:Hide()
         end
     end
