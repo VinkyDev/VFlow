@@ -69,7 +69,7 @@ function PixelPerfect.UpdateBorderColor(frame, color)
     if not frame or not frame._ppBorders then return end
     color = color or { r = 1, g = 1, b = 1, a = 1 }
     for _, border in ipairs(frame._ppBorders) do
-        border:SetColorTexture(color.r, color.g, color.b, color.a)
+        border:SetVertexColor(color.r, color.g, color.b, color.a)
     end
 end
 
@@ -125,15 +125,21 @@ function PixelPerfect.CreateBorder(frame, thickness, color, inset)
     end
 
     -- 创建四条边
-    local top = frame:CreateTexture(nil, "OVERLAY")
-    local bottom = frame:CreateTexture(nil, "OVERLAY")
-    local left = frame:CreateTexture(nil, "OVERLAY")
-    local right = frame:CreateTexture(nil, "OVERLAY")
-
-    top:SetColorTexture(color.r, color.g, color.b, color.a)
-    bottom:SetColorTexture(color.r, color.g, color.b, color.a)
-    left:SetColorTexture(color.r, color.g, color.b, color.a)
-    right:SetColorTexture(color.r, color.g, color.b, color.a)
+    -- 使用 WHITE8X8 纹理并禁用引擎自动像素 snap，
+    -- 避免 SetColorTexture 被引擎二次对齐到错误像素边界导致边框变粗。
+    local WHITE8X8 = "Interface\\Buttons\\WHITE8X8"
+    local function makeBorderTex()
+        local tex = frame:CreateTexture(nil, "OVERLAY")
+        tex:SetTexture(WHITE8X8)
+        if tex.SetSnapToPixelGrid  then tex:SetSnapToPixelGrid(false) end
+        if tex.SetTexelSnappingBias then tex:SetTexelSnappingBias(0) end
+        tex:SetVertexColor(color.r, color.g, color.b, color.a)
+        return tex
+    end
+    local top    = makeBorderTex()
+    local bottom = makeBorderTex()
+    local left   = makeBorderTex()
+    local right  = makeBorderTex()
 
     table.insert(borders, top)
     table.insert(borders, bottom)
