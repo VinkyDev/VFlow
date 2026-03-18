@@ -106,17 +106,10 @@ local function renderContent(container, menuKey)
             "插件中大部分功能基于系统冷却管理器实现，你需要在{冷却管理器}中配置你需要监控的技能，通过本插件进行美化和增强。支持技能分组，BUFF分组，自定义图形监控等功能。框体移动有两种方式：{系统编辑模式}会打开暴雪编辑界面；插件右上角的{内部编辑模式}，不依赖暴雪编辑界面，可直接编辑本插件内所有已注册框体。",
             links = {
                 ["冷却管理器"] = function()
-                    if EditModeManagerFrame and EditModeManagerFrame:IsShown() then
-                        HideUIPanel(EditModeManagerFrame)
-                    end
-                    if CooldownViewerSettings then
-                        CooldownViewerSettings:ShowUIPanel(false)
-                    end
+                    VFlow.openCooldownManager()
                 end,
                 ["系统编辑模式"] = function()
-                    if EditModeManagerFrame then
-                        ShowUIPanel(EditModeManagerFrame)
-                    end
+                    VFlow.toggleSystemEditMode()
                 end,
                 ["内部编辑模式"] = function()
                     if VFlow.DragFrame and VFlow.DragFrame.setInternalEditMode then

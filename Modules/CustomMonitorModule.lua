@@ -335,7 +335,7 @@ local function buildSpellConfigLayout(monitorTypeOptions, timerFontLabel, isSkil
                 text  = "可在{编辑模式}中预览和拖拽修改位置",
                 links = {
                     ["编辑模式"] = function()
-                        if EditModeManagerFrame then ShowUIPanel(EditModeManagerFrame) end
+                        VFlow.toggleSystemEditMode()
                     end,
                 },
             },
@@ -641,10 +641,7 @@ local function renderContent(container, menuKey)
                 text = "仅可使用{冷却管理器}中追踪的BUFF，{点我重新扫描}。",
                 links = {
                     ["冷却管理器"] = function()
-                        if EditModeManagerFrame and EditModeManagerFrame:IsShown() then
-                            HideUIPanel(EditModeManagerFrame)
-                        end
-                        if CooldownViewerSettings then CooldownViewerSettings:ShowUIPanel(false) end
+                        VFlow.openCooldownManager()
                     end,
                     ["点我重新扫描"] = function()
                         if VFlow.BuffScanner then VFlow.BuffScanner.scan() end

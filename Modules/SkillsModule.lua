@@ -185,12 +185,7 @@ local function buildCustomSkillSelector(groupConfig, options)
             text = "仅可使用{重要技能冷却}中追踪的技能，{点我重新扫描}。可在{编辑模式}中预览和拖拽修改位置",
             links = {
                 ["重要技能冷却"] = function()
-                    if EditModeManagerFrame and EditModeManagerFrame:IsShown() then
-                        HideUIPanel(EditModeManagerFrame)
-                    end
-                    if CooldownViewerSettings then
-                        CooldownViewerSettings:ShowUIPanel(false)
-                    end
+                    VFlow.openCooldownManager()
                 end,
                 ["点我重新扫描"] = function()
                     if VFlow.SkillScanner then
@@ -202,9 +197,7 @@ local function buildCustomSkillSelector(groupConfig, options)
                     end
                 end,
                 ["编辑模式"] = function()
-                    if EditModeManagerFrame then
-                        ShowUIPanel(EditModeManagerFrame)
-                    end
+                    VFlow.toggleSystemEditMode()
                 end,
             }
         },

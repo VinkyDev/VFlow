@@ -822,13 +822,7 @@ local function createMainFrame()
         GameTooltip:Hide()
     end)
     systemEditBtn:SetScript("OnClick", function()
-        if EditModeManagerFrame then
-            if EditModeManagerFrame:IsShown() then
-                HideUIPanel(EditModeManagerFrame)
-            else
-                ShowUIPanel(EditModeManagerFrame)
-            end
-        end
+        VFlow.toggleSystemEditMode()
     end)
     updateSystemEditButtonVisual()
 
@@ -886,12 +880,7 @@ local function createMainFrame()
         GameTooltip:Hide()
     end)
     cdManagerBtn:SetScript("OnClick", function()
-        if EditModeManagerFrame and EditModeManagerFrame:IsShown() then
-            HideUIPanel(EditModeManagerFrame)
-        end
-        if CooldownViewerSettings then
-            CooldownViewerSettings:ShowUIPanel(false)
-        end
+        VFlow.openCooldownManager()
     end)
 
     -- 左侧菜单区域
@@ -969,6 +958,29 @@ VFlow.State.watch("inCombat", "VFlow.MainUI", function(inCombat)
         end
     end
 end)
+
+-- =========================================================
+-- 系统功能统一入口
+-- =========================================================
+
+VFlow.openCooldownManager = function()
+    if EditModeManagerFrame and EditModeManagerFrame:IsShown() then
+        HideUIPanel(EditModeManagerFrame)
+    end
+    if CooldownViewerSettings then
+        CooldownViewerSettings:ShowUIPanel(false)
+    end
+end
+
+VFlow.toggleSystemEditMode = function()
+    if EditModeManagerFrame then
+        if EditModeManagerFrame:IsShown() then
+            HideUIPanel(EditModeManagerFrame)
+        else
+            ShowUIPanel(EditModeManagerFrame)
+        end
+    end
+end
 
 VFlow.MainUI = {
     show = function()
