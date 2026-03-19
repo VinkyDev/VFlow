@@ -296,6 +296,18 @@ local function ScanItems()
         end
     end
 
+    for spellID, poolData in pairs(oldPool) do
+        if not _iconPool[spellID] and poolData and poolData.frame then
+            local frame = poolData.frame
+            if frame.hideTimer then
+                frame.hideTimer:Cancel()
+                frame.hideTimer = nil
+            end
+            frame:Hide()
+            frame:SetParent(nil)
+        end
+    end
+
     -- 为新的spellID创建图标帧，并设置图标纹理
     for spellID, poolData in pairs(_iconPool) do
         if not poolData.frame then

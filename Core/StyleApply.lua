@@ -586,7 +586,7 @@ local glowCache = {
     procDuration = 1, procXOffset = 0, procYOffset = 0,
 }
 
-local activeGlowFrames = {}
+local activeGlowFrames = setmetatable({}, { __mode = "k" })
 
 local function GetGlowColor()
     if glowCache.useCustomColor and glowCache.color then

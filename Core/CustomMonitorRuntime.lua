@@ -21,6 +21,8 @@ local Profiler = VFlow.Profiler
 -- =========================================================
 
 local UPDATE_INTERVAL = 0.1
+local MAP_RETRY_INTERVAL = 1.5
+local INACTIVE_PROBE_INTERVAL = 0.4
 local BAR_TEXTURE     = "Interface\\Buttons\\WHITE8X8"
 
 local BUFF_VIEWERS = {
@@ -88,11 +90,13 @@ local _spellToCooldownID = {}
 local _cooldownIDToFrame = {}
 
 -- CDM帧 Hook 管理
-local _hookedFrames   = {}  -- cdmFrame → { barIDs = {key→true} }
-local _frameToBarKeys = {}  -- cdmFrame → { barKey, ... }
+local _hookedFrames   = setmetatable({}, { __mode = "k" })  -- cdmFrame → { barIDs = {key→true} }
+local _everHookedFrames = setmetatable({}, { __mode = "k" })
+local _frameToBarKeys = setmetatable({}, { __mode = "k" })  -- cdmFrame → { barKey, ... }
 -- aura key "unit#instanceID" → { barKey → true }（stacks 专用）
 local _auraKeyToBars  = {}
 local _barToAuraKey   = {}  -- barKey → aura key
+local _spellMapRetryAt = {}
 
 -- =========================================================
 -- SECTION 3: 通用辅助
@@ -258,6 +262,7 @@ local function ScanCDMViewers()
     if InCombatLockdown() then return end
     wipe(_spellToCooldownID)
     wipe(_cooldownIDToFrame)
+    wipe(_spellMapRetryAt)
     for _, viewerName in ipairs(BUFF_VIEWERS) do
         local viewer = _G[viewerName]
         if viewer then
@@ -273,6 +278,9 @@ end
 -- 战斗中为单个 spellID 补建映射（只追加，找到即停）
 -- 调用方负责检查 _spellToCooldownID[spellID] == nil 后再调用
 local function TryMapSpellID(spellID)
+    local now = GetTime and GetTime() or 0
+    local retryAt = _spellMapRetryAt[spellID]
+    if retryAt and now < retryAt then return end
     for _, viewerName in ipairs(BUFF_VIEWERS) do
         local viewer = _G[viewerName]
         if viewer then
@@ -295,15 +303,22 @@ local function TryMapSpellID(spellID)
             end
             if viewer.itemFramePool then
                 for frame in viewer.itemFramePool:EnumerateActive() do
-                    if check(frame) then return end
+                    if check(frame) then
+                        _spellMapRetryAt[spellID] = nil
+                        return
+                    end
                 end
             else
                 for _, child in ipairs({ viewer:GetChildren() }) do
-                    if check(child) then return end
+                    if check(child) then
+                        _spellMapRetryAt[spellID] = nil
+                        return
+                    end
                 end
             end
         end
     end
+    _spellMapRetryAt[spellID] = now + MAP_RETRY_INTERVAL
 end
 
 local function FindCDMFrame(cooldownID)
@@ -431,9 +446,12 @@ local function HookCDMFrame(cdmFrame, barKey)
     if not _hookedFrames[cdmFrame] then
         _hookedFrames[cdmFrame] = { barIDs = {} }
         _frameToBarKeys[cdmFrame] = {}
+    end
+    if not _everHookedFrames[cdmFrame] then
         if cdmFrame.RefreshData         then hooksecurefunc(cdmFrame, "RefreshData",         OnCDMFrameChanged) end
         if cdmFrame.RefreshApplications then hooksecurefunc(cdmFrame, "RefreshApplications", OnCDMFrameChanged) end
         if cdmFrame.SetAuraInstanceInfo then hooksecurefunc(cdmFrame, "SetAuraInstanceInfo",  OnCDMFrameChanged) end
+        _everHookedFrames[cdmFrame] = true
     end
     if not _hookedFrames[cdmFrame].barIDs[barKey] then
         _hookedFrames[cdmFrame].barIDs[barKey] = true
@@ -450,6 +468,7 @@ local function ClearAllHooks()
     wipe(_barToAuraKey)
     wipe(_spellToCooldownID)
     wipe(_cooldownIDToFrame)
+    wipe(_spellMapRetryAt)
 end
 
 -- =========================================================
@@ -1443,23 +1462,36 @@ local function UpdateAllBars()
     end
 
     for spellID, barFrame in pairs(_activeBuffBars) do
-        -- 先执行更新逻辑，更新BUFF激活状态
-        if barFrame._segsDirty then
-            local cw = barFrame._segContainer:GetWidth()
-            if cw and cw > 0 then
-                CreateSegments(barFrame, barFrame._segsNeedCount or 1, barFrame._cfg,
-                    barFrame._monitorType == "stacks")
-            end
-        end
-        if barFrame._monitorType == "stacks" then
-            UpdateStackBar(barFrame, spellID, barFrame._barKey)
-        else
-            UpdateDurationBar(barFrame, spellID, barFrame._barKey)
-        end
-
-        -- 更新后再检查显示条件
+        local cfg = barFrame._cfg
         local isBuffActive = barFrame._lastKnownActive or false
-        local shouldShow = ShouldShowBar(barFrame._cfg, isBuffActive)
+        local doUpdate = true
+        if cfg.hideWhenInactive and not isBuffActive and not barFrame._segsDirty then
+            local now = GetTime and GetTime() or 0
+            local nextProbeAt = barFrame._nextInactiveProbeAt or 0
+            if now < nextProbeAt then
+                doUpdate = false
+            else
+                barFrame._nextInactiveProbeAt = now + INACTIVE_PROBE_INTERVAL
+            end
+        else
+            barFrame._nextInactiveProbeAt = nil
+        end
+        if doUpdate then
+            if barFrame._segsDirty then
+                local cw = barFrame._segContainer:GetWidth()
+                if cw and cw > 0 then
+                    CreateSegments(barFrame, barFrame._segsNeedCount or 1, cfg,
+                        barFrame._monitorType == "stacks")
+                end
+            end
+            if barFrame._monitorType == "stacks" then
+                UpdateStackBar(barFrame, spellID, barFrame._barKey)
+            else
+                UpdateDurationBar(barFrame, spellID, barFrame._barKey)
+            end
+            isBuffActive = barFrame._lastKnownActive or false
+        end
+        local shouldShow = ShouldShowBar(cfg, isBuffActive)
         local container = barFrame._container
 
         if not shouldShow then

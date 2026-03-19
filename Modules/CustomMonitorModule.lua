@@ -237,7 +237,7 @@ local function buildSpellConfigLayout(monitorTypeOptions, timerFontLabel, isSkil
             { type = "subtitle", text = "基础设置", cols = 24 },
             { type = "separator", cols = 24 },
             { type = "checkbox", key = "enabled", label = "启用该技能自定义监控", cols = 12 },
-            { type = "checkbox", key = "hideInCooldownManager", label = "在冷却管理器中隐藏", cols = 12 },
+            { type = "checkbox", key = "hideInCooldownManager", label = "在冷却管理器中隐藏(需RL)", cols = 12 },
         },
         {
             { type = "dropdown", key = "monitorType", label = "监控类型", cols = 12, items = monitorTypeOptions },
