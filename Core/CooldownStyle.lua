@@ -123,119 +123,123 @@ local function HideIconOverlays(iconFrame)
     end
 end
 
-local function EnsureBuffBarTextShowHook(frame, key, textElement, enabledGetter)
-    if not frame or not textElement or frame[key] then
-        return
-    end
-    frame[key] = true
+-- =========================================================
+-- BuffBar 辅助函数
+-- =========================================================
+
+--- 一次性 hook：当配置隐藏某文本时，阻止系统 Show() 调用
+local function HookBarTextVisibility(frame, hookKey, textElement, cfgKey)
+    if not frame or not textElement or frame[hookKey] then return end
+    frame[hookKey] = true
     hooksecurefunc(textElement, "Show", function(self)
-        if enabledGetter and enabledGetter() then
-            return
+        local localCfg = frame._vf_barCfg
+        if localCfg and localCfg[cfgKey] == false then
+            self:Hide()
         end
-        self:Hide()
-        self:SetAlpha(0)
     end)
 end
 
-local function EnsureFlatBackdrop(frame, color, borderColor, key)
-    if not frame or frame[key] then
-        return
-    end
-    if not frame.SetBackdrop then
-        frame[key] = true
-        return
-    end
-    frame:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 1,
-    })
-    if color then
-        frame:SetBackdropColor(color.r or 0.1, color.g or 0.1, color.b or 0.1, color.a or 0.8)
-    end
-    if borderColor then
-        frame:SetBackdropBorderColor(borderColor.r or 0, borderColor.g or 0, borderColor.b or 0, borderColor.a or 1)
-    else
-        frame:SetBackdropBorderColor(0, 0, 0, 1)
-    end
-    frame[key] = true
-end
-
-local function EnsureBuffBarBackground(bar)
+--- 确保 bar 有自定义背景纹理
+local function EnsureBarBackground(bar)
     if not bar then return nil end
-    if not bar._vf_buffBarBackground then
-        local bg = bar:CreateTexture(nil, "BACKGROUND", nil, -8)
+    if not bar._vf_bg then
+        local bg = bar:CreateTexture(nil, "BACKGROUND", nil, -1)
+        bg:ClearAllPoints()
         bg:SetAllPoints(bar)
-        bar._vf_buffBarBackground = bg
+        bar._vf_bg = bg
     end
-    return bar._vf_buffBarBackground
+    return bar._vf_bg
 end
 
-local function EnsureBuffBarBorder(bar)
-    if not bar then return nil end
-    if not PP then return nil end
-    if not bar._vf_buffBarBorderFrame then
+--- 确保 bar 有像素边框
+local function EnsureBarBorder(bar)
+    if not bar or not PP then return end
+    if not bar._vf_borderFrame then
         local borderFrame = CreateFrame("Frame", nil, bar)
         borderFrame:SetAllPoints(bar)
         borderFrame:SetFrameLevel((bar:GetFrameLevel() or 1) + 2)
-        bar._vf_buffBarBorderFrame = borderFrame
+        bar._vf_borderFrame = borderFrame
     end
-    PP.CreateBorder(bar._vf_buffBarBorderFrame, 1, { r = 0, g = 0, b = 0, a = 1 }, true)
-    PP.ShowBorder(bar._vf_buffBarBorderFrame)
-    return bar._vf_buffBarBorderFrame
+    PP.CreateBorder(bar._vf_borderFrame, 1, { r = 0, g = 0, b = 0, a = 1 }, true)
+    PP.ShowBorder(bar._vf_borderFrame)
 end
 
+--- 应用样式到单个BuffBar帧
 local function ApplyBuffBarFrameStyle(frame, cfg, frameWidth, frameHeight)
     if not frame or not cfg then return end
-    frame._vf_buffBarCfg = cfg
+
+    local barStyleVer = BuffBarRuntime and BuffBarRuntime.getStyleVersion() or 0
+    local iconPosition = cfg.iconPosition or "LEFT"
+
+    -- 脏检查：版本+尺寸+图标位置均未变则跳过
+    if frame._vf_barStyled
+        and frame._vf_barStyleVer == barStyleVer
+        and frame._vf_barW == frameWidth
+        and frame._vf_barH == frameHeight
+        and frame._vf_barIconPos == iconPosition
+    then
+        return
+    end
+
+    frame._vf_barCfg = cfg
     frame:SetSize(frameWidth, frameHeight)
 
     local icon = frame.Icon
     local bar = frame.Bar or frame.StatusBar
     local nameText = (bar and bar.Name) or frame.Name or frame.SpellName or frame.NameText
-    local durationText = (bar and bar.Duration) or frame.Duration or frame.DurationText or
-        StyleApply.GetCooldownFontString(frame)
-    local appText = (icon and (icon.Applications or icon.Count)) or StyleApply.GetStackFontString(frame) or
-        frame.ApplicationsText
+    local durationText = (bar and bar.Duration) or frame.Duration or frame.DurationText
+        or StyleApply.GetCooldownFontString(frame)
+    local appText = (icon and (icon.Applications or icon.Count))
+        or StyleApply.GetStackFontString(frame)
+        or frame.ApplicationsText
 
-    local iconPosition = cfg.iconPosition or "LEFT"
     local iconGap = cfg.iconGap or 0
 
-    if icon and not frame._vf_buffBarIconShowHooked then
-        frame._vf_buffBarIconShowHooked = true
+    -- ===== 一次性隐藏系统默认元素 =====
+    if not frame._vf_barHidesDone then
+        if bar then
+            if bar.BarBG then
+                bar.BarBG:Hide()
+                bar.BarBG:SetAlpha(0)
+                if not frame._vf_barBGHooked then
+                    frame._vf_barBGHooked = true
+                    hooksecurefunc(bar.BarBG, "Show", function(self)
+                        self:Hide()
+                        self:SetAlpha(0)
+                    end)
+                end
+            end
+            if bar.Pip then
+                bar.Pip:Hide()
+                bar.Pip:SetAlpha(0)
+                if not frame._vf_pipHooked then
+                    frame._vf_pipHooked = true
+                    hooksecurefunc(bar.Pip, "Show", function(self)
+                        self:Hide()
+                        self:SetAlpha(0)
+                    end)
+                end
+            end
+        end
+        frame._vf_barHidesDone = true
+    end
+
+    -- ===== 图标 Show hook（一次性） =====
+    if icon and not frame._vf_iconShowHooked then
+        frame._vf_iconShowHooked = true
         hooksecurefunc(icon, "Show", function(self)
-            local localCfg = frame._vf_buffBarCfg
+            local localCfg = frame._vf_barCfg
             if localCfg and localCfg.iconPosition == "HIDDEN" then
                 self:Hide()
             end
         end)
     end
 
+    -- ===== 图标布局 =====
     if bar and bar.ClearAllPoints then
-        if bar.BarBG then
-            bar.BarBG:Hide()
-            bar.BarBG:SetAlpha(0)
-            if not frame._vf_buffBarBarBGHooked then
-                frame._vf_buffBarBarBGHooked = true
-                hooksecurefunc(bar.BarBG, "Show", function(self)
-                    self:Hide()
-                    self:SetAlpha(0)
-                end)
-            end
-        end
-        if bar.Pip then
-            bar.Pip:Hide()
-            bar.Pip:SetAlpha(0)
-            if not frame._vf_buffBarPipHooked then
-                frame._vf_buffBarPipHooked = true
-                hooksecurefunc(bar.Pip, "Show", function(self)
-                    self:Hide()
-                    self:SetAlpha(0)
-                end)
-            end
-        end
-
         bar:ClearAllPoints()
+        bar:SetHeight(frameHeight)
+
         if bar.SetStatusBarTexture then
             bar:SetStatusBarTexture(ResolveStatusBarTexture(cfg.barTexture))
         end
@@ -243,20 +247,23 @@ local function ApplyBuffBarFrameStyle(frame, cfg, frameWidth, frameHeight)
             local c = cfg.barColor
             bar:SetStatusBarColor(c.r or 1, c.g or 1, c.b or 1, c.a or 1)
         end
+
         if icon and iconPosition ~= "HIDDEN" then
-            if icon.SetSize then
-                icon:SetSize(frameHeight, frameHeight)
-            end
+            icon:Show()
+            icon:SetSize(frameHeight, frameHeight)
             icon:ClearAllPoints()
+
             if iconPosition == "RIGHT" then
                 icon:SetPoint("RIGHT", frame, "RIGHT", 0, 0)
-                bar:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
-                bar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -(frameHeight + iconGap), 0)
+                bar:SetPoint("LEFT", frame, "LEFT", 0, 0)
+                bar:SetPoint("RIGHT", icon, "LEFT", -iconGap, 0)
             else
                 icon:SetPoint("LEFT", frame, "LEFT", 0, 0)
-                bar:SetPoint("TOPLEFT", frame, "TOPLEFT", frameHeight + iconGap, 0)
-                bar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
+                bar:SetPoint("LEFT", icon, "RIGHT", iconGap, 0)
+                bar:SetPoint("RIGHT", frame, "RIGHT", 0, 0)
             end
+
+            -- 图标纹理处理
             local iconTexture = icon.Icon
             if iconTexture then
                 if iconTexture.ClearAllPoints then
@@ -266,6 +273,7 @@ local function ApplyBuffBarFrameStyle(frame, cfg, frameWidth, frameHeight)
                 if iconTexture.SetTexCoord then
                     iconTexture:SetTexCoord(0.08, 0.92, 0.08, 0.92)
                 end
+                -- 移除圆形遮罩
                 for _, region in ipairs({ icon:GetRegions() }) do
                     if region and region.IsObjectType and region:IsObjectType("MaskTexture")
                         and iconTexture.RemoveMaskTexture then
@@ -274,87 +282,119 @@ local function ApplyBuffBarFrameStyle(frame, cfg, frameWidth, frameHeight)
                 end
             end
             HideIconOverlays(icon)
-            EnsureFlatBackdrop(icon, nil, { r = 0, g = 0, b = 0, a = 1 }, "_vf_buffBarIconFlat")
-            icon:Show()
         else
-            bar:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
-            bar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
-            if icon then
-                icon:Hide()
-            end
+            -- 图标隐藏：bar占满整个帧
+            bar:SetPoint("LEFT", frame, "LEFT", 0, 0)
+            bar:SetPoint("RIGHT", frame, "RIGHT", 0, 0)
+            if icon then icon:Hide() end
         end
     elseif icon then
         if iconPosition == "HIDDEN" then
             icon:Hide()
         else
             icon:Show()
-            if icon.SetSize then
-                icon:SetSize(frameHeight, frameHeight)
-            end
+            icon:SetSize(frameHeight, frameHeight)
         end
     end
 
-    local bg = frame.BarBackground or frame.Background or frame.BG
-    if bg and bg.SetColorTexture and cfg.barBackgroundColor then
+    -- ===== 背景 =====
+    local bgTex = EnsureBarBackground(bar)
+    if bgTex and cfg.barBackgroundColor then
         local bc = cfg.barBackgroundColor
-        bg:SetColorTexture(bc.r or 0.1, bc.g or 0.1, bc.b or 0.1, bc.a or 0.8)
+        bgTex:SetTexture(ResolveStatusBarTexture(cfg.barTexture))
+        bgTex:SetVertexColor(bc.r or 0.1, bc.g or 0.1, bc.b or 0.1, bc.a or 0.8)
+        bgTex:Show()
     end
-    local customBG = EnsureBuffBarBackground(bar)
-    if customBG and cfg.barBackgroundColor then
-        local bc = cfg.barBackgroundColor
-        customBG:SetTexture(ResolveStatusBarTexture(cfg.barTexture))
-        customBG:SetVertexColor(bc.r or 0.1, bc.g or 0.1, bc.b or 0.1, bc.a or 0.8)
-        customBG:Show()
-    end
-    EnsureBuffBarBorder(bar)
-    EnsureFlatBackdrop(bar, cfg.barBackgroundColor, { r = 0, g = 0, b = 0, a = 1 }, "_vf_buffBarFlat")
 
+    -- ===== 边框 =====
+    EnsureBarBorder(bar)
+
+    -- ===== 文本容器 =====
+    if bar and not frame._vf_barTextContainer then
+        local tc = CreateFrame("Frame", nil, bar)
+        tc:SetAllPoints(bar)
+        tc:SetFrameLevel((bar:GetFrameLevel() or 1) + 4)
+        frame._vf_barTextContainer = tc
+    end
+    local textContainer = frame._vf_barTextContainer
+
+    -- ===== 名称文本 =====
     if nameText then
-        EnsureBuffBarTextShowHook(frame, "_vf_buffBarNameShowHook", nameText, function()
-            local localCfg = frame._vf_buffBarCfg
-            return localCfg and localCfg.showName ~= false
-        end)
+        HookBarTextVisibility(frame, "_vf_nameHook", nameText, "showName")
         if cfg.showName == false then
             nameText:Hide()
-            nameText:SetAlpha(0)
         else
-            nameText:SetAlpha(1)
+            if textContainer then
+                nameText:SetParent(textContainer)
+                textContainer:Show()
+            end
             nameText:Show()
+            nameText:SetAlpha(1)
+            if nameText.SetDrawLayer then
+                nameText:SetDrawLayer("OVERLAY", 7)
+            end
             StyleApply.ApplyFontStyle(nameText, cfg.nameFont, "_vf_bar_name")
         end
     end
 
+    -- ===== 持续时间文本 =====
     if durationText then
-        EnsureBuffBarTextShowHook(frame, "_vf_buffBarDurShowHook", durationText, function()
-            local localCfg = frame._vf_buffBarCfg
-            return localCfg and localCfg.showDuration ~= false
-        end)
+        HookBarTextVisibility(frame, "_vf_durHook", durationText, "showDuration")
         if cfg.showDuration == false then
             durationText:Hide()
-            durationText:SetAlpha(0)
         else
-            durationText:SetAlpha(1)
+            if textContainer then
+                durationText:SetParent(textContainer)
+                textContainer:Show()
+            end
             durationText:Show()
+            durationText:SetAlpha(1)
+            if durationText.SetDrawLayer then
+                durationText:SetDrawLayer("OVERLAY", 7)
+            end
             StyleApply.ApplyFontStyle(durationText, cfg.durationFont, "_vf_bar_dur")
         end
     end
 
+    -- ===== 层数文本=====
     if appText then
-        EnsureBuffBarTextShowHook(frame, "_vf_buffBarStackShowHook", appText, function()
-            local localCfg = frame._vf_buffBarCfg
-            return localCfg and localCfg.showStack ~= false
-        end)
+        HookBarTextVisibility(frame, "_vf_stackHook", appText, "showStack")
         if cfg.showStack == false then
             appText:Hide()
-            appText:SetAlpha(0)
+            if frame._vf_barAppContainer then
+                frame._vf_barAppContainer:Hide()
+            end
         else
-            appText:SetAlpha(1)
+            -- 确保层数文本容器存在（parent为bar，层级高于bar）
+            if bar and not frame._vf_barAppContainer then
+                local container = CreateFrame("Frame", nil, bar)
+                container:SetAllPoints(bar)
+                container:SetFrameLevel((bar:GetFrameLevel() or 1) + 4)
+                frame._vf_barAppContainer = container
+            end
+            if frame._vf_barAppContainer then
+                frame._vf_barAppContainer:Show()
+                -- 将层数文本从icon重新parent到bar的子容器
+                appText:SetParent(frame._vf_barAppContainer)
+            end
             appText:Show()
+            appText:SetAlpha(1)
+            if appText.SetDrawLayer then
+                appText:SetDrawLayer("OVERLAY", 7)
+            end
             StyleApply.ApplyFontStyle(appText, cfg.stackFont, "_vf_bar_stack")
         end
     end
+
+    -- 记录版本号
+    frame._vf_barStyled = true
+    frame._vf_barStyleVer = barStyleVer
+    frame._vf_barW = frameWidth
+    frame._vf_barH = frameHeight
+    frame._vf_barIconPos = iconPosition
 end
 
+--- 收集→排序→样式→定位
 local function RefreshBuffBarViewer(viewer, cfg)
     local _pt = Profiler.start("CDS:RefreshBuffBarViewer")
     if not viewer or not cfg then Profiler.stop(_pt) return false end
@@ -362,46 +402,40 @@ local function RefreshBuffBarViewer(viewer, cfg)
     if not IsViewerReady(viewer) then Profiler.stop(_pt) return false end
     viewer._vf_refreshing = true
 
+    -- 1. 收集可见帧并排序
     local frames = CollectBuffBarFrames(viewer)
     local count = #frames
-    if count == 0 then
-        viewer._vf_refreshing = false
-        return true
-    end
 
     local width = ResolveBuffBarWidth(cfg)
     local height = cfg.barHeight or 20
+    local spacing = cfg.barSpacing or 1
+    local growDir = cfg.growDirection or "DOWN"
 
-    -- 应用样式到所有帧
+    if count == 0 then
+        viewer._vf_refreshing = false
+        Profiler.stop(_pt)
+        return true
+    end
+
+    -- 2. 对每个帧：样式 → 定位 → 显示
     for i = 1, count do
         local frame = frames[i]
+        local offset = (i - 1) * (height + spacing)
+
+        -- 样式
         ApplyBuffBarFrameStyle(frame, cfg, width, height)
-    end
 
-    -- 只在动态布局时干预位置
-    if cfg.dynamicLayout then
-        local spacing = cfg.barSpacing or 1
-        local growDir = cfg.growDirection or "top"
-
-        for i = 1, count do
-            local frame = frames[i]
-            frame:ClearAllPoints()
-
-            local offset = (i - 1) * (height + spacing)
-
-            if growDir == "bottom" then
-                -- 从底部增长：使用 BOTTOM 锚点，向上堆叠
-                StyleLayout.SetPointCached(frame, "BOTTOM", viewer, "BOTTOM", 0, offset)
-            else
-                -- 从顶部增长（默认）：使用 TOP 锚点，向下堆叠
-                StyleLayout.SetPointCached(frame, "TOP", viewer, "TOP", 0, -offset)
-            end
-
-            -- 恢复透明度，显示帧
-            frame:SetAlpha(1)
+        -- 定位
+        frame:ClearAllPoints()
+        if growDir == "UP" then
+            frame:SetPoint("BOTTOMLEFT", viewer, "BOTTOMLEFT", 0, offset)
+        else
+            frame:SetPoint("TOPLEFT", viewer, "TOPLEFT", 0, -offset)
         end
+
+        -- 确保可见
+        frame:SetAlpha(1)
     end
-    -- 静态布局时不干预位置，让系统默认处理
 
     viewer._vf_refreshing = false
     Profiler.stop(_pt)
@@ -839,10 +873,6 @@ end
 local function SetupBuffBarRuntimeHandlers()
     if not BuffBarRuntime then return end
 
-    -- CollectBuffBarFrames 缓存
-    local barCache = {}
-    local barCacheChildCount = -1
-
     BuffBarRuntime.setHandlers({
         getViewer = function()
             local viewer = GetBuffBarViewerAndConfig()
@@ -853,21 +883,16 @@ local function SetupBuffBarRuntimeHandlers()
             return cfg
         end,
         collectVisible = function(viewer, isDirty)
-            local cc = select('#', viewer:GetChildren())
-            if cc ~= barCacheChildCount or isDirty then
-                barCache = CollectBuffBarFrames(viewer)
-                barCacheChildCount = cc
-            end
+            local frames = CollectBuffBarFrames(viewer)
             local visible = {}
-            for i = 1, #barCache do
-                if barCache[i]:IsShown() then
-                    visible[#visible + 1] = barCache[i]
+            for i = 1, #frames do
+                if frames[i]:IsShown() then
+                    visible[#visible + 1] = frames[i]
                 end
             end
             return visible
         end,
         refresh = function(viewer, cfg)
-            barCacheChildCount = -1
             RefreshBuffBarViewer(viewer, cfg)
         end,
     })
@@ -941,24 +966,18 @@ DoBuffBarRefresh = function(attempt)
 
     if not BuffBarRuntime then return end
 
-    -- 只在动态布局时启用运行时系统
-    if cfg.dynamicLayout then
-        BuffBarRuntime.markDirty()
-        BuffBarRuntime.enable()
-    else
-        BuffBarRuntime.disable()
-    end
+    -- 始终启用runtime监控
+    BuffBarRuntime.markDirty()
+    BuffBarRuntime.enable()
 end
 
 RequestBuffBarRefresh = function()
     Profiler.count("CDS:RequestBuffBarRefresh")
     if buffBarRefreshPending then return end
     buffBarRefreshPending = true
-
     -- 同步执行，避免闪烁
     DoBuffBarRefresh(0)
     buffBarRefreshPending = false
-    -- followup 由 BuffBarRuntime.enable() 的 watchdog 机制保证
 end
 
 local function DoRefresh()
@@ -1137,22 +1156,23 @@ SetupHooks = function()
     if BuffBarCooldownViewer then
         SafeHook(BuffBarCooldownViewer, "RefreshData", buffBarHandler)
         BuffBarCooldownViewer:HookScript("OnShow", buffBarHandler)
+
         SafeHook(BuffBarCooldownViewer, "OnAcquireItemFrame", function(_, frame)
             if not frame then return end
             local viewer, cfg = GetBuffBarViewerAndConfig()
             if not viewer or not cfg then return end
-            if frame.SetScale then
-                frame:SetScale(1)
-            end
-            -- 先隐藏帧，防止在默认位置闪一帧
-            if cfg.dynamicLayout then
-                frame:SetAlpha(0)
-            end
+
+            -- 强制scale为1
+            if frame.SetScale then frame:SetScale(1) end
+
+            -- 立即应用样式（强制，因为帧可能是复用的）
+            frame._vf_barStyled = false
             local width = ResolveBuffBarWidth(cfg)
             local height = cfg.barHeight or 20
             ApplyBuffBarFrameStyle(frame, cfg, width, height)
-            -- 同步刷新位置，避免闪烁
-            buffBarImmediateHandler()
+
+            -- 标记runtime脏
+            if BuffBarRuntime then BuffBarRuntime.markDirty() end
         end)
 
         if BuffBarCooldownViewer.itemFramePool then
@@ -1178,13 +1198,42 @@ SetupHooks = function()
         if CooldownViewerBuffBarItemMixin.OnCooldownIDSet then
             hooksecurefunc(CooldownViewerBuffBarItemMixin, "OnCooldownIDSet", function(frame)
                 if not frame then return end
-                buffBarImmediateHandler()
+                local viewer, cfg = GetBuffBarViewerAndConfig()
+                if not viewer or not cfg then return end
+                -- 强制scale为1
+                if frame.SetScale then frame:SetScale(1) end
+                -- 立即对单帧应用样式
+                frame._vf_barStyled = false
+                local width = ResolveBuffBarWidth(cfg)
+                local height = cfg.barHeight or 20
+                ApplyBuffBarFrameStyle(frame, cfg, width, height)
+                -- 确保帧可见（OnAcquire时可能还没Show，现在有内容了）
+                frame:SetAlpha(1)
+                -- 同步刷新全局布局
+                DoBuffBarRefresh(0)
             end)
         end
         if CooldownViewerBuffBarItemMixin.OnActiveStateChanged then
             hooksecurefunc(CooldownViewerBuffBarItemMixin, "OnActiveStateChanged", function(frame)
                 if not frame then return end
-                buffBarImmediateHandler()
+                frame._vf_barStyled = false
+                DoBuffBarRefresh(0)
+            end)
+        end
+        if CooldownViewerBuffBarItemMixin.SetBarContent then
+            hooksecurefunc(CooldownViewerBuffBarItemMixin, "SetBarContent", function(frame)
+                if not frame then return end
+                frame._vf_barStyled = false
+                -- SetBarContent 更新了文本内容（层数等），立即重新样式化
+                local viewer, cfg = GetBuffBarViewerAndConfig()
+                if viewer and cfg then
+                    local width = ResolveBuffBarWidth(cfg)
+                    local height = cfg.barHeight or 20
+                    ApplyBuffBarFrameStyle(frame, cfg, width, height)
+                end
+                -- 确保帧可见
+                frame:SetAlpha(1)
+                DoBuffBarRefresh(0)
             end)
         end
     end
@@ -1205,6 +1254,7 @@ end
 VFlow.on("PLAYER_ENTERING_WORLD", "VFlow.SkillStyle", function()
     InvalidateDBCache()
     BumpButtonStyleVersion()
+    if BuffBarRuntime then BuffBarRuntime.bumpStyleVersion() end
     SetupHooks()
     RequestRefresh(0.5)
 end)
@@ -1233,6 +1283,7 @@ end)
 VFlow.Store.watch("VFlow.BuffBar", "CooldownStyle_BuffBar", function(key, value)
     InvalidateDBCache()
     BumpButtonStyleVersion()
+    if BuffBarRuntime then BuffBarRuntime.bumpStyleVersion() end
     RequestBuffBarRefresh()
 end)
 

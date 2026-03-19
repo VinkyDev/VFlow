@@ -15,8 +15,7 @@ local defaults = {
     barTexture = "Solid",
     barColor = { r = 0.4, g = 0.6, b = 0.9, a = 1 },
     barBackgroundColor = { r = 0.1, g = 0.1, b = 0.1, a = 0.8 },
-    dynamicLayout = true,
-    growDirection = "top",
+    growDirection = "DOWN",
     iconPosition = "LEFT",
     iconGap = 1,
     showName = true,
@@ -80,22 +79,14 @@ local function renderContent(container)
 
         { type = "subtitle", text = "布局", cols = 24 },
         { type = "separator", cols = 24 },
-        { type = "checkbox", key = "dynamicLayout", label = "动态布局", cols = 12 },
         {
-            type = "if",
-            dependsOn = "dynamicLayout",
-            condition = function(cfg) return cfg.dynamicLayout end,
-            children = {
-                {
-                    type = "dropdown",
-                    key = "growDirection",
-                    label = "生长方向",
-                    cols = 12,
-                    items = {
-                        { "从顶部增长", "top" },
-                        { "从底部增长", "bottom" },
-                    }
-                },
+            type = "dropdown",
+            key = "growDirection",
+            label = "生长方向",
+            cols = 12,
+            items = {
+                { "向下增长", "DOWN" },
+                { "向上增长", "UP" },
             }
         },
         { type = "spacer", height = 5, cols = 24 },

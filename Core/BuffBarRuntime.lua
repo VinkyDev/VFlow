@@ -1,3 +1,8 @@
+-- =========================================================
+-- VFlow BuffBarRuntime - BUFF条运行时监控
+-- 对标ACDM：持续监控viewer状态，检测变化并触发布局/样式刷新
+-- =========================================================
+
 local VFlow = _G.VFlow
 if not VFlow then return end
 
@@ -13,6 +18,7 @@ local burst = 0
 local nextUpdate = 0
 local handlers = nil
 
+-- 快照缓存：用于检测可见帧集合是否变化
 local cachedFrames = {}
 local cachedLayoutIndex = {}
 local cachedCount = 0
@@ -23,11 +29,18 @@ local cachedViewer = nil
 local cachedCfg = nil
 local needRefetchRefs = true
 
-local BURST_TICKS = 5
-local BURST_THROTTLE = 0.033
-local WATCHDOG_THROTTLE = 0.25
+-- 样式版本：配置变更时递增，用于检测是否需要重新应用样式
+local styleVersion = 0
 
-local function cacheVisible(visible)
+local BURST_TICKS = 8
+local BURST_THROTTLE = 0.033
+local WATCHDOG_THROTTLE = 0.20
+
+-- =========================================================
+-- 快照管理
+-- =========================================================
+
+local function SnapshotVisible(visible)
     wipe(cachedFrames)
     wipe(cachedLayoutIndex)
     cachedCount = #visible
@@ -38,11 +51,12 @@ local function cacheVisible(visible)
     end
 end
 
-local function hasVisibleChanged(visible)
-    if cachedCount ~= #visible then
+local function HasVisibleChanged(visible)
+    local count = #visible
+    if cachedCount ~= count then
         return true
     end
-    for i = 1, #visible do
+    for i = 1, count do
         local bar = visible[i]
         if cachedFrames[i] ~= bar then
             return true
@@ -54,8 +68,20 @@ local function hasVisibleChanged(visible)
     return false
 end
 
+-- =========================================================
+-- 公共 API
+-- =========================================================
+
 function BuffBarRuntime.setHandlers(v)
     handlers = v
+end
+
+function BuffBarRuntime.bumpStyleVersion()
+    styleVersion = styleVersion + 1
+end
+
+function BuffBarRuntime.getStyleVersion()
+    return styleVersion
 end
 
 function BuffBarRuntime.markDirty()
@@ -74,6 +100,7 @@ function BuffBarRuntime.disable()
     burst = 0
     nextUpdate = 0
     cachedCount = 0
+    cachedChildCount = 0
     cachedViewer = nil
     cachedCfg = nil
     needRefetchRefs = true
@@ -85,6 +112,7 @@ function BuffBarRuntime.enable()
     if enabled then return end
     enabled = true
     needRefetchRefs = true
+
     frame:SetScript("OnUpdate", function()
         local _pt = Profiler.start("BuffBarRT:OnUpdate")
         if not handlers then
@@ -110,13 +138,6 @@ function BuffBarRuntime.enable()
         if not viewer:IsShown() then Profiler.stop(_pt) return end
         if viewer._vf_refreshing then Profiler.stop(_pt) return end
 
-        -- 只在动态布局时运行
-        if not cfg.dynamicLayout then
-            BuffBarRuntime.disable()
-            Profiler.stop(_pt)
-            return
-        end
-
         local now = GetTime()
         local throttle = (dirty or burst > 0) and BURST_THROTTLE or WATCHDOG_THROTTLE
         if now < nextUpdate then Profiler.stop(_pt) return end
@@ -131,13 +152,15 @@ function BuffBarRuntime.enable()
             end
         end
 
+        -- 收集可见帧并检测变化
         local visible = handlers.collectVisible and handlers.collectVisible(viewer, dirty) or {}
-        local changed = dirty or hasVisibleChanged(visible)
+        local changed = dirty or HasVisibleChanged(visible)
+
         if changed then
             if handlers.refresh then
                 handlers.refresh(viewer, cfg)
             end
-            cacheVisible(visible)
+            SnapshotVisible(visible)
             cachedChildCount = select('#', viewer:GetChildren())
             dirty = false
             burst = BURST_TICKS
