@@ -14,6 +14,14 @@ VFlow.registerModule(MODULE_KEY, {
 
 local CHANGELOG = {
     {
+        version = "0.1.6",
+        date = "2026-03-19",
+        content = {
+            "修复Buff条相关BUG",
+            "堆叠层数为1时不显示堆叠层数"
+        }
+    },
+    {
         version = "0.1.5",
         date = "2026-03-19",
         content = {
