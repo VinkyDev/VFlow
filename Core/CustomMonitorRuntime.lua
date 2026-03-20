@@ -1093,27 +1093,23 @@ UpdateDurationBar = function(barFrame, spellID, barKey)
         barFrame._lastKnownActive = true
 
         if isRing and seg._isRing then
-            -- 环形模式：只在需要刷新时更新，避免重复SetCooldown导致动画重置
-            if seg._needsRefresh then
-                local durObj = C_UnitAuras.GetAuraDuration(unit, auraInstanceID)
-                if durObj then
-                    if seg.SetCooldownFromDurationObject then
-                        seg:SetCooldownFromDurationObject(durObj)
-                    else
-                        local start    = durObj:GetCooldownStartTime()
-                        local duration = durObj:GetCooldownDuration()
-                        if start and duration and duration > 0 then
-                            seg:SetCooldown(start, duration)
-                        end
+            -- 环形模式：每帧更新，与条形的SetTimerDuration行为一致
+            local durObj = C_UnitAuras.GetAuraDuration(unit, auraInstanceID)
+            if durObj then
+                if seg.SetCooldownFromDurationObject then
+                    seg:SetCooldownFromDurationObject(durObj)
+                else
+                    local start    = durObj:GetCooldownStartTime()
+                    local duration = durObj:GetCooldownDuration()
+                    if start and duration and duration > 0 then
+                        seg:SetCooldown(start, duration)
                     end
-                    -- 每帧更新颜色
-                    local rc = cfg.ringColor or { r = 0.2, g = 0.6, b = 1, a = 1 }
-                    seg:SetSwipeColor(rc.r, rc.g, rc.b, rc.a)
-                    seg._needsRefresh = false
                 end
+                local rc = cfg.ringColor or { r = 0.2, g = 0.6, b = 1, a = 1 }
+                seg:SetSwipeColor(rc.r, rc.g, rc.b, rc.a)
+                seg._needsRefresh = false
             end
             if barFrame._text then
-                local durObj = C_UnitAuras.GetAuraDuration(unit, auraInstanceID)
                 if durObj then SetRemainingText(barFrame._text, durObj)
                 else barFrame._text:SetText("") end
             end
