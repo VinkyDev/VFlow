@@ -827,15 +827,17 @@ local function UpdateChargeBar(barFrame, spellID)
     if not barFrame._refreshChargeText then
         local tf = cfg.timerFont or {}
         local fc = tf.color or { r = 1, g = 1, b = 1, a = 1 }
-        local txt = barFrame._refreshCharge:CreateFontString(nil, "OVERLAY")
-        txt:SetAllPoints(barFrame._refreshCharge)
-        txt:SetJustifyH("CENTER")
+        -- 挂到 textHolder 上，使其能独立定位且层级在条之上
+        local txt = barFrame._textHolder:CreateFontString(nil, "OVERLAY")
         txt:SetFont(
             VFlow.UI.resolveFontPath(tf.font),
             tf.size or 14,
             tf.outline or "OUTLINE"
         )
         txt:SetTextColor(fc.r, fc.g, fc.b, fc.a)
+        txt:SetJustifyH("CENTER")
+        local anchor = tf.position or "CENTER"
+        txt:SetPoint(anchor, barFrame._refreshCharge, anchor, tf.offsetX or 0, tf.offsetY or 0)
         barFrame._refreshChargeText = txt
     end
 
@@ -1306,6 +1308,7 @@ local function CreateBarFrame(spellID, cfg, container)
     textHolder:SetAllPoints(barFrame)
     textHolder:SetFrameLevel(barFrame:GetFrameLevel() + 6)
     textHolder:EnableMouse(false)
+    barFrame._textHolder = textHolder
 
     local tf      = cfg.timerFont or {}
     local fc      = tf.color or { r = 1, g = 1, b = 1, a = 1 }
