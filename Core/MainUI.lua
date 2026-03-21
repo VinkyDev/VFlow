@@ -203,16 +203,6 @@ local menuItems = {
             -- 自定义BUFF组会动态添加
         }
     },
-    -- 额外CD监控（物品等）
-    {
-        type = "category",
-        key = "items",
-        label = "额外CD监控",
-        children = {
-            { key = "item_monitor", label = "主组", module = "Items" },
-            -- 自定义物品组会动态添加
-        }
-    },
     -- 自定义监控
     {
         type = "category",
@@ -221,6 +211,16 @@ local menuItems = {
         children = {
             { key = "custom_spell", label = "技能监控", module = "CustomMonitor" },
             { key = "custom_buff", label = "BUFF监控", module = "CustomMonitor" },
+        }
+    },
+    -- 额外CD监控（物品等）
+    {
+        type = "category",
+        key = "items",
+        label = "额外CD监控",
+        children = {
+            { key = "item_monitor", label = "主组", module = "Items" },
+            -- 自定义物品组会动态添加
         }
     },
     -- 资源条
