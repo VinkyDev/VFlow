@@ -14,6 +14,14 @@ VFlow.registerModule(MODULE_KEY, {
 
 local CHANGELOG = {
     {
+        version = "0.2.0",
+        date = "2026-03-21",
+        content = {
+            "新增额外CD监控模块",
+            "自定义图形监控增加不在系统编辑模式中显示的配置",
+        }
+    },
+    {
         version = "0.1.7",
         date = "2026-03-20",
         content = {
@@ -68,11 +76,37 @@ local ROADMAP = {
 -- =========================================================
 
 local function renderContent(container, menuKey)
-    local db = VFlow.getDB(MODULE_KEY, { hide = false, minimapPos = 220, enableWaCommand = true })
+    local db = VFlow.getDB(MODULE_KEY, {
+        hide = false,
+        minimapPos = 220,
+        enableWaCommand = true,
+        changelogShowHistory = false,
+    })
     local UI = VFlow.UI
     local primaryColor = UI.style.colors.primary
     local githubColor = { 1, 1, 1, 1 }
     local ngaColor = { 1, 1, 1, 1 }
+
+    local function renderOneChangelogBlock(parent, log, isLatest)
+        local y = 0
+
+        local header = parent:CreateFontString(nil, "OVERLAY",
+            isLatest and "GameFontNormalLarge" or "GameFontNormal")
+        header:SetPoint("TOPLEFT", 0, y)
+        header:SetText(log.version .. " (" .. log.date .. ")")
+        header:SetTextColor(unpack(primaryColor))
+        y = y - (isLatest and 22 or 20)
+
+        for _, lineText in ipairs(log.content) do
+            local line = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            line:SetPoint("TOPLEFT", 10, y)
+            line:SetText("• " .. lineText)
+            y = y - 18
+        end
+
+        y = y - 5
+        parent:SetHeight(-y)
+    end
 
     local layout = {
         -- LOGO
@@ -102,7 +136,7 @@ local function renderContent(container, menuKey)
             type = "checkbox",
             key = "hide",
             label = "隐藏小地图按钮",
-            cols = 24,
+            cols = 12,
             onChange = function(cfg, value)
                 VFlow.Store.set(MODULE_KEY, "hide", value)
             end
@@ -111,7 +145,7 @@ local function renderContent(container, menuKey)
             type = "checkbox",
             key = "enableWaCommand",
             label = "允许使用 /wa 命令打开插件 (需重载)",
-            cols = 24,
+            cols = 12,
             onChange = function(cfg, value)
                 VFlow.Store.set(MODULE_KEY, "enableWaCommand", value)
                 if value then
@@ -122,6 +156,60 @@ local function renderContent(container, menuKey)
             end
         },
 
+        -- 更新日志：默认仅最新一条；往期按需展开
+        { type = "spacer", height = 6, cols = 24 },
+        { type = "subtitle", text = "更新日志", cols = 24 },
+        { type = "separator", cols = 24 },
+        {
+            type = "customRender",
+            cols = 24,
+            render = function(parent)
+                if CHANGELOG[1] then
+                    renderOneChangelogBlock(parent, CHANGELOG[1], true)
+                end
+            end
+        },
+    }
+
+    if #CHANGELOG > 1 then
+        layout[#layout + 1] = {
+            type = "checkbox",
+            key = "changelogShowHistory",
+            label = string.format("显示历史更新日志（另 %d 项）", #CHANGELOG - 1),
+            cols = 24,
+        }
+        layout[#layout + 1] = {
+            type = "if",
+            dependsOn = "changelogShowHistory",
+            condition = function(cfg)
+                return cfg.changelogShowHistory == true
+            end,
+            children = {
+                { type = "spacer", height = 4, cols = 24 },
+                { type = "subtitle", text = "历史更新日志", cols = 24 },
+                { type = "separator", cols = 24 },
+                {
+                    type = "for",
+                    cols = 24,
+                    dataSource = function()
+                        local t = {}
+                        for i = 2, #CHANGELOG do
+                            t[#t + 1] = CHANGELOG[i]
+                        end
+                        return t
+                    end,
+                    template = {
+                        type = "customRender",
+                        render = function(parent, _, _, item)
+                            renderOneChangelogBlock(parent, item._forData, false)
+                        end,
+                    },
+                },
+            },
+        }
+    end
+
+    local tail = {
         -- 核心机制说明
         { type = "spacer", height = 10, cols = 24 },
         { type = "subtitle", text = "功能说明", cols = 24 },
@@ -235,41 +323,6 @@ local function renderContent(container, menuKey)
             end
         },
 
-        -- 更新日志
-        { type = "spacer", height = 10, cols = 24 },
-        { type = "subtitle", text = "更新日志", cols = 24 },
-        { type = "separator", cols = 24 },
-        {
-            type = "for",
-            cols = 24,
-            dataSource = CHANGELOG,
-            template = {
-                type = "customRender",
-                render = function(parent, _, _, item)
-                    local log = item._forData
-                    local y = 0
-
-                    -- 版本号和日期
-                    local header = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-                    header:SetPoint("TOPLEFT", 0, y)
-                    header:SetText(log.version .. " (" .. log.date .. ")")
-                    header:SetTextColor(unpack(primaryColor))
-                    y = y - 20
-
-                    -- 内容
-                    for _, content in ipairs(log.content) do
-                        local line = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-                        line:SetPoint("TOPLEFT", 10, y)
-                        line:SetText("• " .. content)
-                        y = y - 18
-                    end
-
-                    y = y - 5 -- 底部间距
-                    parent:SetHeight(-y)
-                end
-            }
-        },
-
         -- 开发计划
         { type = "spacer", height = 10, cols = 24 },
         { type = "subtitle", text = "开发计划", cols = 24 },
@@ -290,6 +343,10 @@ local function renderContent(container, menuKey)
             }
         },
     }
+
+    for i = 1, #tail do
+        layout[#layout + 1] = tail[i]
+    end
 
     VFlow.Grid.render(container, layout, db, MODULE_KEY)
 end
