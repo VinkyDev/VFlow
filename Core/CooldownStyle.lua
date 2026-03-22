@@ -913,7 +913,17 @@ local function RefreshSkillViewer(viewer, cfg)
         local startX = ((maxRowW - rowBaseW) / 2 + anchorOffset) * iconDir
         if iconDir == -1 then startX = -startX end
 
+        local wRow = (rowIdx == 1) and iconW or row2W
+        local hRow = (rowIdx == 1) and iconH or row2H
+        local wSnap, strideX = wRow, (wRow + (spacingX or 0))
         local curX = startX
+        local hSnap = hRow
+        if isH and PP and PP.NormalizeColumnStride and PP.PixelSnap then
+            wSnap, strideX = PP.NormalizeColumnStride(wRow, spacingX or 0, viewer)
+            hSnap = PP.PixelSnap(hRow, viewer)
+            curX = PP.PixelSnap(startX, viewer)
+        end
+
         local rowMaxH = 0
         local rowMaxW = 0
 
@@ -927,19 +937,24 @@ local function RefreshSkillViewer(viewer, cfg)
                 if h > rowMaxH then rowMaxH = h end
                 if w > rowMaxW then rowMaxW = w end
 
-                StyleApply.ApplyIconSize(button, w, h)
+                if isH then
+                    StyleApply.ApplyIconSize(button, wSnap, hSnap)
+                else
+                    StyleApply.ApplyIconSize(button, w, h)
+                end
 
                 local x, y
                 if isH then
                     x = curX
                     y = growUp and yAccum or -yAccum
-                    curX = curX + (w + spacingX) * iconDir
+                    curX = curX + strideX * iconDir
                 else
                     y = -(colIdx - 1) * (h + spacingY) * iconDir
                     x = growUp and -xAccum or xAccum
                 end
 
                 StyleLayout.SetPointCached(button, "TOPLEFT", viewer, "TOPLEFT", x, y)
+                if button:IsShown() then button:SetAlpha(1) end
 
                 if cell.isItem then
                     if button._vf_btnStyleVer ~= _buttonStyleVersion then
@@ -973,6 +988,25 @@ local function RefreshSkillViewer(viewer, cfg)
         end
     end
 
+    -- Viewer 内未参与本次布局的池化按钮仍可能带着上次的 _vf_border/发光，停在默认位置 → 少技能时出现「多出来的边框」
+    local laidOutFrames = {}
+    for _, r in ipairs(rowCells) do
+        for _, cell in ipairs(r) do
+            local f = cell.frame
+            if f then laidOutFrames[f] = true end
+        end
+    end
+    for _, icon in ipairs(allIcons) do
+        if not laidOutFrames[icon] then
+            if StyleApply.HideCustomGlow then StyleApply.HideCustomGlow(icon) end
+            if StyleApply.HideGlow then StyleApply.HideGlow(icon) end
+            if icon._vf_border then icon._vf_border:Hide() end
+            if icon:IsShown() and not (icon.Icon and icon.Icon:GetTexture()) then
+                icon:SetAlpha(0)
+            end
+        end
+    end
+
     local bboxIcons = {}
     for _, r in ipairs(rowCells) do
         for _, cell in ipairs(r) do
@@ -983,6 +1017,13 @@ local function RefreshSkillViewer(viewer, cfg)
         end
     end
     StyleLayout.UpdateViewerSizeToMatchIcons(viewer, #bboxIcons > 0 and bboxIcons or mainVisible)
+    -- 固定行长：图标按 maxRowW 居中，viewer 不能窄于该行宽，否则底框与 TOPLEFT+startX 的按钮错位
+    if fixedRowLengthByLimit and isH and maxRowW > 0 then
+        local vw = viewer:GetWidth()
+        if vw and vw < maxRowW then
+            viewer:SetWidth(maxRowW)
+        end
+    end
 
     -- 布局自定义技能组
     if VFlow.SkillGroups and VFlow.SkillGroups.layoutSkillGroups then

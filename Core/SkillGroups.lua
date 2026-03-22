@@ -313,14 +313,24 @@ local function LayoutSkillGroups(groupBuckets)
                             end
                             local startX = (maxRowW - rowBaseW) / 2 + anchorOffset
 
+                            local PP = VFlow.PixelPerfect
+                            local wSnap, strideX = w, w + spacingX
+                            local x0 = startX
+                            local hSnap = h
+                            if PP and PP.NormalizeColumnStride and PP.PixelSnap then
+                                wSnap, strideX = PP.NormalizeColumnStride(w, spacingX, container)
+                                x0 = PP.PixelSnap(startX, container)
+                                hSnap = PP.PixelSnap(h, container)
+                            end
+
                             for colIdx, button in ipairs(rowIcons) do
                                 -- 应用样式
                                 if VFlow.StyleApply then
-                                    VFlow.StyleApply.ApplyIconSize(button, w, h)
+                                    VFlow.StyleApply.ApplyIconSize(button, wSnap, hSnap)
                                     VFlow.StyleApply.ApplyButtonStyle(button, cfg)
                                 end
 
-                                local x = startX + (colIdx - 1) * (w + spacingX)
+                                local x = x0 + (colIdx - 1) * strideX
                                 local y = -yAccum
 
                                 button:ClearAllPoints()

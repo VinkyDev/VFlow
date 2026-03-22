@@ -41,6 +41,19 @@ end
 PixelPerfect.GetPixelScale = GetOnePixelSize
 PixelPerfect.PixelSnap = PixelSnap
 
+--- 横向排布：宽度与列间距分别对齐到 ref 的像素格，返回 (wSnap, 水平步长)。
+--- 步长恒为 wSnap+spacingSnap，避免「逐段累加 + 引擎舍入」造成列间缝宽不一致。
+function PixelPerfect.NormalizeColumnStride(cellWidth, spacingX, refFrame)
+    local w = cellWidth or 0
+    local s = spacingX or 0
+    if not refFrame then
+        return w, w + s
+    end
+    local wS = PixelSnap(w, refFrame)
+    local sS = PixelSnap(s, refFrame)
+    return wS, wS + sS
+end
+
 -- =========================================================
 -- SECTION 2: 尺寸设置（完美像素）
 -- =========================================================

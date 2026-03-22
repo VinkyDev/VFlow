@@ -821,9 +821,6 @@ showContent = function(menuKey, moduleName)
 
     -- 清空右侧内容
     if rightPanel.content then
-        if VFlow.Grid and VFlow.Grid.clear then
-            VFlow.Grid.clear(rightPanel.content)
-        end
         rightPanel.content:Hide()
         rightPanel.content:SetParent(nil)
     end
