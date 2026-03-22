@@ -14,6 +14,14 @@ VFlow.registerModule(MODULE_KEY, {
 
 local CHANGELOG = {
     {
+        version = "0.3.0",
+        date = "2026-03-22",
+        content = {
+            "新增自定义播报，自定义高亮功能",
+            "修复大量BUG: 包含Masque联动BUG, 技能组间距像素BUG等"
+        }
+    },
+    {
         version = "0.2.0",
         date = "2026-03-21",
         content = {
