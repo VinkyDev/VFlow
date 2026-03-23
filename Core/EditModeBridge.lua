@@ -1,5 +1,14 @@
+-- =========================================================
+-- SECTION 1: 模块入口
+-- EditModeBridge — 编辑模式内「打开 VFlow 设置」按钮
+-- =========================================================
+
 local VFlow = _G.VFlow
 if not VFlow then return end
+
+-- =========================================================
+-- SECTION 2: 目标 Viewer 与按钮注入
+-- =========================================================
 
 local TARGETS = {
     EssentialCooldownViewer = { menuKey = "skill_important" },

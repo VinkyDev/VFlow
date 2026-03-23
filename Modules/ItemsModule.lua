@@ -1,3 +1,11 @@
+--[[ Core 依赖：
+  - Core/ItemGroups.lua：主组/自定义组/追加到技能条等布局与图标
+  - Core/ItemAutoData.lua：手动物品与种族等自动数据（查询）
+  - Core/ItemsManualOrder.lua：entryOrder 归一化（查询/整理）
+  - Core/CooldownStyle.lua：监听 Items 配置并应用样式
+  例外：新档主组无物品时写入示例物品并落盘（applyMainGroupStarterItemsOnce）。
+]]
+
 -- =========================================================
 -- SECTION 1: 模块注册
 -- =========================================================
@@ -123,6 +131,7 @@ local defaults = {
 }
 
 local db = VFlow.getDB(MODULE_KEY, defaults)
+local Utils = VFlow.Utils
 
 --- 仅运行一次：新档 itemIDs 为空时写入示例物品
 local function applyMainGroupStarterItemsOnce(profileDb)
@@ -247,7 +256,7 @@ end
 -- SECTION 5: 布局构建器
 -- =========================================================
 
-local mergeLayouts = VFlow.LayoutUtils.mergeLayouts
+local mergeLayouts = Utils.mergeLayouts
 
 -- 物品/技能选择器
 local function buildItemSpellSelector(groupConfig, options)
@@ -673,13 +682,7 @@ local function renderGroupConfig(container, groupConfig, groupName, options)
         }
     )
 
-    -- 渲染
-    if options.isCustom then
-        local configPath = "customGroups." .. options.groupIndex .. ".config"
-        Grid.render(container, layout, groupConfig, MODULE_KEY, configPath)
-    else
-        Grid.render(container, layout, groupConfig, MODULE_KEY, "mainGroup")
-    end
+    Grid.render(container, layout, groupConfig, MODULE_KEY, configPath)
 end
 
 local function renderContent(container, menuKey)

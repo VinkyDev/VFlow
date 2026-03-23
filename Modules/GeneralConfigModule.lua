@@ -1,3 +1,12 @@
+--[[ Core 依赖：
+  - Core/MainUI.lua：配置变更后刷新主界面与当前内容区
+  例外：档案切换/导入导出等由本页按钮与下拉显式提交，不经业务模块式 registerModule 配置管线。
+]]
+
+-- =========================================================
+-- SECTION 1: 模块注册
+-- =========================================================
+
 local VFlow = _G.VFlow
 if not VFlow then return end
 
@@ -10,8 +19,13 @@ VFlow.registerModule(MODULE_KEY, {
     description = "通用设置-配置",
 })
 
+-- =========================================================
+-- SECTION 2: 依赖与页面状态
+-- =========================================================
+
 local LibSerialize = LibStub and LibStub("LibSerialize", true)
 local LibDeflate = LibStub and LibStub("LibDeflate", true)
+local trim = VFlow.Utils.trim
 
 local pageState = {
     selectedProfile = DEFAULT_PROFILE,
@@ -23,12 +37,9 @@ local pageState = {
     importText = "",
 }
 
-local function trim(value)
-    if type(value) ~= "string" then
-        return ""
-    end
-    return (value:gsub("^%s*(.-)%s*$", "%1"))
-end
+-- =========================================================
+-- SECTION 3: 配置导入/导出与档案操作
+-- =========================================================
 
 local function syncPageState()
     if not VFlow.Store then
@@ -226,7 +237,11 @@ local function notifyAndRefresh(container, message)
     end
 end
 
-local function renderContent(container, menuKey)
+-- =========================================================
+-- SECTION 4: 渲染
+-- =========================================================
+
+local function renderContent(container, _menuKey)
     syncPageState()
     local currentProfile = VFlow.Store and VFlow.Store.getCurrentProfile and VFlow.Store.getCurrentProfile() or
         DEFAULT_PROFILE
@@ -388,7 +403,14 @@ local function renderContent(container, menuKey)
     end
 end
 
-if not VFlow.Modules then VFlow.Modules = {} end
+-- =========================================================
+-- SECTION 5: 公共接口
+-- =========================================================
+
+if not VFlow.Modules then
+    VFlow.Modules = {}
+end
+
 VFlow.Modules.GeneralConfig = {
     renderContent = renderContent,
 }

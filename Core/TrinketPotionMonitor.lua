@@ -1,5 +1,6 @@
 -- =========================================================
--- 饰品与药水BUFF监控
+-- SECTION 1: 模块入口
+-- TrinketPotionMonitor — 饰品与药水 BUFF 监控
 -- =========================================================
 
 local VFlow = _G.VFlow
@@ -9,7 +10,7 @@ local MODULE_KEY = "VFlow.Buffs"
 local MasqueSupport = VFlow.MasqueSupport
 
 -- =========================================================
--- 模块状态
+-- SECTION 2: 模块状态
 -- =========================================================
 
 local _container = nil        -- 容器帧
@@ -20,7 +21,7 @@ local _scanRetryCount = 0     -- 扫描重试计数
 local _scanTimer = nil        -- 扫描定时器
 
 -- =========================================================
--- 持续时间解析（参考CDFlow的ParseDuration）
+-- SECTION 3: 持续时间解析
 -- =========================================================
 
 local function ParseDuration(text)
@@ -48,7 +49,7 @@ local function ParseDuration(text)
 end
 
 -- =========================================================
--- 物品法术信息提取（三层策略）
+-- SECTION 4: 物品法术信息提取
 -- =========================================================
 
 local function GetItemSpellInfo(itemID)
@@ -110,7 +111,7 @@ local function GetItemSpellInfo(itemID)
 end
 
 -- =========================================================
--- 容器管理
+-- SECTION 5: 容器管理
 -- =========================================================
 
 local function InitContainer()
@@ -149,7 +150,7 @@ local function UpdateContainerPosition()
 end
 
 -- =========================================================
--- 图标管理
+-- SECTION 6: 图标管理
 -- =========================================================
 
 local function CreateIconFrame()
@@ -217,7 +218,7 @@ local function ActivateIcon(spellID, itemID)
 end
 
 -- =========================================================
--- 物品扫描
+-- SECTION 7: 物品扫描
 -- =========================================================
 
 local function ScanItems()
@@ -362,7 +363,7 @@ local function ScheduleScan()
 end
 
 -- =========================================================
--- 布局刷新
+-- SECTION 8: 布局刷新
 -- =========================================================
 
 function RefreshLayout()
@@ -525,7 +526,7 @@ function RefreshLayout()
 end
 
 -- =========================================================
--- 事件监听
+-- SECTION 9: 事件监听
 -- =========================================================
 
 VFlow.on("PLAYER_ENTERING_WORLD", "TrinketPotionMonitor", function()
@@ -551,7 +552,7 @@ VFlow.on("UNIT_SPELLCAST_SUCCEEDED", "TrinketPotionMonitor", function(event, uni
 end, "player")
 
 -- =========================================================
--- Store监听
+-- SECTION 10: Store / State 监听
 -- =========================================================
 
 VFlow.Store.watch(MODULE_KEY, "TrinketPotionMonitor", function(key, value)
@@ -582,7 +583,7 @@ VFlow.State.watch("isEditMode", "TrinketPotionMonitor", function(key, value)
 end)
 
 -- =========================================================
--- 公共API
+-- SECTION 11: 公共接口
 -- =========================================================
 
 VFlow.TrinketPotionMonitor = {

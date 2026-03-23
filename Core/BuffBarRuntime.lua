@@ -1,5 +1,6 @@
 -- =========================================================
--- VFlow BuffBarRuntime - BUFF条运行时监控
+-- SECTION 1: 模块入口
+-- BuffBarRuntime — BUFF 条 Viewer 运行时监控
 -- =========================================================
 
 local VFlow = _G.VFlow
@@ -9,6 +10,10 @@ local Profiler = VFlow.Profiler
 
 local BuffBarRuntime = {}
 VFlow.BuffBarRuntime = BuffBarRuntime
+
+-- =========================================================
+-- SECTION 2: 本地状态与常量
+-- =========================================================
 
 local frame = CreateFrame("Frame")
 local enabled = false
@@ -36,7 +41,7 @@ local BURST_THROTTLE = 0.033
 local WATCHDOG_THROTTLE = 0.20
 
 -- =========================================================
--- 快照管理
+-- SECTION 3: 可见条快照
 -- =========================================================
 
 local function SnapshotVisible(visible)
@@ -68,7 +73,7 @@ local function HasVisibleChanged(visible)
 end
 
 -- =========================================================
--- 公共 API
+-- SECTION 4: 公共接口
 -- =========================================================
 
 function BuffBarRuntime.setHandlers(v)

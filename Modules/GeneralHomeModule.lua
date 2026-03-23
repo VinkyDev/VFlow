@@ -1,3 +1,12 @@
+--[[ Core 依赖：
+  - Core/Minimap.lua：小地图按钮（读取本模块配置）
+  - Core/MainUI.lua：/wa 命令是否启用（读取 enableWaCommand）
+]]
+
+-- =========================================================
+-- SECTION 1: 模块注册
+-- =========================================================
+
 local VFlow = _G.VFlow
 if not VFlow then return end
 
@@ -9,7 +18,7 @@ VFlow.registerModule(MODULE_KEY, {
 })
 
 -- =========================================================
--- 更新日志与计划
+-- SECTION 2: 更新日志与路线图（静态数据）
 -- =========================================================
 
 local CHANGELOG = {
@@ -80,10 +89,10 @@ local ROADMAP = {
 }
 
 -- =========================================================
--- 渲染逻辑
+-- SECTION 3: 渲染
 -- =========================================================
 
-local function renderContent(container, menuKey)
+local function renderContent(container, _menuKey)
     local db = VFlow.getDB(MODULE_KEY, {
         hide = false,
         minimapPos = 220,
@@ -145,17 +154,13 @@ local function renderContent(container, menuKey)
             key = "hide",
             label = "隐藏小地图按钮",
             cols = 12,
-            onChange = function(cfg, value)
-                VFlow.Store.set(MODULE_KEY, "hide", value)
-            end
         },
         {
             type = "checkbox",
             key = "enableWaCommand",
             label = "允许使用 /wa 命令打开插件 (需重载)",
             cols = 12,
-            onChange = function(cfg, value)
-                VFlow.Store.set(MODULE_KEY, "enableWaCommand", value)
+            onChange = function(_, value)
                 if value then
                     print("|cff00ff00VFlow:|r 已启用 /wa 命令，请输入 /reload 重载界面以生效")
                 else
@@ -359,7 +364,14 @@ local function renderContent(container, menuKey)
     VFlow.Grid.render(container, layout, db, MODULE_KEY)
 end
 
-if not VFlow.Modules then VFlow.Modules = {} end
+-- =========================================================
+-- SECTION 4: 公共接口
+-- =========================================================
+
+if not VFlow.Modules then
+    VFlow.Modules = {}
+end
+
 VFlow.Modules.GeneralHome = {
     renderContent = renderContent,
 }

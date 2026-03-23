@@ -1,12 +1,16 @@
 -- =========================================================
--- VFlow CustomTTS - 冷却管理器「文字转语音」自定义播报
--- 对齐 CDFlow：hooksecurefunc CooldownViewerAlert_PlayAlert 后置处理
+-- SECTION 1: 模块入口
+-- CustomTTS — Hook CooldownViewerAlert_PlayAlert
 -- =========================================================
 
 local VFlow = _G.VFlow
 if not VFlow then return end
 
 local MODULE_KEY = "VFlow.OtherFeatures"
+
+-- =========================================================
+-- SECTION 2: Hook 与解析
+-- =========================================================
 
 local hookInstalled = false
 
@@ -89,6 +93,10 @@ local function tryInstallHook()
         end
     end)
 end
+
+-- =========================================================
+-- SECTION 3: 延迟安装（CooldownViewer 加载后）
+-- =========================================================
 
 if EventUtil and EventUtil.ContinueOnAddOnLoaded then
     EventUtil.ContinueOnAddOnLoaded("Blizzard_CooldownViewer", tryInstallHook)

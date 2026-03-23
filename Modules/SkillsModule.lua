@@ -1,3 +1,9 @@
+--[[ Core 依赖：
+  - Core/SkillGroups.lua：重要/效能/自定义技能分组布局与容器
+  - Core/CooldownStyle.lua：监听本模块配置并应用冷却管理器样式与布局
+  - Core/SkillScanner.lua：维护 State.trackedSkills（本模块技能列表数据源，只读）
+]]
+
 -- =========================================================
 -- SECTION 1: 模块注册
 -- =========================================================
@@ -108,6 +114,7 @@ local defaults = {
 }
 
 local db = VFlow.getDB(MODULE_KEY, defaults)
+local Utils = VFlow.Utils
 
 -- =========================================================
 -- SECTION 4: 数据源函数
@@ -137,7 +144,7 @@ local function getAvailableSkills(groupConfig, groupIndex)
             table.insert(availableSkills, skillInfo)
         end
     end
-    table.sort(availableSkills, function(a, b) return a.name < b.name end)
+    Utils.sortByName(availableSkills)
 
     return availableSkills
 end
@@ -151,18 +158,10 @@ local function getCurrentSkills(groupConfig)
         if trackedSkills[spellID] then
             table.insert(currentSkills, trackedSkills[spellID])
         elseif not showOnlyValid then
-            local spellInfo = C_Spell.GetSpellInfo(spellID)
-            local name = spellInfo and spellInfo.name
-            local icon = spellInfo and spellInfo.iconID
-            table.insert(currentSkills, {
-                spellID = spellID,
-                name = name or ("未知技能 " .. spellID),
-                icon = icon or 134400,
-                isMissing = true
-            })
+            table.insert(currentSkills, Utils.placeholderSpellEntry(spellID))
         end
     end
-    table.sort(currentSkills, function(a, b) return a.name < b.name end)
+    Utils.sortByName(currentSkills)
 
     return currentSkills
 end
@@ -171,9 +170,9 @@ end
 -- SECTION 5: 布局构建器
 -- =========================================================
 
-local mergeLayouts = VFlow.LayoutUtils.mergeLayouts
+local mergeLayouts = Utils.mergeLayouts
 
--- 自定义组的技能选择器（大块layout，值得拆分）
+-- 自定义组：技能选择器
 local function buildCustomSkillSelector(groupConfig, options)
     return {
         { type = "subtitle", text = "技能选择", cols = 24 },
@@ -191,10 +190,7 @@ local function buildCustomSkillSelector(groupConfig, options)
                     if VFlow.SkillScanner then
                         VFlow.SkillScanner.scan()
                     end
-                    local newVersion = GetTime()
-                    for i = 1, #db.customGroups do
-                        VFlow.Store.set(MODULE_KEY, "customGroups." .. i .. ".config._dataVersion", newVersion)
-                    end
+                    Utils.bumpCustomGroupsDataVersion(MODULE_KEY, db.customGroups)
                 end,
                 ["编辑模式"] = function()
                     VFlow.toggleSystemEditMode()
@@ -277,9 +273,7 @@ local function renderGroupConfig(container, groupConfig, groupName, options)
     local Grid = VFlow.Grid
     options = options or {}
 
-    -- 一次性mergeLayouts，使用短路求值处理条件
     local layout = mergeLayouts(
-        -- 标题
         {
             { type = "title", text = groupName, cols = 24 },
             { type = "separator", cols = 24 },
@@ -372,7 +366,6 @@ local function renderGroupConfig(container, groupConfig, groupName, options)
         }
     )
 
-    -- 渲染
     if options.isCustom then
         local configPath = "customGroups." .. options.groupIndex .. ".config"
         Grid.render(container, layout, groupConfig, MODULE_KEY, configPath)

@@ -1,3 +1,12 @@
+--[[ Core 依赖：
+  - Core/VisibilityControl.lua：按本模块条件与作用域控制内置 Viewer 与注册帧显隐
+  - Core/CooldownStyle.lua：与冷却/BUFF 区整体显示逻辑协同
+]]
+
+-- =========================================================
+-- SECTION 1: 模块注册
+-- =========================================================
+
 local VFlow = _G.VFlow
 if not VFlow then return end
 
@@ -9,7 +18,7 @@ VFlow.registerModule(MODULE_KEY, {
 })
 
 -- =========================================================
--- 默认配置
+-- SECTION 2: 默认配置
 -- =========================================================
 
 local defaults = {
@@ -31,10 +40,10 @@ local defaults = {
 local db = VFlow.getDB(MODULE_KEY, defaults)
 
 -- =========================================================
--- 渲染函数
+-- SECTION 3: 渲染
 -- =========================================================
 
-local function renderContent(container, menuKey)
+local function renderContent(container, _menuKey)
     local Grid = VFlow.Grid
 
     local layout = {
@@ -83,10 +92,13 @@ local function renderContent(container, menuKey)
 end
 
 -- =========================================================
--- 公共接口
+-- SECTION 4: 公共接口
 -- =========================================================
 
-if not VFlow.Modules then VFlow.Modules = {} end
+if not VFlow.Modules then
+    VFlow.Modules = {}
+end
+
 VFlow.Modules.StyleDisplay = {
     renderContent = renderContent,
 }

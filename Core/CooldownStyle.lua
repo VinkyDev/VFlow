@@ -1,9 +1,12 @@
 -- =========================================================
--- VFlow CooldownStyle - 技能/BUFF样式引擎
+-- SECTION 1: 模块入口
+-- CooldownStyle — 技能/BUFF 样式引擎
 -- =========================================================
 
 local VFlow = _G.VFlow
 if not VFlow then return end
+
+local Utils = VFlow.Utils
 
 local StyleApply = VFlow.StyleApply
 local StyleLayout = VFlow.StyleLayout
@@ -21,7 +24,7 @@ local MAX_BUFF_READY_RETRIES = 20
 local MAX_BUFFBAR_READY_RETRIES = 20
 
 -- =========================================================
--- 按钮样式版本号（配置变更时递增，用于跳过无变化的 ApplyButtonStyle）
+-- SECTION 2: 样式版本与 DB 缓存
 -- =========================================================
 local _buttonStyleVersion = 0
 
@@ -55,6 +58,10 @@ local function GetBuffBarViewerAndConfig()
     local viewer = _G.BuffBarCooldownViewer
     return viewer, _cachedBuffBarDB
 end
+
+-- =========================================================
+-- SECTION 3: Buff 条解析与帧收集
+-- =========================================================
 
 local function ResolveStatusBarTexture(textureName)
     if not textureName or textureName == "" or textureName == "默认" then
@@ -96,15 +103,12 @@ local function CollectBuffBarFrames(viewer)
             end
         end
     end
-    table.sort(frames, function(a, b)
-        return (a.layoutIndex or 0) < (b.layoutIndex or 0)
-    end)
+    Utils.sortByLayoutIndex(frames)
     return frames
 end
 
 -- =========================================================
--- 自定义高亮（VFlow.OtherFeatures.highlightRules，样式同 StyleGlow）
--- 基于 CDM 帧与 Cooldown 子帧，避免依赖战斗中受限的法术 API
+-- SECTION 4: 自定义高亮（OtherFeatures / StyleGlow）
 -- =========================================================
 
 local OTHER_FEATURES_KEY = "VFlow.OtherFeatures"
@@ -417,7 +421,7 @@ local function HideIconOverlays(iconFrame)
 end
 
 -- =========================================================
--- BuffBar 辅助函数
+-- SECTION 5: BuffBar 辅助
 -- =========================================================
 
 --- 一次性 hook：当配置隐藏某文本时，阻止系统 Show() 调用
@@ -749,6 +753,9 @@ local function RefreshBuffBarViewer(viewer, cfg)
     Profiler.stop(_pt)
     return true
 end
+
+-- =========================================================
+-- SECTION 6: 技能 Viewer 刷新
 -- =========================================================
 
 local function RefreshSkillViewer(viewer, cfg)
@@ -1042,7 +1049,7 @@ local function RefreshSkillViewer(viewer, cfg)
 end
 
 -- =========================================================
--- 刷新BUFF Viewer
+-- SECTION 7: BUFF Viewer 刷新
 -- =========================================================
 
 IsViewerReady = function(viewer)
@@ -1114,9 +1121,7 @@ local function ProvisionalPlaceBuffFrame(frame, viewer, cfg)
     end
     if not idx then
         visible[#visible + 1] = frame
-        table.sort(visible, function(a, b)
-            return (a.layoutIndex or 0) < (b.layoutIndex or 0)
-        end)
+        Utils.sortByLayoutIndex(visible)
         for i = 1, #visible do
             if visible[i] == frame then idx = i break end
         end
@@ -1346,7 +1351,7 @@ local function RefreshBuffViewer(viewer, cfg)
 end
 
 -- =========================================================
--- Hook管理
+-- SECTION 8: Hook 与 BuffRuntime 桥接
 -- =========================================================
 
 local hooked = false
@@ -1825,7 +1830,7 @@ SetupHooks = function()
 end
 
 -- =========================================================
--- 初始化
+-- SECTION 9: 初始化
 -- =========================================================
 
 VFlow.on("PLAYER_ENTERING_WORLD", "VFlow.SkillStyle", function()
@@ -1837,7 +1842,7 @@ VFlow.on("PLAYER_ENTERING_WORLD", "VFlow.SkillStyle", function()
 end)
 
 -- =========================================================
--- 监听配置变更，自动刷新
+-- SECTION 10: Store 监听
 -- =========================================================
 
 -- 监听技能模块配置变更

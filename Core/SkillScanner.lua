@@ -1,12 +1,13 @@
 -- =========================================================
--- VFlow SkillScanner - 冷却管理器技能扫描
+-- SECTION 1: 模块入口
+-- SkillScanner — 冷却管理器技能扫描
 -- =========================================================
 
 local VFlow = _G.VFlow
 if not VFlow then return end
 
 -- =========================================================
--- Spell ID解析
+-- SECTION 2: SpellID 解析
 -- =========================================================
 
 local function ResolveSpellID(info)
@@ -35,7 +36,7 @@ local function ResolveSpellID(info)
 end
 
 -- =========================================================
--- 扫描调度器
+-- SECTION 3: 扫描调度
 -- =========================================================
 
 local function ScanSkillViewers()
@@ -82,7 +83,7 @@ local function ScheduleScan()
 end
 
 -- =========================================================
--- 事件监听
+-- SECTION 4: 事件监听
 -- =========================================================
 
 VFlow.on("PLAYER_ENTERING_WORLD", "SkillScanner", ScheduleScan)
@@ -90,7 +91,7 @@ VFlow.on("PLAYER_SPECIALIZATION_CHANGED", "SkillScanner", ScheduleScan)
 VFlow.on("TRAIT_CONFIG_UPDATED", "SkillScanner", ScheduleScan)
 
 -- =========================================================
--- 公共API
+-- SECTION 5: 公共接口
 -- =========================================================
 
 VFlow.SkillScanner = {

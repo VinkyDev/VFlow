@@ -1,8 +1,6 @@
 -- =========================================================
--- VFlow StyleApply - 样式应用
---   1. 全局 styleCache flat table，配置变更时整体刷新一次
---   2. 帧级 styleCacheVersion 对比，决定是否需要 visual update
---   3. hook 回调直接读 styleCache
+-- SECTION 1: 模块入口
+-- StyleApply — 全局 styleCache + 帧级 styleCacheVersion；hook 读缓存
 -- =========================================================
 
 local VFlow = _G.VFlow
@@ -17,7 +15,7 @@ local abs = math.abs
 local Profiler = VFlow.Profiler
 
 -- =========================================================
--- 工具函数
+-- SECTION 2: 工具函数
 -- =========================================================
 
 local function SafeEquals(v, expected)
@@ -53,7 +51,7 @@ local function EnsureHideZeroTextHook(fs)
 end
 
 -- =========================================================
--- 全局样式缓存
+-- SECTION 3: 全局样式缓存与常量
 -- =========================================================
 
 local styleCache = {}
@@ -92,7 +90,7 @@ function StyleApply.InvalidateStyleCache()
 end
 
 -- =========================================================
--- FontString 查找
+-- SECTION 4: FontString 查找
 -- =========================================================
 
 function StyleApply.GetCooldownFontString(button)
@@ -124,7 +122,7 @@ function StyleApply.GetStackFontString(button)
 end
 
 -- =========================================================
--- 幂等样式应用
+-- SECTION 5: 幂等样式应用（尺寸与字体）
 -- =========================================================
 
 function StyleApply.ApplyIconSize(button, w, h)
@@ -201,7 +199,7 @@ function StyleApply.ApplyFontStyle(fs, cfg, cachePrefix)
 end
 
 -- =========================================================
--- 键位显示
+-- SECTION 6: 键位显示
 -- =========================================================
 
 function StyleApply.ApplyKeybind(button, cfg)
@@ -252,7 +250,7 @@ function StyleApply.ApplyKeybind(button, cfg)
 end
 
 -- =========================================================
--- 遮罩层颜色 Hook（一次性）
+-- SECTION 7: 遮罩层颜色 Hook（一次性）
 -- =========================================================
 
 function StyleApply.ApplyAuraSwipeColor(button, groupCfg)
@@ -289,7 +287,7 @@ function StyleApply.ApplyAuraSwipeColor(button, groupCfg)
 end
 
 -- =========================================================
--- ApplyButtonStyle - 组配置样式（字体/键位/遮罩色）
+-- SECTION 8: ApplyButtonStyle（组配置总入口）
 -- =========================================================
 
 function StyleApply.ApplyButtonStyle(button, cfg)
@@ -335,7 +333,8 @@ function StyleApply.ApplyButtonStyle(button, cfg)
 end
 
 -- =========================================================
--- 美化功能
+-- SECTION 9: 美化实现（缩放 / 边框 / 视觉隐藏）
+-- =========================================================
 
 local function GetAspectPreservingTexCoord(frameW, frameH, zoomPadding)
     if not frameH or frameH <= 0 then return 0, 1, 0, 1 end
@@ -566,8 +565,7 @@ local function ApplyVisualHides(button)
 end
 
 -- =========================================================
--- ApplyBeautify 主入口
--- 帧级版本号对比：styleCacheVersion 不变 → 跳过全部美化
+-- SECTION 10: ApplyBeautify 主入口
 -- =========================================================
 
 function StyleApply.ApplyBeautify(button, groupCfg)
@@ -585,7 +583,7 @@ function StyleApply.ApplyBeautify(button, groupCfg)
 end
 
 -- =========================================================
--- 发光效果
+-- SECTION 11: 发光效果
 -- =========================================================
 
 local LCG = LibStub and LibStub("LibCustomGlow-1.0", true)
@@ -836,7 +834,7 @@ function StyleApply.InitializeGlow()
 end
 
 -- =========================================================
--- Store 监听
+-- SECTION 12: Store 监听与初始化
 -- =========================================================
 
 VFlow.Store.watch("VFlow.StyleGlow", "StyleApply_Glow", function()

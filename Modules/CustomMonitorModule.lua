@@ -1,3 +1,10 @@
+--[[ Core 依赖：
+  - Core/CustomMonitorGroups.lua：条形容器创建/销毁与 Store 同步
+  - Core/CustomMonitorRuntime.lua：条形态、CD/BUFF 驱动与生命周期
+  - Core/BuffScanner.lua、SkillScanner.lua：State 列表（本页左侧数据源，只读）
+  例外：renderContent 内 State/Store.watch 仅刷新本页双栏 UI，不替代上述 Core 对业务配置的监听。
+]]
+
 -- =========================================================
 -- SECTION 1: 模块注册
 -- =========================================================
@@ -137,6 +144,7 @@ local defaults = {
 }
 
 local db = VFlow.getDB(MODULE_KEY, defaults)
+local Utils = VFlow.Utils
 
 -- =========================================================
 -- SECTION 4: 辅助函数
@@ -161,7 +169,7 @@ local function getOrCreateConfig(store, spellID)
     if not store[spellID] then
         store[spellID] = getDefaultSpellConfig()
     end
-    VFlow.Utils.applyDefaults(store[spellID], getDefaultSpellConfig())
+    Utils.applyDefaults(store[spellID], getDefaultSpellConfig())
     -- 每次获取配置时检测技能类型（确保最新）
     store[spellID].isChargeSpell = detectChargeSpell(spellID)
     return store[spellID]
@@ -171,7 +179,7 @@ end
 -- SECTION 5: 共享布局构建器（右侧配置面板）
 -- =========================================================
 
-local mergeLayouts = VFlow.Utils.mergeLayouts
+local mergeLayouts = Utils.mergeLayouts
 
 local function visibilityGroup(isBuffMonitor)
     local items = {
@@ -714,7 +722,7 @@ local function renderContent(container, menuKey)
                     end
                 end
 
-                table.sort(items, function(a, b) return a.name < b.name end)
+                Utils.sortByName(items)
                 return items
             end,
             template   = {

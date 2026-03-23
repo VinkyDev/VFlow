@@ -1,12 +1,13 @@
 -- =========================================================
--- VFlow BuffScanner - 冷却管理器扫描
+-- SECTION 1: 模块入口
+-- BuffScanner — 冷却管理器 BUFF 扫描
 -- =========================================================
 
 local VFlow = _G.VFlow
 if not VFlow then return end
 
 -- =========================================================
--- Spell ID解析
+-- SECTION 2: SpellID 解析
 -- =========================================================
 
 local function ResolveSpellID(info)
@@ -21,7 +22,7 @@ local function ResolveSpellID(info)
 end
 
 -- =========================================================
--- 扫描调度器
+-- SECTION 3: 扫描调度
 -- =========================================================
 
 local function ScanBuffViewers()
@@ -70,7 +71,7 @@ local function ScheduleScan()
 end
 
 -- =========================================================
--- 事件监听
+-- SECTION 4: 事件监听
 -- =========================================================
 
 VFlow.on("PLAYER_ENTERING_WORLD", "BuffScanner", ScheduleScan)
@@ -78,7 +79,7 @@ VFlow.on("PLAYER_SPECIALIZATION_CHANGED", "BuffScanner", ScheduleScan)
 VFlow.on("TRAIT_CONFIG_UPDATED", "BuffScanner", ScheduleScan)
 
 -- =========================================================
--- 公共API
+-- SECTION 5: 公共接口
 -- =========================================================
 
 VFlow.BuffScanner = {

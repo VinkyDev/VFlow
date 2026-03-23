@@ -62,10 +62,10 @@ Grid.fontGroup("stackFont", "堆叠文字")  -- 展开为多个布局项
 **工作原理**：
 
 ```lua
-// Grid.render时自动注册Store.watch
+-- Grid.render 时自动注册 Store.watch
 Store.watch(moduleKey, "Grid_" .. container, function(key, value)
     if shouldRefreshForChange(cache, key) then
-        Grid.refresh(parent)  -- 只刷新匹配dependsOn的组件
+        Grid.refresh(parent)  -- 只刷新匹配 dependsOn 的组件
     end
 end)
 ```
@@ -99,12 +99,20 @@ Store.notifyChange(fullKey, value)
 
 ### 4.2 关键原则
 
-- **Modules层不监听Store**：所有UI刷新由Grid的dependsOn机制处理
-- **Core层监听Store**：响应配置变化，更新实际效果
+- **Modules层不监听Store**：UI 增量刷新以 Grid 的 `dependsOn` 为主；少数复合设置页在局部列表使用 `State`/`Store.watch` 的，须在对应 **Module 文件头 `例外：`** 中写明（见 `CustomMonitorModule`、`OtherFeaturesModule` 等）。
+- **Core层监听Store**：响应配置变化，更新实际效果；Module 不直接调用 Core 的刷新类 API。
 - **增量更新**：只刷新变化的组件，不全量刷新
 - **事件驱动**：不手动调用刷新API，通过Store.set触发事件
 
 ## 5. 开发规范
+
+### 5.0 代码规范（简）
+
+- **文件头 Core 依赖**：每个 `Modules/*.lua` **最上方**用 `--[[ Core 依赖：… ]]` 列出消费的 `Core/*.lua` 及职责；仅 Infra/通用数据流不写入。特殊架构行为用一行 **`例外：`**（与文件内实现一致）。
+- **分段结构**：正文用 `SECTION 1: 模块注册` 起笔，后续按模块复杂度划分（如常量、默认配置、数据源、布局、渲染、公共接口），与同目录现有模块保持一致。
+- **工具复用**：排序、合并 layout、占位条目、trim、缺省合并等优先用 **`VFlow.Utils`**（如 `mergeLayouts`、`sortByName`、`sortByLayoutIndex`、`placeholderSpellEntry`、`trim`、`applyDefaults`），避免重复实现。
+- **Grid 与 Store.set**：`Grid.render` 传入 **`moduleKey`** 时，带 **`key`** 的标准控件由 **Grid 内** `onValueChanged` 写内存并 **`Store.set`**；`item.onChange` **勿对同一 key 再 `Store.set`**（仅提示等副作用）。改表类交互（`iconButton`、`for` 模板、`button` 链等）须在回调里 **`Store.set(嵌套路径, …)`** 以持久化并通知 Core。
+- **GeneralConfig 等**：`Grid.render(..., nil)` 无业务 `moduleKey` 的页面，持久化由页面逻辑显式调用档案 API，与业务模块模板不同。
 
 ### 5.1 新增模块模板
 
@@ -171,20 +179,21 @@ end
 ### 5.4 Core层监听配置
 
 ```lua
--- Core层监听Store变化，更新实际效果
+-- Core 层监听 Store 变化，更新实际效果
 VFlow.Store.watch(MODULE_KEY, "CoreComponent", function(key, value)
-    // 根据key判断需要做什么
+    -- 根据 key 判断需要做什么
     if key:find("%.x$") or key:find("%.y$") then
-        // 只更新位置，不触发全量刷新
+        -- 只更新位置，不触发全量刷新
         return
     end
-    // 其他配置变化：更新实际效果
+    -- 其他配置变化：更新实际效果
     UpdateEffect()
 end)
 ```
 
 ## 6. 关键原则
 
+- **代码规范**：文件头 Core 依赖、`SECTION` 分段、Utils 与 Grid/Store 写入约定见 **5.0**。
 - **声明式UI**：Modules层只定义布局，不处理刷新逻辑
 - **事件驱动**：通过Store.set触发事件，不手动调用API
 - **增量更新**：使用dependsOn机制，只刷新必要的组件

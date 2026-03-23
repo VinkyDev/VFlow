@@ -1,3 +1,10 @@
+--[[ Core 依赖：
+  - Core/CustomTTS.lua：自定义文字转语音/音效播报
+  - Core/CooldownStyle.lua：自定义高亮规则与表单协同
+  - Core/BuffScanner.lua、SkillScanner.lua：State 图标数据（只读）
+  例外：播报/高亮子页内 State.watch 仅用于刷新图标网格列表。
+]]
+
 -- =========================================================
 -- SECTION 1: 模块注册
 -- =========================================================
@@ -7,7 +14,8 @@ if not VFlow then return end
 
 local MODULE_KEY = "VFlow.OtherFeatures"
 local Grid = VFlow.Grid
-local mergeLayouts = VFlow.LayoutUtils.mergeLayouts
+local Utils = VFlow.Utils
+local mergeLayouts = Utils.mergeLayouts
 
 VFlow.registerModule(MODULE_KEY, {
     name = "其他功能",
@@ -177,7 +185,7 @@ local function buildSkillIconRows()
             icon = info.icon,
         }
     end
-    table.sort(items, function(a, b) return a.name < b.name end)
+    Utils.sortByName(items)
     return items
 end
 
@@ -191,7 +199,7 @@ local function buildBuffIconRows()
             icon = info.icon,
         }
     end
-    table.sort(items, function(a, b) return a.name < b.name end)
+    Utils.sortByName(items)
     return items
 end
 

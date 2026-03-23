@@ -1,5 +1,6 @@
 -- =========================================================
--- VFlow SkillGroups - 自定义技能分组布局
+-- SECTION 1: 模块入口
+-- SkillGroups — 自定义技能分组布局
 -- =========================================================
 
 local VFlow = _G.VFlow
@@ -10,7 +11,7 @@ local Profiler = VFlow.Profiler
 local MasqueSupport = VFlow.MasqueSupport
 
 -- =========================================================
--- 模块状态
+-- SECTION 2: 模块状态
 -- =========================================================
 
 local _groupSpellMap = {}   -- {[spellID] = groupIndex}
@@ -18,7 +19,7 @@ local _groupContainers = {} -- {[groupIndex] = frame}
 local _spellMapDirty = true -- 脏标志：只在配置变更时重建
 
 -- =========================================================
--- Spell ID映射构建
+-- SECTION 3: SpellID → 分组映射
 -- =========================================================
 
 local function RebuildSpellMap()
@@ -70,7 +71,7 @@ local function RebuildSpellMap()
 end
 
 -- =========================================================
--- 图标分类
+-- SECTION 4: 图标分类
 -- =========================================================
 
 local function GetGroupIdxForIcon(icon, spellMap)
@@ -155,7 +156,7 @@ local function ClassifyIcons(allIcons)
 end
 
 -- =========================================================
--- 容器管理
+-- SECTION 5: 容器管理
 -- =========================================================
 
 local function EnsureGroupContainer(groupIdx)
@@ -224,7 +225,7 @@ local function InitGroupContainers()
 end
 
 -- =========================================================
--- 分组布局
+-- SECTION 6: 分组布局
 -- =========================================================
 
 local function LayoutSkillGroups(groupBuckets)
@@ -409,7 +410,7 @@ local function LayoutSkillGroups(groupBuckets)
 end
 
 -- =========================================================
--- 公共API
+-- SECTION 7: 公共 API
 -- =========================================================
 
 local function ForEachGroupIcon(callback)
@@ -432,7 +433,7 @@ VFlow.SkillGroups = {
 }
 
 -- =========================================================
--- 初始化
+-- SECTION 8: 初始化与 Store 监听
 -- =========================================================
 
 VFlow.on("PLAYER_ENTERING_WORLD", "SkillGroups", function()

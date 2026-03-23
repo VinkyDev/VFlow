@@ -1,12 +1,20 @@
--- 物品组监控条目的统一顺序（自动饰品槽 / 种族技能 / 手动物品 / 手动技能）
+-- =========================================================
+-- SECTION 1: 模块入口
+-- ItemsManualOrder — 物品组 entryOrder 归一化
+-- =========================================================
+
 local VFlow = _G.VFlow
 VFlow.ItemsManualOrder = VFlow.ItemsManualOrder or {}
 
---- entryOrder 元素：
+-- entryOrder 元素：
 --- { t = "trinket_slot", slot = 13|14 }  — autoTrinkets 开启时保留槽位（可空）
 --- { t = "racial", id = spellID }
 --- { t = "item", id = itemID }
---- { t = "spell", id = spellID }
+-- { t = "spell", id = spellID }
+
+-- =========================================================
+-- SECTION 2: 构建与 Ensure
+-- =========================================================
 
 local function trinketSlotList(cfg)
     local out = {}

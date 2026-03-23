@@ -257,6 +257,8 @@ end
 -- @return Frame|FontString 创建的组件
 local function createWidget(parent, item, config, moduleKey, configPath)
     local widget
+    -- moduleKey 存在时：下列标准控件会先 setNestedValue(config) 再 VFlow.Store.set（含 configPath 前缀）。
+    -- item.onChange / onClick 仅做副作用；勿对同一 key 再次 Store.set，避免重复写入。
     local function onValueChanged(key, val)
         -- 特殊键：强制刷新UI
         if key == "_refresh" then

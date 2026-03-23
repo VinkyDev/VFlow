@@ -1,3 +1,8 @@
+-- =========================================================
+-- SECTION 1: 模块入口
+-- BuffRuntime — BUFF Viewer 轻量 OnUpdate 调度
+-- =========================================================
+
 local VFlow = _G.VFlow
 if not VFlow then return end
 
@@ -5,6 +10,10 @@ local Profiler = VFlow.Profiler
 
 local BuffRuntime = {}
 VFlow.BuffRuntime = BuffRuntime
+
+-- =========================================================
+-- SECTION 2: 本地状态与常量
+-- =========================================================
 
 local frame = CreateFrame("Frame")
 local enabled = false
@@ -41,6 +50,10 @@ local function cacheVisible(visible)
     end
 end
 
+-- =========================================================
+-- SECTION 3: 可见集快照
+-- =========================================================
+
 local function hasVisibleChanged(visible)
     if cachedCount ~= #visible then
         return true
@@ -59,6 +72,10 @@ local function hasVisibleChanged(visible)
     end
     return false
 end
+
+-- =========================================================
+-- SECTION 4: 公共接口
+-- =========================================================
 
 function BuffRuntime.setHandlers(v)
     handlers = v

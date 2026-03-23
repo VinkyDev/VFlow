@@ -1,3 +1,12 @@
+--[[ Core 依赖：
+  - Core/BuffBarRuntime.lua：BUFF 条 Viewer 运行时调度与刷新
+  - Core/CooldownStyle.lua：监听 BuffBar 配置并应用条样式
+]]
+
+-- =========================================================
+-- SECTION 1: 模块注册
+-- =========================================================
+
 local VFlow = _G.VFlow
 if not VFlow then return end
 
@@ -7,6 +16,10 @@ VFlow.registerModule(MODULE_KEY, {
     name = "BUFF条",
     description = "BUFF条形配置",
 })
+
+-- =========================================================
+-- SECTION 2: 默认配置
+-- =========================================================
 
 local defaults = {
     barWidth = 200,
@@ -52,7 +65,11 @@ local defaults = {
 
 local db = VFlow.getDB(MODULE_KEY, defaults)
 
-local function renderContent(container)
+-- =========================================================
+-- SECTION 3: 渲染
+-- =========================================================
+
+local function renderContent(container, _menuKey)
     local Grid = VFlow.Grid
 
     local layout = {
@@ -154,7 +171,14 @@ local function renderContent(container)
     Grid.render(container, layout, db, MODULE_KEY)
 end
 
-if not VFlow.Modules then VFlow.Modules = {} end
+-- =========================================================
+-- SECTION 4: 公共接口
+-- =========================================================
+
+if not VFlow.Modules then
+    VFlow.Modules = {}
+end
+
 VFlow.Modules.BuffBar = {
     renderContent = renderContent,
 }

@@ -17,7 +17,11 @@ local PP = VFlow.PixelPerfect  -- 完美像素工具
 local Profiler = VFlow.Profiler
 
 -- =========================================================
--- SECTION 1: 常量
+-- SECTION 1: 模块入口
+-- =========================================================
+
+-- =========================================================
+-- SECTION 2: 常量
 -- =========================================================
 
 local UPDATE_INTERVAL = 0.1
@@ -38,7 +42,7 @@ local INTERP_EASE_OUT = Enum.StatusBarInterpolation and Enum.StatusBarInterpolat
 local RING_TEXTURE_FMT = "Interface\\AddOns\\VFlow\\Assets\\Ring\\Ring_%spx.tga"
 
 -- =========================================================
--- SECTION 2: 显示条件判断
+-- SECTION 3: 显示条件判断
 -- =========================================================
 
 -- 判断是否应该显示条
@@ -83,7 +87,7 @@ local function IsHiddenForSystemEditOnly(cfg)
 end
 
 -- =========================================================
--- SECTION 2: 模块状态
+-- SECTION 4: 模块状态
 -- =========================================================
 
 -- { [spellID] = barFrame }
@@ -107,7 +111,7 @@ local _barToAuraKey   = {}  -- barKey → aura key
 local _spellMapRetryAt = {}
 
 -- =========================================================
--- SECTION 3: 通用辅助
+-- SECTION 5: 通用辅助
 -- =========================================================
 
 local function ConfigureStatusBar(bar)
@@ -157,7 +161,7 @@ local function ApplyTimerDuration(seg, durObj, interpolation, direction)
 end
 
 -- =========================================================
--- SECTION 4: ShadowCooldown（技能冷却用）
+-- SECTION 6: ShadowCooldown（技能冷却用）
 -- =========================================================
 
 local function GetOrCreateShadowCooldown(barFrame)
@@ -175,7 +179,7 @@ local function GetOrCreateShadowCooldown(barFrame)
 end
 
 -- =========================================================
--- SECTION 5: Arc Detector（堆叠层数 secret value 解码）
+-- SECTION 7: Arc Detector（堆叠层数 secret value 解码）
 -- 原理：为每个阈值 i 创建不可见 StatusBar，SetMinMaxValues(i-1, i)。
 --       SetValue(secretStacks) 后引擎内部比较决定是否填充纹理。
 --       遍历 IsShown() 即可还原出整数层数。
@@ -218,7 +222,7 @@ local function GetExactCount(barFrame, maxVal)
 end
 
 -- =========================================================
--- SECTION 6: CDM 帧扫描 & spellID→cooldownID 映射
+-- SECTION 8: CDM 帧扫描 & spellID→cooldownID 映射
 -- =========================================================
 
 local function HasAuraInstanceID(value)
@@ -359,7 +363,7 @@ local function FindCDMFrame(cooldownID)
 end
 
 -- =========================================================
--- SECTION 7: Aura 追踪 & CDM Hook（stacks/duration 共用）
+-- SECTION 9: Aura 追踪 & CDM Hook（stacks/duration 共用）
 -- =========================================================
 
 local function BuildAuraKey(unit, auraInstanceID)
@@ -476,7 +480,7 @@ local function ClearAllHooks()
 end
 
 -- =========================================================
--- SECTION 8: StatusBar 分段创建（共用）
+-- SECTION 10: StatusBar 分段创建（共用）
 -- =========================================================
 
 local function ClearSegments(barFrame)
@@ -711,7 +715,7 @@ local function SetStackSegmentsValue(barFrame, value)
 end
 
 -- =========================================================
--- SECTION 9: 技能冷却/充能 更新逻辑
+-- SECTION 11: 技能冷却/充能 更新逻辑
 -- =========================================================
 
 local function UpdateRegularCooldownBar(barFrame, spellID)
@@ -1005,7 +1009,7 @@ local function UpdateChargeBar(barFrame, spellID)
 end
 
 -- =========================================================
--- SECTION 10: BUFF 持续时间更新逻辑
+-- SECTION 12: BUFF 持续时间更新逻辑
 -- =========================================================
 
 UpdateDurationBar = function(barFrame, spellID, barKey)
@@ -1159,7 +1163,7 @@ UpdateDurationBar = function(barFrame, spellID, barKey)
 end
 
 -- =========================================================
--- SECTION 11: BUFF 堆叠层数更新逻辑
+-- SECTION 13: BUFF 堆叠层数更新逻辑
 -- =========================================================
 
 UpdateStackBar = function(barFrame, spellID, barKey)
@@ -1265,7 +1269,7 @@ UpdateStackBar = function(barFrame, spellID, barKey)
 end
 
 -- =========================================================
--- SECTION 12: 条形帧创建（技能/buff 共用）
+-- SECTION 14: 条形帧创建（技能/buff 共用）
 -- =========================================================
 
 local function CreateBarFrame(spellID, cfg, container)
@@ -1369,7 +1373,7 @@ local function CreateBarFrame(spellID, cfg, container)
 end
 
 -- =========================================================
--- SECTION 13: 生命周期管理
+-- SECTION 15: 生命周期管理
 -- =========================================================
 
 local function DestroyBar(storeKey, spellID)
@@ -1445,7 +1449,7 @@ local function EnsureBar(storeKey, spellID, cfg, container)
 end
 
 -- =========================================================
--- SECTION 14: OnUpdate 主循环
+-- SECTION 16: OnUpdate 主循环
 -- =========================================================
 
 local _elapsed = 0
@@ -1574,7 +1578,7 @@ VFlow.State.watch("internalEditMode", "CustomMonitorRuntime_Vis", function()
 end)
 
 -- =========================================================
--- SECTION 15: 事件响应
+-- SECTION 17: 事件响应
 -- =========================================================
 
 VFlow.on("PLAYER_ENTERING_WORLD", "CustomMonitorRuntime", function()
@@ -1622,7 +1626,7 @@ end)
 -- UNIT_AURA 事件：duration 条每次 OnUpdate 都会调用 SetTimerDuration，无需额外标志
 
 -- =========================================================
--- SECTION 16: 公共接口（由 CustomMonitorGroups 调用）
+-- SECTION 18: 公共接口（由 CustomMonitorGroups 调用）
 -- =========================================================
 
 VFlow.CustomMonitorRuntime = {

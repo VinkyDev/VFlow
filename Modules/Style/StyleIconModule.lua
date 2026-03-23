@@ -1,3 +1,13 @@
+--[[ Core 依赖：
+  - Core/StyleApply.lua：图标样式缓存与监听本模块
+  - Core/CooldownStyle.lua：将样式应用到冷却管理器帧
+  - Core/MasqueSupport.lua：Masque 检测与皮肤注册桥接
+]]
+
+-- =========================================================
+-- SECTION 1: 模块注册
+-- =========================================================
+
 local VFlow = _G.VFlow
 if not VFlow then return end
 
@@ -8,10 +18,12 @@ VFlow.registerModule(MODULE_KEY, {
     description = "图标样式设置",
 })
 
--- LSM
+-- =========================================================
+-- SECTION 2: 依赖与默认配置
+-- =========================================================
+
 local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
 
--- 默认配置
 local defaults = {
     -- 图标美化
     zoomIcons = true,
@@ -35,6 +47,10 @@ local defaults = {
 
 local db = VFlow.getDB(MODULE_KEY, defaults)
 
+-- =========================================================
+-- SECTION 3: 辅助与渲染
+-- =========================================================
+
 local function getBorderOptions()
     local options = {}
     
@@ -55,7 +71,7 @@ local function getBorderOptions()
     return options
 end
 
-local function renderContent(container, menuKey)
+local function renderContent(container, _menuKey)
     local layout = {
         { type = "title", text = "图标样式", cols = 24 },
         { type = "separator", cols = 24 },
@@ -130,12 +146,17 @@ local function renderContent(container, menuKey)
         table.insert(layout, item)
     end
     
-    if VFlow.Grid and VFlow.Grid.render then
-        VFlow.Grid.render(container, layout, db, MODULE_KEY)
-    end
+    VFlow.Grid.render(container, layout, db, MODULE_KEY)
 end
 
-if not VFlow.Modules then VFlow.Modules = {} end
+-- =========================================================
+-- SECTION 4: 公共接口
+-- =========================================================
+
+if not VFlow.Modules then
+    VFlow.Modules = {}
+end
+
 VFlow.Modules.StyleIcon = {
     renderContent = renderContent,
 }

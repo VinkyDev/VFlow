@@ -1,3 +1,11 @@
+--[[ Core 依赖：
+  - Core/BuffGroups.lua：主 BUFF 组与自定义组布局
+  - Core/CooldownStyle.lua：监听本模块并应用 BUFF 区样式
+  - Core/BuffScanner.lua：维护 State.trackedBuffs（列表数据源，只读）
+  - Core/TrinketPotionMonitor.lua：饰品&药水监控、持续时间解析与列表数据
+  例外：ensureDefaultPotionsInitialized 在缺省配置时补全默认药水并落盘（档案级一次写入）。
+]]
+
 -- =========================================================
 -- SECTION 1: 模块注册
 -- =========================================================
@@ -126,6 +134,8 @@ end
 
 ensureDefaultPotionsInitialized()
 
+local Utils = VFlow.Utils
+
 -- =========================================================
 -- SECTION 4: 数据源函数
 -- =========================================================
@@ -154,7 +164,7 @@ local function getAvailableBuffs(groupConfig, groupIndex)
             table.insert(availableBuffs, buffInfo)
         end
     end
-    table.sort(availableBuffs, function(a, b) return a.name < b.name end)
+    Utils.sortByName(availableBuffs)
 
     return availableBuffs
 end
@@ -168,18 +178,10 @@ local function getCurrentBuffs(groupConfig)
         if trackedBuffs[spellID] then
             table.insert(currentBuffs, trackedBuffs[spellID])
         elseif not showOnlyValid then
-            local spellInfo = C_Spell.GetSpellInfo(spellID)
-            local name = spellInfo and spellInfo.name
-            local icon = spellInfo and spellInfo.iconID
-            table.insert(currentBuffs, {
-                spellID = spellID,
-                name = name or ("未知技能 " .. spellID),
-                icon = icon or 134400,
-                isMissing = true
-            })
+            table.insert(currentBuffs, Utils.placeholderSpellEntry(spellID))
         end
     end
-    table.sort(currentBuffs, function(a, b) return a.name < b.name end)
+    Utils.sortByName(currentBuffs)
 
     return currentBuffs
 end
@@ -188,9 +190,9 @@ end
 -- SECTION 5: 布局构建器
 -- =========================================================
 
-local mergeLayouts = VFlow.LayoutUtils.mergeLayouts
+local mergeLayouts = Utils.mergeLayouts
 
--- 自定义组的BUFF选择器（大块layout，值得拆分）
+-- 自定义组：BUFF 选择器
 local function buildCustomBuffSelector(groupConfig, options)
     return {
         { type = "subtitle", text = "BUFF选择", cols = 24 },
@@ -208,10 +210,7 @@ local function buildCustomBuffSelector(groupConfig, options)
                     if VFlow.BuffScanner then
                         VFlow.BuffScanner.scan()
                     end
-                    local newVersion = GetTime()
-                    for i = 1, #db.customGroups do
-                        VFlow.Store.set(MODULE_KEY, "customGroups." .. i .. ".config._dataVersion", newVersion)
-                    end
+                    Utils.bumpCustomGroupsDataVersion(MODULE_KEY, db.customGroups)
                 end,
                 ["编辑模式"] = function()
                     VFlow.toggleSystemEditMode()
@@ -294,9 +293,7 @@ local function renderGroupConfig(container, groupConfig, groupName, options)
     local Grid = VFlow.Grid
     options = options or {}
 
-    -- 一次性mergeLayouts，使用短路求值处理条件
     local layout = mergeLayouts(
-        -- 标题
         {
             { type = "title", text = groupName, cols = 24 },
             { type = "separator", cols = 24 },
@@ -312,7 +309,6 @@ local function renderGroupConfig(container, groupConfig, groupName, options)
             { type = "checkbox", key = "dynamicLayout", label = "动态布局", cols = 12 },
         },
 
-        -- 可选：垂直布局
         options.showVerticalLayoutOption and {
             { type = "checkbox", key = "vertical", label = "垂直布局", cols = 12 },
         },
@@ -376,7 +372,6 @@ local function renderGroupConfig(container, groupConfig, groupName, options)
         }
     )
 
-    -- 渲染
     if options.isCustom then
         local configPath = "customGroups." .. options.groupIndex .. ".config"
         Grid.render(container, layout, groupConfig, MODULE_KEY, configPath)
@@ -584,7 +579,7 @@ local function renderTrinketPotionConfig(container, groupConfig)
                         })
                     end
 
-                    table.sort(items, function(a, b) return a.name < b.name end)
+                    Utils.sortByName(items)
                     return items
                 end,
                 template = {

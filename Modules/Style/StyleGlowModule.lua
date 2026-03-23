@@ -1,3 +1,12 @@
+--[[ Core 依赖：
+  - Core/StyleApply.lua：发光参数缓存、监听本模块并驱动 LibCustomGlow
+  - Core/CooldownStyle.lua：与自定义高亮及 CDM 视觉效果协同
+]]
+
+-- =========================================================
+-- SECTION 1: 模块注册
+-- =========================================================
+
 local VFlow = _G.VFlow
 if not VFlow then return end
 
@@ -8,7 +17,10 @@ VFlow.registerModule(MODULE_KEY, {
     description = "发光样式设置",
 })
 
--- 默认配置
+-- =========================================================
+-- SECTION 2: 默认配置
+-- =========================================================
+
 local defaults = {
     glowType = "proc",
     useCustomColor = false,
@@ -40,7 +52,11 @@ local defaults = {
 
 local db = VFlow.getDB(MODULE_KEY, defaults)
 
-local function renderContent(container, menuKey)
+-- =========================================================
+-- SECTION 3: 渲染
+-- =========================================================
+
+local function renderContent(container, _menuKey)
     local layout = {
         { type = "title", text = "发光样式", cols = 24 },
         { type = "separator", cols = 24 },
@@ -111,12 +127,17 @@ local function renderContent(container, menuKey)
         },
     }
 
-    if VFlow.Grid and VFlow.Grid.render then
-        VFlow.Grid.render(container, layout, db, MODULE_KEY)
-    end
+    VFlow.Grid.render(container, layout, db, MODULE_KEY)
 end
 
-if not VFlow.Modules then VFlow.Modules = {} end
+-- =========================================================
+-- SECTION 4: 公共接口
+-- =========================================================
+
+if not VFlow.Modules then
+    VFlow.Modules = {}
+end
+
 VFlow.Modules.StyleGlow = {
     renderContent = renderContent,
 }

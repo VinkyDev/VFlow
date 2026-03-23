@@ -1,9 +1,14 @@
 -- =========================================================
--- VFlow MasqueSupport - Masque皮肤支持
+-- SECTION 1: 模块入口
+-- MasqueSupport — Masque 皮肤桥接
 -- =========================================================
 
 local VFlow = _G.VFlow
 if not VFlow then return end
+
+-- =========================================================
+-- SECTION 2: 注册与 ReSkin
+-- =========================================================
 
 local Masque = LibStub and LibStub("Masque", true)
 local masqueGroup = Masque and Masque:Group("VFlow")

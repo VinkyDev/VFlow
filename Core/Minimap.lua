@@ -1,9 +1,14 @@
 -- =========================================================
--- VFlow Minimap - 小地图按钮
+-- SECTION 1: 模块入口
+-- Minimap — LibDataBroker / LibDBIcon 小地图按钮
 -- =========================================================
 
 local VFlow = _G.VFlow
 if not VFlow then return end
+
+-- =========================================================
+-- SECTION 2: Broker 与登录注册
+-- =========================================================
 
 local ldb = LibStub and LibStub("LibDataBroker-1.1", true)
 local icon = LibStub and LibStub("LibDBIcon-1.0", true)

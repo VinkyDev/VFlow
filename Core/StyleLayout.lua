@@ -1,6 +1,6 @@
 -- =========================================================
--- VFlow StyleLayout - 布局计算和定位
--- 收集图标、分行、计算位置
+-- SECTION 1: 模块入口
+-- StyleLayout — 收集图标、分行、计算位置
 -- =========================================================
 
 local VFlow = _G.VFlow
@@ -9,12 +9,14 @@ if not VFlow then return end
 local StyleLayout = {}
 VFlow.StyleLayout = StyleLayout
 
+local Utils = VFlow.Utils
+
 local floor = math.floor
 local abs = math.abs
 local Profiler = VFlow.Profiler
 
 -- =========================================================
--- 工具函数
+-- SECTION 2: 工具函数
 -- =========================================================
 
 -- 缓存SetPoint，只在值变化时调用
@@ -52,9 +54,7 @@ function StyleLayout.CollectIcons(viewer)
         end
     end
 
-    table.sort(icons, function(a, b)
-        return (a.layoutIndex or 0) < (b.layoutIndex or 0)
-    end)
+    Utils.sortByLayoutIndex(icons)
     Profiler.stop(_pt)
     return icons
 end

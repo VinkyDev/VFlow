@@ -1,9 +1,6 @@
 -- =========================================================
--- VFlow CustomMonitorGroups - 自定义图形监控容器管理
--- 职责：为每个启用的自定义监控项创建可拖拽的条形容器
---
--- 生命周期权威方：所有容器的创建/销毁都经过此模块，
--- 完成后主动通知 CustomMonitorRuntime，消除竞争条件。
+-- SECTION 1: 模块入口
+-- CustomMonitorGroups — 条形容器生命周期（通知 Runtime）
 -- =========================================================
 
 local VFlow = _G.VFlow
@@ -11,6 +8,11 @@ if not VFlow then return end
 
 local MODULE_KEY = "VFlow.CustomMonitor"
 local PP = VFlow.PixelPerfect  -- 完美像素工具
+
+-- =========================================================
+-- SECTION 2: 常量与模块状态
+-- =========================================================
+
 local VALID_STRATA = {
     BACKGROUND = true,
     LOW = true,
@@ -22,10 +24,6 @@ local VALID_STRATA = {
     TOOLTIP = true,
 }
 
--- =========================================================
--- 模块状态
--- =========================================================
-
 -- { ["skills"|"buffs"] = { [spellID] = frame } }
 local _containers = {
     skills = {},
@@ -33,7 +31,7 @@ local _containers = {
 }
 
 -- =========================================================
--- 条形容器构建
+-- SECTION 3: 条形容器构建
 -- =========================================================
 
 local function createBarContainer(storeKey, spellID, cfg)
@@ -141,7 +139,7 @@ local function createBarContainer(storeKey, spellID, cfg)
 end
 
 -- =========================================================
--- 容器生命周期（内部）
+-- SECTION 4: 容器生命周期
 -- =========================================================
 
 local function destroyContainer(storeKey, spellID)
@@ -176,7 +174,7 @@ local function ensureContainer(storeKey, spellID, cfg)
 end
 
 -- =========================================================
--- 辅助函数：校验技能/BUFF是否有效
+-- SECTION 5: 技能/BUFF 有效性校验
 -- =========================================================
 
 local function checkIsValid(storeKey, spellID)
@@ -193,7 +191,7 @@ local function checkIsValid(storeKey, spellID)
 end
 
 -- =========================================================
--- 同步逻辑
+-- SECTION 6: 与 Store 同步
 -- =========================================================
 
 -- 同步单个 storeKey（skills 或 buffs）的容器
@@ -233,7 +231,7 @@ local function syncAll()
 end
 
 -- =========================================================
--- 位置快速更新（不重建容器）
+-- SECTION 7: 位置快速更新
 -- =========================================================
 
 local function updatePosition(storeKey, spellID)
@@ -249,7 +247,7 @@ local function updatePosition(storeKey, spellID)
 end
 
 -- =========================================================
--- Store key 解析
+-- SECTION 8: Store key 解析
 -- =========================================================
 
 local function parseStoreKey(key)
@@ -262,7 +260,7 @@ local function parseStoreKey(key)
 end
 
 -- =========================================================
--- 初始化与事件响应
+-- SECTION 9: 初始化与事件
 -- =========================================================
 
 -- trackedSkills 变化：Scanner 扫描完成，同步技能容器
@@ -295,10 +293,7 @@ VFlow.on("TRAIT_CONFIG_UPDATED", "CustomMonitorGroups", function()
     end)
 end)
 
--- =========================================================
--- 配置变更监听（唯一入口）
--- =========================================================
-
+-- Store.watch：细粒度配置变更（与 SECTION 9 中全量同步互补）
 VFlow.Store.watch(MODULE_KEY, "CustomMonitorGroups", function(key, value)
     if key == "skills" or key == "buffs" then
         syncStore(key, value or {})

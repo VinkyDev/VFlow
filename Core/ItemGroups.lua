@@ -1,11 +1,16 @@
 -- =========================================================
--- VFlow ItemGroups - 物品/饰品/种族技能分组（类比 SkillGroups）
+-- SECTION 1: 模块入口
+-- ItemGroups — 物品 / 饰品 / 种族技能分组（类比 SkillGroups）
 -- =========================================================
 
 local VFlow = _G.VFlow
 if not VFlow then return end
 
 local MODULE_KEY = "VFlow.Items"
+
+-- =========================================================
+-- SECTION 2: 模块状态与刷新调度
+-- =========================================================
 
 local Profiler = VFlow.Profiler
 local MasqueSupport = VFlow.MasqueSupport
@@ -355,7 +360,8 @@ local function InitGroupContainers()
 end
 
 -- =========================================================
--- 单独分组：自建图标 + StyleApply（对齐 TrinketPotionMonitor，不复用 CD Viewer 按钮）
+-- SECTION 3: 单独分组 — 自建图标与 StyleApply
+-- （与 TrinketPotionMonitor 对齐，不复用 CD Viewer 按钮）
 -- =========================================================
 
 --- 物品组内监控条目（单独分组与追加模式共用）
