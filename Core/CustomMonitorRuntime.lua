@@ -138,6 +138,12 @@ local function ApplyStatusBarOrientation(bar, direction)
     end
 end
 
+--- 条形监控「反向」：沿当前朝向的填充轴镜像（横条左↔右，竖条下↔上）
+local function ApplyStatusBarReverseFill(bar, reversed)
+    if not bar or not bar.SetReverseFill then return end
+    bar:SetReverseFill(reversed == true)
+end
+
 local function ResolveBarTexture(name)
     if not name or name == "默认" then return BAR_TEXTURE end
     local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
@@ -659,6 +665,7 @@ local function CreateSegments(barFrame, count, cfg, isStack, isRing)
     -- 实际间距 = 用户间距 - 边框厚度（让边框重合）
     local segmentGap = (count > 1) and (userGap - borderThickness) or 0
     local dir = cfg.barDirection or "horizontal"
+    local barReverse = cfg.barReverse == true
     local tex = ResolveBarTexture(cfg.barTexture)
     local bc  = cfg.barColor or { r = 0.2, g = 0.6, b = 1, a = 1 }
     local borderColor = cfg.borderColor or { r = 0.3, g = 0.3, b = 0.3, a = 1 }
@@ -747,6 +754,7 @@ local function CreateSegments(barFrame, count, cfg, isStack, isRing)
         seg:SetAllPoints(segFrame)
         ConfigureStatusBar(seg)
         ApplyStatusBarOrientation(seg, dir)
+        ApplyStatusBarReverseFill(seg, barReverse)
 
         if isStack then
             seg:SetMinMaxValues(i - 1, i)
@@ -775,6 +783,7 @@ local function CreateSegments(barFrame, count, cfg, isStack, isRing)
                 ov1:SetMinMaxValues((i < t1) and (t1 - 1) or (i - 1), (i < t1) and t1 or i)
                 ConfigureStatusBar(ov1)
                 ApplyStatusBarOrientation(ov1, dir)
+                ApplyStatusBarReverseFill(ov1, barReverse)
                 table.insert(barFrame._thresholdOverlays, ov1)
             end
             if t2 > 0 then
@@ -788,6 +797,7 @@ local function CreateSegments(barFrame, count, cfg, isStack, isRing)
                 ov2:SetMinMaxValues((i < t2) and (t2 - 1) or (i - 1), (i < t2) and t2 or i)
                 ConfigureStatusBar(ov2)
                 ApplyStatusBarOrientation(ov2, dir)
+                ApplyStatusBarReverseFill(ov2, barReverse)
                 table.insert(barFrame._thresholdOverlays, ov2)
             end
         end
@@ -863,6 +873,7 @@ local function UpdateRegularCooldownBar(barFrame, spellID)
         seg:SetValue(1)
         if barFrame._text then barFrame._text:SetText("") end
     end
+    ApplyStatusBarReverseFill(seg, cfg.barReverse == true)
 end
 
 local function UpdateChargeBar(barFrame, spellID)
@@ -922,6 +933,7 @@ local function UpdateChargeBar(barFrame, spellID)
     barFrame._chargeBar:SetStatusBarColor(cfg.barColor.r, cfg.barColor.g, cfg.barColor.b, cfg.barColor.a)
     barFrame._chargeBar:SetMinMaxValues(0, maxCharges)
     barFrame._chargeBar:SetValue(currentCharges)
+    ApplyStatusBarReverseFill(barFrame._chargeBar, cfg.barReverse == true)
 
     -- 设置充能进度条（显示正在充能的进度）
     if not barFrame._refreshCharge then
@@ -959,6 +971,7 @@ local function UpdateChargeBar(barFrame, spellID)
     -- 每次更新颜色（配置可能变化）
     local rc = cfg.rechargeColor or { r = 0.5, g = 0.8, b = 1, a = 1 }
     barFrame._refreshCharge:SetStatusBarColor(rc.r, rc.g, rc.b, rc.a)
+    ApplyStatusBarReverseFill(barFrame._refreshCharge, cfg.barReverse == true)
 
     -- 计算每个充能的宽度，设置refreshCharge的尺寸
     local totalW = barFrame._segContainer:GetWidth()
@@ -1243,6 +1256,7 @@ UpdateDurationBar = function(barFrame, spellID, barKey)
                 seg:SetMinMaxValues(0, 1); seg:SetValue(1)
                 if barFrame._text then barFrame._text:SetText("") end
             end
+            ApplyStatusBarReverseFill(seg, cfg.barReverse == true)
         end
     else
         barFrame._lastKnownActive = false
@@ -1254,6 +1268,7 @@ UpdateDurationBar = function(barFrame, spellID, barKey)
             seg._needsRefresh = true  -- 下次激活时重新设置
         else
             seg:SetMinMaxValues(0, 1); seg:SetValue(0)
+            ApplyStatusBarReverseFill(seg, cfg.barReverse == true)
         end
         if barFrame._text then barFrame._text:SetText("") end
     end

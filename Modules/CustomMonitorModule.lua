@@ -99,6 +99,7 @@ local function getDefaultSpellConfig()
         barTexture            = "Solid",
         barDirection          = "horizontal",
         barFillMode           = "drain",
+        barReverse            = false, -- 反向：StatusBar 沿填充轴镜像（与「增加/衰减」叠加）
         ringSize              = 150,                           -- 环形尺寸
         ringTexture           = "10",                          -- 环形材质：10/20/30/40
         ringColor             = { r = 0.2, g = 0.6, b = 1, a = 1 }, -- 环形颜色
@@ -446,12 +447,28 @@ local function buildSpellConfigLayout(monitorTypeOptions, timerFontLabel, isSkil
                         cols = 8,
                         items = BAR_DIRECTION_OPTIONS
                     },
+                    -- 充能技能走 UpdateChargeBar，不使用填充方向/反向
                     {
-                        type = "dropdown",
-                        key = "barFillMode",
-                        label = "填充方向",
-                        cols = 8,
-                        items = BAR_FILL_OPTIONS
+                        type = "if",
+                        dependsOn = "shape",
+                        condition = function(cfg)
+                            return cfg.shape == "bar" and not isChargeSpell
+                        end,
+                        children = {
+                            {
+                                type = "dropdown",
+                                key = "barFillMode",
+                                label = "填充方向",
+                                cols = 8,
+                                items = BAR_FILL_OPTIONS
+                            },
+                            {
+                                type = "checkbox",
+                                key = "barReverse",
+                                label = "反向",
+                                cols = 16,
+                            },
+                        }
                     },
                 }
             },
