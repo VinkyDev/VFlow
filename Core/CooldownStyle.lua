@@ -921,7 +921,22 @@ local function RefreshSkillViewer(viewer, cfg)
         end
     end
 
-    local yAccum = 0
+    local numRows = #rowCells
+    -- 各行最大高度，用于「向上增长」时按槽位镜像 y，避免次行被摆到 viewer TOP 之外导致编辑框错位
+    local rowHeights = {}
+    for rowIdx, rCells in ipairs(rowCells) do
+        local rowMaxH = 0
+        for _, cell in ipairs(rCells) do
+            local h = cellHeight(cell, rowIdx)
+            if h > rowMaxH then rowMaxH = h end
+        end
+        rowHeights[rowIdx] = rowMaxH
+    end
+    local prefixY = { [0] = 0 }
+    for i = 1, numRows do
+        prefixY[i] = prefixY[i - 1] + rowHeights[i] + (i < numRows and spacingY or 0)
+    end
+
     local xAccum = 0
 
     for rowIdx, rCells in ipairs(rowCells) do
@@ -971,7 +986,9 @@ local function RefreshSkillViewer(viewer, cfg)
                 local x, y
                 if isH then
                     x = curX
-                    y = growUp and yAccum or -yAccum
+                    -- 向下：第 k 行 y = -prefixY[k-1]；向上增长：第 k 行占用向下模式中第 (n-k+1) 行的垂直槽位，整体仍在 TOP 锚点下方向下延伸
+                    local downSlot = growUp and (numRows - rowIdx) or (rowIdx - 1)
+                    y = -prefixY[downSlot]
                     curX = curX + strideX * iconDir
                 else
                     y = -(colIdx - 1) * (h + spacingY) * iconDir
@@ -1000,9 +1017,7 @@ local function RefreshSkillViewer(viewer, cfg)
             end
         end
 
-        if isH then
-            yAccum = yAccum + rowMaxH + spacingY
-        else
+        if not isH then
             xAccum = xAccum + rowMaxW + spacingX
         end
     end
