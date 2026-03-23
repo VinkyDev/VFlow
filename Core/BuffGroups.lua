@@ -77,50 +77,46 @@ end
 -- SECTION 4: 图标分类
 -- =========================================================
 
+local function LookupSpellInGroupMap(spellID, spellMap)
+    if not spellID or spellID <= 0 then return nil end
+    local groupIdx = spellMap[spellID]
+    if groupIdx then return groupIdx end
+    if C_Spell and C_Spell.GetBaseSpell then
+        local baseID = C_Spell.GetBaseSpell(spellID)
+        if baseID and baseID ~= spellID then
+            groupIdx = spellMap[baseID]
+            if groupIdx then return groupIdx end
+        end
+    end
+    return nil
+end
+
 local function GetGroupIdxForIcon(icon, spellMap)
-    -- 尝试多个spell ID来源
-    local candidates = {}
+    local id, groupIdx
 
-    -- 优先级1: GetAuraSpellID (最准确)
     if icon.GetAuraSpellID then
-        local id = icon:GetAuraSpellID()
-        -- 检查是否为SecureValue（战斗中）
+        id = icon:GetAuraSpellID()
         if id and not issecretvalue(id) and type(id) == "number" and id > 0 then
-            table.insert(candidates, id)
+            groupIdx = LookupSpellInGroupMap(id, spellMap)
+            if groupIdx then return groupIdx end
         end
     end
 
-    -- 优先级2: GetSpellID
     if icon.GetSpellID then
-        local id = icon:GetSpellID()
-        -- 检查是否为SecureValue（战斗中）
+        id = icon:GetSpellID()
         if id and not issecretvalue(id) and type(id) == "number" and id > 0 then
-            table.insert(candidates, id)
+            groupIdx = LookupSpellInGroupMap(id, spellMap)
+            if groupIdx then return groupIdx end
         end
     end
 
-    -- 优先级3: CooldownInfo
     if icon.cooldownID then
         local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(icon.cooldownID)
         if info then
             local spellID = info.linkedSpellIDs and info.linkedSpellIDs[1]
             spellID = spellID or info.overrideSpellID or info.spellID
             if spellID and spellID > 0 then
-                table.insert(candidates, spellID)
-            end
-        end
-    end
-
-    -- 查找匹配
-    for _, spellID in ipairs(candidates) do
-        local groupIdx = spellMap[spellID]
-        if groupIdx then return groupIdx end
-
-        -- 尝试基础法术
-        if C_Spell and C_Spell.GetBaseSpell then
-            local baseID = C_Spell.GetBaseSpell(spellID)
-            if baseID and baseID ~= spellID then
-                groupIdx = spellMap[baseID]
+                groupIdx = LookupSpellInGroupMap(spellID, spellMap)
                 if groupIdx then return groupIdx end
             end
         end
@@ -132,6 +128,17 @@ end
 local function ClassifyIcons(allIcons)
     local _pt = Profiler.start("BG:ClassifyIcons")
     local spellMap = RebuildSpellMap()
+
+    if not next(spellMap) then
+        local n = #allIcons
+        local mainVisible = {}
+        for i = 1, n do
+            mainVisible[i] = allIcons[i]
+        end
+        Profiler.stop(_pt)
+        return mainVisible, {}
+    end
+
     local mainVisible = {}
     local groupBuckets = {}
 
@@ -310,7 +317,7 @@ local function LayoutBuffGroups(groupBuckets)
                 for _, icon in ipairs(icons) do
                     if VFlow.StyleApply then
                         VFlow.StyleApply.ApplyIconSize(icon, w, h)
-                        VFlow.StyleApply.ApplyButtonStyle(icon, cfg)
+                        VFlow.StyleApply.ApplyButtonStyleIfStale(icon, cfg)
                     end
                     if MasqueSupport and MasqueSupport:IsActive() and icon.Icon then
                         MasqueSupport:RegisterButton(icon, icon.Icon)

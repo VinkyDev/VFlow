@@ -332,6 +332,16 @@ function StyleApply.ApplyButtonStyle(button, cfg)
     Profiler.stop(_pt)
 end
 
+--- 全局样式版本（VFlow._buttonStyleVersion）未变则跳过，避免热路径重复跑字体/美化
+--- 调用方须先按需 ApplyIconSize；配置变更由 CooldownStyle BumpButtonStyleVersion 驱动
+function StyleApply.ApplyButtonStyleIfStale(button, cfg)
+    if not button or not cfg then return end
+    local ver = VFlow._buttonStyleVersion or 0
+    if button._vf_btnStyleVer == ver then return end
+    StyleApply.ApplyButtonStyle(button, cfg)
+    button._vf_btnStyleVer = ver
+end
+
 -- =========================================================
 -- SECTION 9: 美化实现（缩放 / 边框 / 视觉隐藏）
 -- =========================================================

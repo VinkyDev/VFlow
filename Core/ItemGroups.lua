@@ -802,7 +802,7 @@ local function LayoutStandaloneIconGrid(container, cfg, groupId, icons)
         for colIdx, button in ipairs(rowIcons) do
             if VFlow.StyleApply then
                 VFlow.StyleApply.ApplyIconSize(button, w, h)
-                VFlow.StyleApply.ApplyButtonStyle(button, cfg)
+                VFlow.StyleApply.ApplyButtonStyleIfStale(button, cfg)
             end
             if MasqueSupport and MasqueSupport:IsActive() and button.Icon then
                 MasqueSupport:RegisterButton(button, button.Icon)

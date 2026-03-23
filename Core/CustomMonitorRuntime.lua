@@ -110,6 +110,12 @@ local _auraKeyToBars  = {}
 local _barToAuraKey   = {}  -- barKey → aura key
 local _spellMapRetryAt = {}
 
+-- CDM RefreshData 等钩子同帧可能触发多次：合并到帧末一次处理，减少 UpdateStackBar 重复
+local _cdmFlushPending  = setmetatable({}, { __mode = "k" })  -- [cdmFrame] = true
+local _cdmFlushLastAura = setmetatable({}, { __mode = "k" })  -- [cdmFrame] = { auraInstanceID?, auraUnit? }
+local _cdmFlushFrame = CreateFrame("Frame")
+_cdmFlushFrame:Hide()
+
 -- =========================================================
 -- SECTION 5: 通用辅助
 -- =========================================================
@@ -432,8 +438,53 @@ end
 local UpdateStackBar   -- 前向声明
 local UpdateDurationBar
 
-local function OnCDMFrameChanged(frame, ...)
+local function FlushCDMFrameChanges()
     local _pt = Profiler.start("CMR:OnCDMFrameChanged")
+    local batch = {}
+    for fr in pairs(_cdmFlushPending) do
+        batch[#batch + 1] = fr
+    end
+    for _, frame in ipairs(batch) do
+        _cdmFlushPending[frame] = nil
+        local slot = _cdmFlushLastAura[frame]
+        _cdmFlushLastAura[frame] = nil
+
+        local auraInstanceID = slot and slot[1]
+        local auraUnit = slot and slot[2]
+        if not HasAuraInstanceID(auraInstanceID) and frame.auraInstanceID then
+            if HasAuraInstanceID(frame.auraInstanceID) then
+                auraInstanceID = frame.auraInstanceID
+            end
+        end
+        if (not auraUnit or auraUnit == "") and frame.auraDataUnit then
+            auraUnit = frame.auraDataUnit
+        end
+
+        local barKeys = _frameToBarKeys[frame]
+        if barKeys then
+            for _, barKey in ipairs(barKeys) do
+                local spellID  = tonumber(barKey:match("^buffs/(%d+)$"))
+                local barFrame = spellID and _activeBuffBars[spellID]
+                if barFrame and barFrame._monitorType == "stacks" then
+                    if auraInstanceID then
+                        local trackedUnit = auraUnit or frame.auraDataUnit
+                            or barFrame._trackedUnit or "player"
+                        LinkBarToAura(barFrame, barKey, trackedUnit, auraInstanceID)
+                    end
+                    UpdateStackBar(barFrame, spellID, barKey)
+                    barFrame._buffBarDirty = false
+                end
+            end
+        end
+    end
+    Profiler.stop(_pt)
+end
+
+local function DeferCDMFrameChanged(frame, ...)
+    if not frame then return end
+    local barKeysEarly = _frameToBarKeys[frame]
+    if not barKeysEarly then return end
+
     local auraInstanceID, auraUnit
     for i = 1, select("#", ...) do
         local v = select(i, ...)
@@ -441,28 +492,32 @@ local function OnCDMFrameChanged(frame, ...)
         if not auraUnit and type(v) == "string" and v ~= "" then auraUnit = v end
     end
 
-    local barKeys = _frameToBarKeys[frame]
-    if not barKeys then
-        Profiler.stop(_pt)
-        return
+    local slot = _cdmFlushLastAura[frame]
+    if not slot then
+        slot = {}
+        _cdmFlushLastAura[frame] = slot
     end
+    if HasAuraInstanceID(auraInstanceID) then slot[1] = auraInstanceID end
+    if auraUnit and auraUnit ~= "" then slot[2] = auraUnit end
 
-    for _, barKey in ipairs(barKeys) do
-        local spellID  = tonumber(barKey:match("^buffs/(%d+)$"))
+    for _, barKey in ipairs(barKeysEarly) do
+        local spellID = tonumber(barKey:match("^buffs/(%d+)$"))
         local barFrame = spellID and _activeBuffBars[spellID]
         if barFrame then
-            if barFrame._monitorType == "stacks" then
-                if auraInstanceID then
-                    local trackedUnit = auraUnit or frame.auraDataUnit
-                        or barFrame._trackedUnit or "player"
-                    LinkBarToAura(barFrame, barKey, trackedUnit, auraInstanceID)
-                end
-                UpdateStackBar(barFrame, spellID, barKey)
-            end
+            barFrame._buffBarDirty = true
         end
     end
-    Profiler.stop(_pt)
+
+    _cdmFlushPending[frame] = true
+    _cdmFlushFrame:Show()
 end
+
+_cdmFlushFrame:SetScript("OnUpdate", function(self)
+    self:Hide()
+    if next(_cdmFlushPending) then
+        FlushCDMFrameChanges()
+    end
+end)
 
 local function HookCDMFrame(cdmFrame, barKey)
     if not cdmFrame then return end
@@ -471,9 +526,9 @@ local function HookCDMFrame(cdmFrame, barKey)
         _frameToBarKeys[cdmFrame] = {}
     end
     if not _everHookedFrames[cdmFrame] then
-        if cdmFrame.RefreshData         then hooksecurefunc(cdmFrame, "RefreshData",         OnCDMFrameChanged) end
-        if cdmFrame.RefreshApplications then hooksecurefunc(cdmFrame, "RefreshApplications", OnCDMFrameChanged) end
-        if cdmFrame.SetAuraInstanceInfo then hooksecurefunc(cdmFrame, "SetAuraInstanceInfo",  OnCDMFrameChanged) end
+        if cdmFrame.RefreshData         then hooksecurefunc(cdmFrame, "RefreshData",         DeferCDMFrameChanged) end
+        if cdmFrame.RefreshApplications then hooksecurefunc(cdmFrame, "RefreshApplications", DeferCDMFrameChanged) end
+        if cdmFrame.SetAuraInstanceInfo then hooksecurefunc(cdmFrame, "SetAuraInstanceInfo",  DeferCDMFrameChanged) end
         _everHookedFrames[cdmFrame] = true
     end
     if not _hookedFrames[cdmFrame].barIDs[barKey] then
@@ -483,6 +538,13 @@ local function HookCDMFrame(cdmFrame, barKey)
 end
 
 local function ClearAllHooks()
+    for frame in pairs(_cdmFlushPending) do
+        _cdmFlushPending[frame] = nil
+    end
+    for frame in pairs(_cdmFlushLastAura) do
+        _cdmFlushLastAura[frame] = nil
+    end
+    _cdmFlushFrame:Hide()
     for frame in pairs(_hookedFrames) do
         _hookedFrames[frame] = nil
         _frameToBarKeys[frame] = nil
@@ -1390,6 +1452,7 @@ local function CreateBarFrame(spellID, cfg, container)
     -- 通用
     barFrame._segsDirty            = false
     barFrame._segsNeedCount        = nil
+    barFrame._buffBarDirty         = true
 
     return barFrame
 end
@@ -1559,9 +1622,20 @@ local function UpdateAllBars()
                 end
             end
             if barFrame._monitorType == "stacks" then
-                UpdateStackBar(barFrame, spellID, barFrame._barKey)
+                -- 层数条：CDM 钩子帧末已刷新时可跳过大部分 0.1s 轮询；约每 1s 兜底同步一次
+                barFrame._vf_stackPollCounter = (barFrame._vf_stackPollCounter or 0) + 1
+                local forceStackPoll = false
+                if barFrame._vf_stackPollCounter >= 10 then
+                    barFrame._vf_stackPollCounter = 0
+                    forceStackPoll = true
+                end
+                if barFrame._buffBarDirty or barFrame._segsDirty or not barFrame._lastKnownActive or forceStackPoll then
+                    UpdateStackBar(barFrame, spellID, barFrame._barKey)
+                end
+                barFrame._buffBarDirty = false
             else
                 UpdateDurationBar(barFrame, spellID, barFrame._barKey)
+                barFrame._buffBarDirty = false
             end
             isBuffActive = barFrame._lastKnownActive or false
         end
@@ -1627,6 +1701,7 @@ local function HandleSpecOrTalentChange()
         barFrame._trackedUnit           = nil
         barFrame._lastKnownActive       = false
         barFrame._lastKnownStacks       = 0
+        barFrame._buffBarDirty          = true
     end
 end
 

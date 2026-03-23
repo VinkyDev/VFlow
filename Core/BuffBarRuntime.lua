@@ -38,7 +38,7 @@ local styleVersion = 0
 
 local BURST_TICKS = 8
 local BURST_THROTTLE = 0.033
-local WATCHDOG_THROTTLE = 0.20
+local WATCHDOG_THROTTLE = 0.25
 
 -- =========================================================
 -- SECTION 3: 可见条快照
@@ -118,10 +118,8 @@ function BuffBarRuntime.enable()
     needRefetchRefs = true
 
     frame:SetScript("OnUpdate", function()
-        local _pt = Profiler.start("BuffBarRT:OnUpdate")
         if not handlers then
             BuffBarRuntime.disable()
-            Profiler.stop(_pt)
             return
         end
 
@@ -136,16 +134,26 @@ function BuffBarRuntime.enable()
         local cfg = cachedCfg
         if not viewer or not cfg then
             BuffBarRuntime.disable()
-            Profiler.stop(_pt)
             return
         end
-        if not viewer:IsShown() then Profiler.stop(_pt) return end
-        if viewer._vf_refreshing then Profiler.stop(_pt) return end
 
         local now = GetTime()
+        if not viewer:IsShown() then
+            if now < nextUpdate then return end
+            nextUpdate = now + WATCHDOG_THROTTLE
+            return
+        end
+        if viewer._vf_refreshing then
+            if now < nextUpdate then return end
+            nextUpdate = now + BURST_THROTTLE
+            return
+        end
+
         local throttle = (dirty or burst > 0) and BURST_THROTTLE or WATCHDOG_THROTTLE
-        if now < nextUpdate then Profiler.stop(_pt) return end
+        if now < nextUpdate then return end
         nextUpdate = now + throttle
+
+        local _pt = Profiler.start("BuffBarRT:OnUpdate")
 
         -- 快速路径：watchdog 阶段检查可见帧数量变化
         -- 注意：不能只检查 children 数量，因为 Release 只是隐藏帧而不移除子级

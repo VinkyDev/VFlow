@@ -7,6 +7,7 @@ local VFlow = _G.VFlow
 if not VFlow then return end
 
 local Profiler = VFlow.Profiler
+local StyleLayout = VFlow.StyleLayout
 
 local BuffRuntime = {}
 VFlow.BuffRuntime = BuffRuntime
@@ -26,7 +27,8 @@ local cachedFrames = {}
 local cachedLayoutIndex = {}
 local cachedSlot = {}
 local cachedCount = 0
-local cachedChildCount = 0  -- 快速路径：viewer children 数量
+local cachedChildCount = 0  -- 快速路径：viewer 子级数量
+local cachedPoolCount = 0   -- 快速路径：itemFramePool 活动数（池帧不一定挂在 viewer 子级下）
 
 -- viewer/cfg 缓存（避免每帧调 getViewer/getConfig）
 local cachedViewer = nil
@@ -35,7 +37,7 @@ local needRefetchRefs = true
 
 local BURST_TICKS = 5
 local BURST_THROTTLE = 0.033
-local WATCHDOG_THROTTLE = 0.25
+local WATCHDOG_THROTTLE = 0.30
 
 local function cacheVisible(visible)
     wipe(cachedFrames)
@@ -99,10 +101,8 @@ function BuffRuntime.enable()
     if enabled then return end
     enabled = true
     frame:SetScript("OnUpdate", function()
-        local _pt = Profiler.start("BuffRT:OnUpdate")
         if not handlers then
             BuffRuntime.disable()
-            Profiler.stop(_pt)
             return
         end
 
@@ -117,34 +117,48 @@ function BuffRuntime.enable()
         local cfg = cachedCfg
         if not viewer or not cfg then
             BuffRuntime.disable()
-            Profiler.stop(_pt)
             return
         end
-        if not viewer:IsShown() then Profiler.stop(_pt) return end
-        if viewer._vf_refreshing then Profiler.stop(_pt) return end
 
         local now = GetTime()
+        if not viewer:IsShown() then
+            if now < nextUpdate then return end
+            nextUpdate = now + WATCHDOG_THROTTLE
+            return
+        end
+        if viewer._vf_refreshing then
+            if now < nextUpdate then return end
+            nextUpdate = now + BURST_THROTTLE
+            return
+        end
+
         local throttle = (dirty or burst > 0) and BURST_THROTTLE or WATCHDOG_THROTTLE
-        if now < nextUpdate then Profiler.stop(_pt) return end
+        if now < nextUpdate then return end
         nextUpdate = now + throttle
 
-        -- 快速路径：watchdog 阶段（非 dirty 且 burst=0）只检查 children 数量
-        if not dirty and burst == 0 then
+        local _pt = Profiler.start("BuffRT:OnUpdate")
+
+        -- 快速路径：watchdog 阶段（非 dirty 且 burst=0）只比对子级数 + 池活动数
+        if not dirty and burst == 0 and StyleLayout and StyleLayout.PoolActiveCount then
             local cc = select('#', viewer:GetChildren())
-            if cc == cachedChildCount then
+            local pn = StyleLayout.PoolActiveCount(viewer.itemFramePool)
+            if cc == cachedChildCount and pn == cachedPoolCount then
                 Profiler.stop(_pt)
                 return
             end
         end
 
         local visible = handlers.collectVisible and handlers.collectVisible(viewer, dirty) or {}
+        cachedChildCount = select('#', viewer:GetChildren())
+        cachedPoolCount = (StyleLayout and StyleLayout.PoolActiveCount)
+            and StyleLayout.PoolActiveCount(viewer.itemFramePool) or 0
+
         local changed = dirty or hasVisibleChanged(visible)
         if changed then
             if handlers.refresh then
                 handlers.refresh(viewer, cfg)
             end
             cacheVisible(visible)
-            cachedChildCount = select('#', viewer:GetChildren())
             dirty = false
             burst = BURST_TICKS
             Profiler.stop(_pt)

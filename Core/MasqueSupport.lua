@@ -40,20 +40,24 @@ function MasqueSupport:RegisterButton(button, icon, border)
     if not masqueGroup then
         return
     end
-    Profiler.count("MS:RegisterButton")
 
-    -- 已注册时 Masque 的 AddButton 会直接 return，不会重算 Icon/Cooldown 等区域；
-    -- VFlow 改宽高后必须 ReSkin(按钮)，否则只有布局间距变、皮肤层仍按旧尺寸绘制。
+    -- 已注册且尺寸未变：无需 ReSkin，不计入热路径统计
     if self.registeredButtons[button] then
         local w = button._vf_w or (button.GetWidth and button:GetWidth())
         local h = button._vf_h or (button.GetHeight and button:GetHeight())
-        if w and h and (button._vf_masqueSkinnedW ~= w or button._vf_masqueSkinnedH ~= h) then
+        if w and h and button._vf_masqueSkinnedW == w and button._vf_masqueSkinnedH == h then
+            return
+        end
+        Profiler.count("MS:RegisterButton")
+        if w and h then
             masqueGroup:ReSkin(button)
             button._vf_masqueSkinnedW = w
             button._vf_masqueSkinnedH = h
         end
         return
     end
+
+    Profiler.count("MS:RegisterButton")
 
     -- 注册到 Masque
     -- 注意：VFlow接管的图标结构可能因Viewer不同而异，需要调用者传入正确的组件

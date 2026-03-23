@@ -15,6 +15,35 @@ local floor = math.floor
 local abs = math.abs
 local Profiler = VFlow.Profiler
 
+-- 池活动数量（优先 API，避免每帧全量 Enumerate）
+local function PoolActiveCount(pool)
+    if not pool then return 0 end
+    if pool.GetNumActive then
+        local n = pool:GetNumActive()
+        if type(n) == "number" and n >= 0 then return n end
+    end
+    local n = 0
+    if pool.EnumerateActive then
+        for _ in pool:EnumerateActive() do
+            n = n + 1
+        end
+    end
+    return n
+end
+
+StyleLayout.PoolActiveCount = PoolActiveCount
+
+--- 池/子级数量变化时清空 CollectIcons 等缓存（CooldownStyle 在 Acquire/Release 等时机调用）
+function StyleLayout.InvalidateCollectIconsCache(viewer)
+    if not viewer then return end
+    viewer._vf_sl_icons = nil
+    viewer._vf_sl_cn = nil
+    viewer._vf_sl_pn = nil
+    viewer._vf_bb_frames_cached = nil
+    viewer._vf_bb_frames_cn = nil
+    viewer._vf_bb_frames_pn = nil
+end
+
 -- =========================================================
 -- SECTION 2: 工具函数
 -- =========================================================
@@ -32,20 +61,32 @@ function StyleLayout.SetPointCached(frame, point, relativeTo, relativePoint, x, 
     frame:SetPoint(point, relativeTo, relativePoint, x, y)
 end
 
--- 收集viewer下所有图标帧
+-- 收集viewer下所有图标帧（轻量缓存：仅子级数 + 池活动数；排序在池成员不变时复用）
 function StyleLayout.CollectIcons(viewer)
     local _pt = Profiler.start("SL:CollectIcons")
+    if not viewer then
+        Profiler.stop(_pt)
+        return {}
+    end
+
+    local childN = select("#", viewer:GetChildren())
+    local poolN = PoolActiveCount(viewer.itemFramePool)
+    local cached = viewer._vf_sl_icons
+    if cached and viewer._vf_sl_cn == childN and viewer._vf_sl_pn == poolN then
+        Profiler.stop(_pt)
+        return cached
+    end
+
     local icons = {}
     local seen = {}
 
-    for _, child in ipairs({ viewer:GetChildren() }) do
-        if child and child.Icon and not child._vf_itemAppendFrame then
-            seen[child] = true
-            icons[#icons + 1] = child
+    for _, ch in ipairs({ viewer:GetChildren() }) do
+        if ch and ch.Icon and not ch._vf_itemAppendFrame then
+            seen[ch] = true
+            icons[#icons + 1] = ch
         end
     end
 
-    -- 检查对象池
     if viewer.itemFramePool then
         for frame in viewer.itemFramePool:EnumerateActive() do
             if frame and frame.Icon and not seen[frame] and not frame._vf_itemAppendFrame then
@@ -55,6 +96,9 @@ function StyleLayout.CollectIcons(viewer)
     end
 
     Utils.sortByLayoutIndex(icons)
+    viewer._vf_sl_icons = icons
+    viewer._vf_sl_cn = childN
+    viewer._vf_sl_pn = poolN
     Profiler.stop(_pt)
     return icons
 end

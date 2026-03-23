@@ -27,6 +27,7 @@ local MAX_BUFFBAR_READY_RETRIES = 20
 -- SECTION 2: 样式版本与 DB 缓存
 -- =========================================================
 local _buttonStyleVersion = 0
+VFlow._buttonStyleVersion = _buttonStyleVersion
 
 local function BumpButtonStyleVersion()
     _buttonStyleVersion = _buttonStyleVersion + 1
@@ -86,10 +87,16 @@ end
 
 local function CollectBuffBarFrames(viewer)
     Profiler.count("CDS:CollectBuffBarFrames")
-    local frames = {}
     if not viewer then
-        return frames
+        return {}
     end
+    local childN = select("#", viewer:GetChildren())
+    local poolN = StyleLayout.PoolActiveCount(viewer.itemFramePool)
+    local cached = viewer._vf_bb_frames_cached
+    if cached and viewer._vf_bb_frames_cn == childN and viewer._vf_bb_frames_pn == poolN then
+        return cached
+    end
+    local frames = {}
     if viewer.itemFramePool then
         for frame in viewer.itemFramePool:EnumerateActive() do
             if frame and frame.IsShown and frame:IsShown() then
@@ -104,6 +111,9 @@ local function CollectBuffBarFrames(viewer)
         end
     end
     Utils.sortByLayoutIndex(frames)
+    viewer._vf_bb_frames_cached = frames
+    viewer._vf_bb_frames_cn = childN
+    viewer._vf_bb_frames_pn = poolN
     return frames
 end
 
@@ -353,11 +363,12 @@ local function TouchCustomHighlight(frame)
     RequestCustomHighlightUpdate(frame)
 end
 
-local function ScanCooldownViewerIcons(viewer)
+--- @param icons? table 若已在同次刷新中 CollectIcons，传入可避免二次收集
+local function ScanCooldownViewerIcons(viewer, icons)
     if not viewer then return end
-    local icons = StyleLayout.CollectIcons(viewer)
-    for i = 1, #icons do
-        TouchCustomHighlight(icons[i])
+    local list = icons or StyleLayout.CollectIcons(viewer)
+    for i = 1, #list do
+        TouchCustomHighlight(list[i])
     end
 end
 
@@ -721,6 +732,7 @@ local function RefreshBuffBarViewer(viewer, cfg)
     if count == 0 then
         viewer._vf_refreshing = false
         Profiler.stop(_pt)
+        StyleLayout.InvalidateCollectIconsCache(viewer)
         return true
     end
 
@@ -755,6 +767,7 @@ local function RefreshBuffBarViewer(viewer, cfg)
     end
 
     Profiler.stop(_pt)
+    StyleLayout.InvalidateCollectIconsCache(viewer)
     return true
 end
 
@@ -803,10 +816,11 @@ local function RefreshSkillViewer(viewer, cfg)
         if VFlow.ItemGroups and VFlow.ItemGroups.refreshStandaloneLayouts then
             VFlow.ItemGroups.refreshStandaloneLayouts()
         end
-        ScanCooldownViewerIcons(viewer)
+        ScanCooldownViewerIcons(viewer, allIcons)
         ScanSkillGroupCustomHighlights()
         viewer._vf_refreshing = false
         Profiler.stop(_pt)
+        StyleLayout.InvalidateCollectIconsCache(viewer)
         return
     end
 
@@ -968,10 +982,7 @@ local function RefreshSkillViewer(viewer, cfg)
                 if button:IsShown() then button:SetAlpha(1) end
 
                 if cell.isItem then
-                    if button._vf_btnStyleVer ~= _buttonStyleVersion then
-                        StyleApply.ApplyButtonStyle(button, cfg)
-                        button._vf_btnStyleVer = _buttonStyleVersion
-                    end
+                    StyleApply.ApplyButtonStyleIfStale(button, cfg)
                     if VFlow.ItemGroups and VFlow.ItemGroups.refreshAppendFrameStack then
                         VFlow.ItemGroups.refreshAppendFrameStack(button, cell.entry)
                     end
@@ -980,10 +991,7 @@ local function RefreshSkillViewer(viewer, cfg)
                     end
                     button._vf_cdmKind = "skill"
                 else
-                    if button._vf_btnStyleVer ~= _buttonStyleVersion then
-                        StyleApply.ApplyButtonStyle(button, cfg)
-                        button._vf_btnStyleVer = _buttonStyleVersion
-                    end
+                    StyleApply.ApplyButtonStyleIfStale(button, cfg)
                     if MasqueSupport and MasqueSupport:IsActive() then
                         MasqueSupport:RegisterButton(button, button.Icon)
                     end
@@ -1045,11 +1053,12 @@ local function RefreshSkillViewer(viewer, cfg)
         VFlow.ItemGroups.refreshStandaloneLayouts()
     end
 
-    ScanCooldownViewerIcons(viewer)
+    ScanCooldownViewerIcons(viewer, allIcons)
     ScanSkillGroupCustomHighlights()
 
     viewer._vf_refreshing = false
     Profiler.stop(_pt)
+    StyleLayout.InvalidateCollectIconsCache(viewer)
 end
 
 -- =========================================================
@@ -1163,10 +1172,7 @@ local function ProvisionalPlaceBuffFrame(frame, viewer, cfg)
 
     -- 1. 先应用样式（帧还在原parent下）
     StyleApply.ApplyIconSize(frame, w, h)
-    if frame._vf_btnStyleVer ~= _buttonStyleVersion then
-        StyleApply.ApplyButtonStyle(frame, cfg)
-        frame._vf_btnStyleVer = _buttonStyleVersion
-    end
+    StyleApply.ApplyButtonStyleIfStale(frame, cfg)
     frame._vf_slot = slot
 
     -- 2. 再改父级
@@ -1307,11 +1313,7 @@ local function RefreshBuffViewer(viewer, cfg)
 
         -- 1. 先应用样式（帧还在原parent下，避免样式操作触发UIParent下的重渲染）
         StyleApply.ApplyIconSize(button, w, h)
-        -- 版本号跳过：按钮已在当前配置版本下完成样式化则跳过
-        if button._vf_btnStyleVer ~= _buttonStyleVersion then
-            StyleApply.ApplyButtonStyle(button, cfg)
-            button._vf_btnStyleVer = _buttonStyleVersion
-        end
+        StyleApply.ApplyButtonStyleIfStale(button, cfg)
 
         if MasqueSupport and MasqueSupport:IsActive() then
             MasqueSupport:RegisterButton(button, button.Icon)
@@ -1339,7 +1341,7 @@ local function RefreshBuffViewer(viewer, cfg)
         HideBuffIconsDetachedFromViewer(viewer)
     end
 
-    ScanCooldownViewerIcons(viewer)
+    ScanCooldownViewerIcons(viewer, allIcons)
     ScanBuffGroupCustomHighlights()
 
     viewer._vf_refreshing = false
@@ -1351,6 +1353,7 @@ local function RefreshBuffViewer(viewer, cfg)
     end
 
     Profiler.stop(_pt)
+    StyleLayout.InvalidateCollectIconsCache(viewer)
     return true
 end
 
@@ -1369,10 +1372,6 @@ local DoBuffBarRefresh
 local function SetupBuffRuntimeHandlers()
     if not BuffRuntime then return end
 
-    -- CollectIcons 缓存：只在 children 数量变化或 dirty 时重新收集
-    local iconCache = {}
-    local iconCacheChildCount = -1
-
     BuffRuntime.setHandlers({
         getViewer = function()
             local viewer = GetBuffViewerAndConfig()
@@ -1383,16 +1382,12 @@ local function SetupBuffRuntimeHandlers()
             return cfg
         end,
         collectVisible = function(viewer, isDirty)
-            local cc = select('#', viewer:GetChildren())
-            if cc ~= iconCacheChildCount or isDirty then
-                iconCache = StyleLayout.CollectIcons(viewer)
-                iconCacheChildCount = cc
+            if isDirty then
+                StyleLayout.InvalidateCollectIconsCache(viewer)
             end
-            return StyleLayout.FilterVisible(iconCache)
+            return StyleLayout.FilterVisible(StyleLayout.CollectIcons(viewer))
         end,
         refresh = function(viewer, cfg)
-            -- refresh 后强制刷新缓存（布局可能改变了 children）
-            iconCacheChildCount = -1
             RefreshBuffViewer(viewer, cfg)
         end,
     })
@@ -1586,6 +1581,9 @@ SetupHooks = function()
     end)
 
     local buffBarReleaseHandler = function()
+        if BuffBarCooldownViewer then
+            StyleLayout.InvalidateCollectIconsCache(BuffBarCooldownViewer)
+        end
         if BuffBarRuntime then BuffBarRuntime.markDirty() end
         if not _pendingBarSyncRefresh then
             _pendingBarSyncRefresh = true
@@ -1621,8 +1619,7 @@ SetupHooks = function()
             return
         end
         StyleApply.ApplyIconSize(frame, cfg.width or 40, cfg.height or 40)
-        StyleApply.ApplyButtonStyle(frame, cfg)
-        frame._vf_btnStyleVer = _buttonStyleVersion
+        StyleApply.ApplyButtonStyleIfStale(frame, cfg)
         ProvisionalPlaceBuffFrame(frame, viewer, cfg)
         TouchCustomHighlight(frame)
         -- 合并同一帧内的多次刷新：OnUpdate 在当前帧末尾触发一次 DoBuffRefresh
@@ -1654,6 +1651,7 @@ SetupHooks = function()
         -- hook OnAcquireItemFrame，每个帧出池时强制scale为1
         if viewer.OnAcquireItemFrame then
             hooksecurefunc(viewer, "OnAcquireItemFrame", function(_, frame)
+                StyleLayout.InvalidateCollectIconsCache(viewer)
                 if frame and frame.SetScale and frame:GetScale() ~= 1 then
                     frame:SetScale(1)
                 end
@@ -1663,6 +1661,15 @@ SetupHooks = function()
         if viewer.UpdateSystemSettingIconSize then
             hooksecurefunc(viewer, "UpdateSystemSettingIconSize", function()
                 enforceScaleOnViewer(viewer)
+                StyleLayout.InvalidateCollectIconsCache(viewer)
+            end)
+        end
+        if viewer.itemFramePool then
+            hooksecurefunc(viewer.itemFramePool, "Acquire", function()
+                StyleLayout.InvalidateCollectIconsCache(viewer)
+            end)
+            hooksecurefunc(viewer.itemFramePool, "Release", function()
+                StyleLayout.InvalidateCollectIconsCache(viewer)
             end)
         end
     end
@@ -1678,8 +1685,9 @@ SetupHooks = function()
         enforceScaleOnViewer(UtilityCooldownViewer)
     end
 
-    local function HookSkillFrameForCustomHighlight(_, frame)
+    local function HookSkillFrameForCustomHighlight(viewer, frame)
         if not frame then return end
+        if viewer then StyleLayout.InvalidateCollectIconsCache(viewer) end
         frame._vf_cdmKind = "skill"
         if frame.OnCooldownIDSet and not frame._vf_skillCDHooked then
             frame._vf_skillCDHooked = true
@@ -1711,6 +1719,7 @@ SetupHooks = function()
         -- OnAcquireItemFrame：只做最少初始化，不做样式应用
         SafeHook(BuffIconCooldownViewer, "OnAcquireItemFrame", function(_, frame)
             if not frame then return end
+            StyleLayout.InvalidateCollectIconsCache(BuffIconCooldownViewer)
             if frame.SetScale and frame:GetScale() ~= 1 then
                 frame:SetScale(1)
             end
@@ -1734,12 +1743,16 @@ SetupHooks = function()
 
         if BuffIconCooldownViewer.itemFramePool then
             hooksecurefunc(BuffIconCooldownViewer.itemFramePool, "Acquire", function(pool, frame)
+                StyleLayout.InvalidateCollectIconsCache(BuffIconCooldownViewer)
                 -- 最早时机，修正Scale
                 if frame and frame.SetScale and frame:GetScale() ~= 1 then
                     frame:SetScale(1)
                 end
             end)
-            hooksecurefunc(BuffIconCooldownViewer.itemFramePool, "Release", buffHandler)
+            hooksecurefunc(BuffIconCooldownViewer.itemFramePool, "Release", function()
+                StyleLayout.InvalidateCollectIconsCache(BuffIconCooldownViewer)
+                buffHandler()
+            end)
         end
     end
 
@@ -1749,6 +1762,7 @@ SetupHooks = function()
 
         SafeHook(BuffBarCooldownViewer, "OnAcquireItemFrame", function(_, frame)
             if not frame then return end
+            StyleLayout.InvalidateCollectIconsCache(BuffBarCooldownViewer)
             local viewer, cfg = GetBuffBarViewerAndConfig()
             if not viewer or not cfg then return end
 
@@ -1766,6 +1780,9 @@ SetupHooks = function()
         end)
 
         if BuffBarCooldownViewer.itemFramePool then
+            hooksecurefunc(BuffBarCooldownViewer.itemFramePool, "Acquire", function()
+                StyleLayout.InvalidateCollectIconsCache(BuffBarCooldownViewer)
+            end)
             hooksecurefunc(BuffBarCooldownViewer.itemFramePool, "Release", buffBarReleaseHandler)
         end
     end
