@@ -6,6 +6,8 @@
 local VFlow = _G.VFlow
 if not VFlow then return end
 
+local Profiler = VFlow.Profiler
+
 -- =========================================================
 -- SECTION 2: SpellID 解析
 -- =========================================================
@@ -42,6 +44,7 @@ end
 local function ScanSkillViewers()
     if InCombatLockdown() then return end
 
+    local _pt = Profiler.start("SS:ScanSkillViewers")
     local skills = {}
 
     -- 只扫描重要技能查看器
@@ -73,8 +76,7 @@ local function ScanSkillViewers()
     -- 更新全局状态
     VFlow.State.update("trackedSkills", skills)
 
-    local count = 0
-    for _ in pairs(skills) do count = count + 1 end
+    Profiler.stop(_pt)
 end
 
 local function ScheduleScan()

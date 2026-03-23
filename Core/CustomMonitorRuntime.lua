@@ -272,6 +272,7 @@ end
 -- 全量扫描重建映射（仅脱战时调用，需要 wipe 清表）
 local function ScanCDMViewers()
     if InCombatLockdown() then return end
+    local _pt = Profiler.start("CMR:ScanCDMViewers")
     wipe(_spellToCooldownID)
     wipe(_cooldownIDToFrame)
     wipe(_spellMapRetryAt)
@@ -285,6 +286,7 @@ local function ScanCDMViewers()
             end
         end
     end
+    Profiler.stop(_pt)
 end
 
 -- 战斗中为单个 spellID 补建映射（只追加，找到即停）
@@ -293,6 +295,7 @@ local function TryMapSpellID(spellID)
     local now = GetTime and GetTime() or 0
     local retryAt = _spellMapRetryAt[spellID]
     if retryAt and now < retryAt then return end
+    local _pt = Profiler.start("CMR:TryMapSpellID")
     for _, viewerName in ipairs(BUFF_VIEWERS) do
         local viewer = _G[viewerName]
         if viewer then
@@ -317,6 +320,7 @@ local function TryMapSpellID(spellID)
                 for frame in viewer.itemFramePool:EnumerateActive() do
                     if check(frame) then
                         _spellMapRetryAt[spellID] = nil
+                        Profiler.stop(_pt)
                         return
                     end
                 end
@@ -324,6 +328,7 @@ local function TryMapSpellID(spellID)
                 for _, child in ipairs({ viewer:GetChildren() }) do
                     if check(child) then
                         _spellMapRetryAt[spellID] = nil
+                        Profiler.stop(_pt)
                         return
                     end
                 end
@@ -331,12 +336,14 @@ local function TryMapSpellID(spellID)
         end
     end
     _spellMapRetryAt[spellID] = now + MAP_RETRY_INTERVAL
+    Profiler.stop(_pt)
 end
 
 local function FindCDMFrame(cooldownID)
     if not cooldownID then return nil end
     local cached = _cooldownIDToFrame[cooldownID]
     if cached then return cached end
+    local _pt = Profiler.start("CMR:FindCDMFrame")
     for _, viewerName in ipairs(BUFF_VIEWERS) do
         local viewer = _G[viewerName]
         if viewer then
@@ -345,6 +352,7 @@ local function FindCDMFrame(cooldownID)
                     local cdID = GetCooldownIDFromFrame(frame)
                     if cdID == cooldownID then
                         _cooldownIDToFrame[cdID] = frame
+                        Profiler.stop(_pt)
                         return frame
                     end
                 end
@@ -353,12 +361,14 @@ local function FindCDMFrame(cooldownID)
                     local cdID = GetCooldownIDFromFrame(child)
                     if cdID == cooldownID then
                         _cooldownIDToFrame[cdID] = child
+                        Profiler.stop(_pt)
                         return child
                     end
                 end
             end
         end
     end
+    Profiler.stop(_pt)
     return nil
 end
 
@@ -423,6 +433,7 @@ local UpdateStackBar   -- 前向声明
 local UpdateDurationBar
 
 local function OnCDMFrameChanged(frame, ...)
+    local _pt = Profiler.start("CMR:OnCDMFrameChanged")
     local auraInstanceID, auraUnit
     for i = 1, select("#", ...) do
         local v = select(i, ...)
@@ -431,7 +442,10 @@ local function OnCDMFrameChanged(frame, ...)
     end
 
     local barKeys = _frameToBarKeys[frame]
-    if not barKeys then return end
+    if not barKeys then
+        Profiler.stop(_pt)
+        return
+    end
 
     for _, barKey in ipairs(barKeys) do
         local spellID  = tonumber(barKey:match("^buffs/(%d+)$"))
@@ -447,6 +461,7 @@ local function OnCDMFrameChanged(frame, ...)
             end
         end
     end
+    Profiler.stop(_pt)
 end
 
 local function HookCDMFrame(cdmFrame, barKey)
@@ -506,14 +521,19 @@ end
 -- isStack=true 时启用阈值覆盖层
 -- isRing=true 时创建环形（仅用于BUFF持续时间，单段）
 local function CreateSegments(barFrame, count, cfg, isStack, isRing)
+    local _pt = Profiler.start("CMR:CreateSegments")
     ClearSegments(barFrame)
-    if count < 1 then return end
+    if count < 1 then
+        Profiler.stop(_pt)
+        return
+    end
 
     local segContainer = barFrame._segContainer
     local totalW, totalH = segContainer:GetSize()
     if totalW <= 0 then
         barFrame._segsDirty     = true
         barFrame._segsNeedCount = count
+        Profiler.stop(_pt)
         return
     end
 
@@ -557,6 +577,7 @@ local function CreateSegments(barFrame, count, cfg, isStack, isRing)
 
         barFrame._segsDirty = false
         barFrame._segsNeedCount = nil
+        Profiler.stop(_pt)
         return
     end
 
@@ -706,6 +727,7 @@ local function CreateSegments(barFrame, count, cfg, isStack, isRing)
 
     barFrame._segsDirty     = false
     barFrame._segsNeedCount = nil
+    Profiler.stop(_pt)
 end
 
 -- 将层数值同时设给基础分段和阈值覆盖层
@@ -1479,6 +1501,7 @@ local function ApplyBgColor(barFrame)
 end
 
 local function UpdateAllBars()
+    local _ps = Profiler.start("CMR:UpdateSkillBars")
     for spellID, barFrame in pairs(_activeSkillBars) do
         -- 检查显示条件
         local shouldShow = ShouldShowBar(barFrame._cfg, false)
@@ -1508,7 +1531,9 @@ local function UpdateAllBars()
             end
         end
     end
+    Profiler.stop(_ps)
 
+    local _pb = Profiler.start("CMR:UpdateBuffBars")
     for spellID, barFrame in pairs(_activeBuffBars) do
         local cfg = barFrame._cfg
         local isBuffActive = barFrame._lastKnownActive or false
@@ -1552,6 +1577,7 @@ local function UpdateAllBars()
             if container then container:Show() end
         end
     end
+    Profiler.stop(_pb)
 end
 
 local _updateFrame = CreateFrame("Frame")

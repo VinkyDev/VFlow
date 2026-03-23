@@ -6,6 +6,8 @@
 local VFlow = _G.VFlow
 VFlow.ItemsManualOrder = VFlow.ItemsManualOrder or {}
 
+local Profiler = VFlow.Profiler
+
 -- entryOrder 元素：
 --- { t = "trinket_slot", slot = 13|14 }  — autoTrinkets 开启时保留槽位（可空）
 --- { t = "racial", id = spellID }
@@ -86,6 +88,7 @@ end
 
 function VFlow.ItemsManualOrder.Ensure(cfg)
     if not cfg then return end
+    local _pt = Profiler.start("IMO:Ensure")
     cfg.itemIDs = cfg.itemIDs or {}
     cfg.spellIDs = cfg.spellIDs or {}
 
@@ -176,4 +179,5 @@ function VFlow.ItemsManualOrder.Ensure(cfg)
             seen[k] = true
         end
     end
+    Profiler.stop(_pt)
 end

@@ -8,6 +8,8 @@ if not VFlow then
     error("VFlow.VisibilityControl: Core模块未加载")
 end
 
+local Profiler = VFlow.Profiler
+
 local MODULE_KEY = "VFlow.StyleDisplay"
 
 local VisibilityControl = {}
@@ -159,6 +161,7 @@ end
 
 --- 应用显示条件到所有UI元素
 function VisibilityControl.EvaluateAll()
+    local _pt = Profiler.start("VC:EvaluateAll")
     -- 1. 处理暴雪内置Viewer
     for _, viewerInfo in ipairs(VIEWERS) do
         local viewer = _G[viewerInfo.name]
@@ -188,6 +191,7 @@ function VisibilityControl.EvaluateAll()
             registeredFrames[frame] = nil
         end
     end
+    Profiler.stop(_pt)
 end
 
 -- =========================================================
@@ -209,9 +213,11 @@ local function UpdateConfigCache()
     local db = VFlow.getDB(MODULE_KEY)
     if not db then return end
 
+    local _pt = Profiler.start("VC:UpdateConfigCache")
     for key, value in pairs(db) do
         configCache[key] = value
     end
+    Profiler.stop(_pt)
 
     VisibilityControl.EvaluateAll()
 end

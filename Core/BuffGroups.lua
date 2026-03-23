@@ -30,7 +30,10 @@ local function RebuildSpellMap()
     wipe(_groupSpellMap)
 
     local db = VFlow.getDB(MODULE_KEY)
-    if not db or not db.customGroups then return _groupSpellMap end
+    if not db or not db.customGroups then
+        Profiler.stop(_pt)
+        return _groupSpellMap
+    end
 
     for groupIdx, group in ipairs(db.customGroups) do
         if group.config then
@@ -127,7 +130,7 @@ local function GetGroupIdxForIcon(icon, spellMap)
 end
 
 local function ClassifyIcons(allIcons)
-    Profiler.count("BG:ClassifyIcons")
+    local _pt = Profiler.start("BG:ClassifyIcons")
     local spellMap = RebuildSpellMap()
     local mainVisible = {}
     local groupBuckets = {}
@@ -155,6 +158,7 @@ local function ClassifyIcons(allIcons)
         end
     end
 
+    Profiler.stop(_pt)
     return mainVisible, groupBuckets
 end
 
@@ -163,6 +167,7 @@ end
 -- =========================================================
 
 local function InitGroupContainers()
+    local _pt = Profiler.start("BG:InitGroupContainers")
     local db = VFlow.getDB(MODULE_KEY)
     local groups = db and db.customGroups
 
@@ -176,7 +181,10 @@ local function InitGroupContainers()
         _groupContainers[i] = nil
     end
 
-    if not groups then return end
+    if not groups then
+        Profiler.stop(_pt)
+        return
+    end
 
     for i, group in ipairs(groups) do
         if group and group.config then
@@ -243,6 +251,7 @@ local function InitGroupContainers()
     if VFlow.VisibilityControl and VFlow.VisibilityControl.EvaluateAll then
         VFlow.VisibilityControl.EvaluateAll()
     end
+    Profiler.stop(_pt)
 end
 
 -- =========================================================
@@ -250,8 +259,12 @@ end
 -- =========================================================
 
 local function LayoutBuffGroups(groupBuckets)
+    local _pt = Profiler.start("BG:LayoutBuffGroups")
     local db = VFlow.getDB(MODULE_KEY)
-    if not db or not db.customGroups then return end
+    if not db or not db.customGroups then
+        Profiler.stop(_pt)
+        return
+    end
 
     for groupIdx, allIcons in pairs(groupBuckets) do
         local group = db.customGroups[groupIdx]
@@ -445,6 +458,7 @@ local function LayoutBuffGroups(groupBuckets)
             end
         end
     end
+    Profiler.stop(_pt)
 end
 
 -- =========================================================

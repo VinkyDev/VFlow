@@ -6,6 +6,8 @@
 local VFlow = _G.VFlow
 if not VFlow then return end
 
+local Profiler = VFlow.Profiler
+
 -- =========================================================
 -- SECTION 2: SpellID 解析
 -- =========================================================
@@ -28,6 +30,7 @@ end
 local function ScanBuffViewers()
     if InCombatLockdown() then return end
 
+    local _pt = Profiler.start("BS:ScanBuffViewers")
     local buffs = {}
 
     -- 扫描BUFF查看器
@@ -61,8 +64,7 @@ local function ScanBuffViewers()
     -- 更新全局状态
     VFlow.State.update("trackedBuffs", buffs)
 
-    local count = 0
-    for _ in pairs(buffs) do count = count + 1 end
+    Profiler.stop(_pt)
 end
 
 local function ScheduleScan()

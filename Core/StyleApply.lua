@@ -687,12 +687,14 @@ function StyleApply.HideGlow(frame)
 end
 
 function StyleApply.RefreshActiveGlows()
+    local _pt = Profiler.start("SA:RefreshActiveGlows")
     for frame in pairs(activeGlowFrames) do
         if frame._vf_glowActive then
             StyleApply.HideGlow(frame)
             StyleApply.ShowGlow(frame)
         end
     end
+    Profiler.stop(_pt)
 end
 
 function StyleApply.ShowCustomGlow(frame)
@@ -723,12 +725,14 @@ function StyleApply.HideCustomGlow(frame)
 end
 
 function StyleApply.RefreshActiveCustomGlows()
+    local _pt = Profiler.start("SA:RefreshActiveCustomGlows")
     for frame in pairs(activeCustomGlowFrames) do
         if frame._vf_customGlowActive then
             StyleApply.HideCustomGlow(frame)
             StyleApply.ShowCustomGlow(frame)
         end
     end
+    Profiler.stop(_pt)
 end
 
 function StyleApply.RefreshGlowCache()
@@ -809,6 +813,7 @@ function StyleApply.HookAlertManager()
 end
 
 local function ScanActiveAlerts()
+    local _pt = Profiler.start("SA:ScanActiveAlerts")
     local viewers = {
         _G["EssentialCooldownViewer"],
         _G["UtilityCooldownViewer"],
@@ -825,6 +830,7 @@ local function ScanActiveAlerts()
             end
         end
     end
+    Profiler.stop(_pt)
 end
 
 function StyleApply.InitializeGlow()

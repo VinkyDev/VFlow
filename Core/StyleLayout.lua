@@ -78,9 +78,11 @@ end
 
 -- 按每行上限分行
 function StyleLayout.BuildRows(limit, icons)
+    local _pt = Profiler.start("SL:BuildRows")
     local rows = {}
     if limit <= 0 then
         rows[1] = icons
+        Profiler.stop(_pt)
         return rows
     end
     for i = 1, #icons do
@@ -88,14 +90,19 @@ function StyleLayout.BuildRows(limit, icons)
         rows[ri] = rows[ri] or {}
         rows[ri][#rows[ri] + 1] = icons[i]
     end
+    Profiler.stop(_pt)
     return rows
 end
 
 -- 同步viewer尺寸与实际图标边界框
 function StyleLayout.UpdateViewerSizeToMatchIcons(viewer, icons)
     if not viewer or not icons or #icons == 0 then return end
+    local _pt = Profiler.start("SL:UpdateViewerSizeToMatchIcons")
     local vScale = viewer:GetEffectiveScale()
-    if not vScale or vScale == 0 then return end
+    if not vScale or vScale == 0 then
+        Profiler.stop(_pt)
+        return
+    end
 
     local left, right, top, bottom = 999999, 0, 0, 999999
     for _, icon in ipairs(icons) do
@@ -112,7 +119,10 @@ function StyleLayout.UpdateViewerSizeToMatchIcons(viewer, icons)
         end
     end
 
-    if left >= right or bottom >= top then return end
+    if left >= right or bottom >= top then
+        Profiler.stop(_pt)
+        return
+    end
 
     local targetW = right - left
     local targetH = top - bottom
@@ -121,4 +131,5 @@ function StyleLayout.UpdateViewerSizeToMatchIcons(viewer, icons)
     if curW and curH and (abs(curW - targetW) >= 1 or abs(curH - targetH) >= 1) then
         viewer:SetSize(targetW, targetH)
     end
+    Profiler.stop(_pt)
 end

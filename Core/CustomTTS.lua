@@ -6,6 +6,8 @@
 local VFlow = _G.VFlow
 if not VFlow then return end
 
+local Profiler = VFlow.Profiler
+
 local MODULE_KEY = "VFlow.OtherFeatures"
 
 -- =========================================================
@@ -35,6 +37,7 @@ local function tryInstallHook()
     hookInstalled = true
 
     hooksecurefunc("CooldownViewerAlert_PlayAlert", function(cooldownItem, _spellName, alert)
+        Profiler.count("CTT:CooldownViewerAlert_PlayAlert")
         local db = VFlow.getDBIfReady(MODULE_KEY)
         if not db then
             return

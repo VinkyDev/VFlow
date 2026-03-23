@@ -30,7 +30,10 @@ local function RebuildSpellMap()
     wipe(_groupSpellMap)
 
     local db = VFlow.getDB(MODULE_KEY)
-    if not db or not db.customGroups then return _groupSpellMap end
+    if not db or not db.customGroups then
+        Profiler.stop(_pt)
+        return _groupSpellMap
+    end
 
     for groupIdx, group in ipairs(db.customGroups) do
         if group.config then
@@ -118,7 +121,7 @@ local function GetGroupIdxForIcon(icon, spellMap)
 end
 
 local function ClassifyIcons(allIcons)
-    Profiler.count("SG:ClassifyIcons")
+    local _pt = Profiler.start("SG:ClassifyIcons")
     local spellMap = RebuildSpellMap()
     local mainVisible = {}
     local groupBuckets = {}
@@ -152,6 +155,7 @@ local function ClassifyIcons(allIcons)
         end
     end
 
+    Profiler.stop(_pt)
     return mainVisible, groupBuckets
 end
 
@@ -208,6 +212,7 @@ end
 
 -- 初始化所有容器（用于配置变更时）
 local function InitGroupContainers()
+    local _pt = Profiler.start("SG:InitGroupContainers")
     local db = VFlow.getDB(MODULE_KEY)
     local groups = db and db.customGroups
 
@@ -215,13 +220,17 @@ local function InitGroupContainers()
         ReleaseGroupContainer(groupIdx)
     end
 
-    if not groups then return end
+    if not groups then
+        Profiler.stop(_pt)
+        return
+    end
 
     for i, group in ipairs(groups) do
         if group and group.config then
             EnsureGroupContainer(i)
         end
     end
+    Profiler.stop(_pt)
 end
 
 -- =========================================================
@@ -229,8 +238,12 @@ end
 -- =========================================================
 
 local function LayoutSkillGroups(groupBuckets)
+    local _pt = Profiler.start("SG:LayoutSkillGroups")
     local db = VFlow.getDB(MODULE_KEY)
-    if not db or not db.customGroups then return end
+    if not db or not db.customGroups then
+        Profiler.stop(_pt)
+        return
+    end
 
     for groupIdx, allIcons in pairs(groupBuckets) do
         local group = db.customGroups[groupIdx]
@@ -407,6 +420,7 @@ local function LayoutSkillGroups(groupBuckets)
             end
         end
     end
+    Profiler.stop(_pt)
 end
 
 -- =========================================================

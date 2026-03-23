@@ -6,6 +6,8 @@
 local VFlow = _G.VFlow
 if not VFlow then return end
 
+local Profiler = VFlow.Profiler
+
 local MODULE_KEY = "VFlow.Buffs"
 local MasqueSupport = VFlow.MasqueSupport
 
@@ -222,6 +224,7 @@ end
 -- =========================================================
 
 local function ScanItems()
+    local _pt = Profiler.start("TPM:ScanItems")
     local db = VFlow.getDB(MODULE_KEY)
     local config = db.trinketPotion
 
@@ -329,6 +332,7 @@ local function ScanItems()
     -- 刷新布局
     RefreshLayout()
 
+    Profiler.stop(_pt)
     return unloadedCount
 end
 
@@ -369,6 +373,7 @@ end
 function RefreshLayout()
     if not _container then return end
 
+    local _pt = Profiler.start("TPM:RefreshLayout")
     local db = VFlow.getDB(MODULE_KEY)
     local config = db.trinketPotion
     local isEditMode = VFlow.State.get("isEditMode")
@@ -410,6 +415,7 @@ function RefreshLayout()
         else
             _container:SetSize(1, 1)
         end
+        Profiler.stop(_pt)
         return
     end
 
@@ -523,6 +529,7 @@ function RefreshLayout()
             end
         end
     end
+    Profiler.stop(_pt)
 end
 
 -- =========================================================

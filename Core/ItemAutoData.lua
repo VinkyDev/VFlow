@@ -6,6 +6,8 @@
 local VFlow = _G.VFlow
 if not VFlow then return end
 
+local Profiler = VFlow.Profiler
+
 -- =========================================================
 -- SECTION 2: 静态表与解析 API
 -- =========================================================
@@ -55,6 +57,7 @@ for _, group in ipairs(MANUAL_ITEM_ALTERNATE_EXCEPTION_GROUPS) do
 end
 
 local function collectRacialSpellIDs()
+    local _pt = Profiler.start("IAD:collectRacialSpellIDs")
     local out = {}
     local _, race = UnitRace("player")
     local _, class = UnitClass("player")
@@ -69,6 +72,7 @@ local function collectRacialSpellIDs()
             end
         end
     end
+    Profiler.stop(_pt)
     return out
 end
 
@@ -126,18 +130,23 @@ end
 --- @return carriedItemID 身上能数到的实例（主 ID 或备选 ID）
 local function resolveManualCarriedItemID(configItemID)
     if not configItemID or configItemID <= 0 then return configItemID end
+    local _pt = Profiler.start("IAD:resolveManualCarriedItemID")
     C_Item.RequestLoadItemDataByID(configItemID)
     if (C_Item.GetItemCount(configItemID, false, true) or 0) > 0 then
+        Profiler.stop(_pt)
         return configItemID
     end
     local fromException = tryResolveFromItemGroup(configItemID, manualItemAlternateExceptionGroupById[configItemID])
     if fromException then
+        Profiler.stop(_pt)
         return fromException
     end
     local fromAdjacent = tryResolveAdjacentItemId(configItemID)
     if fromAdjacent then
+        Profiler.stop(_pt)
         return fromAdjacent
     end
+    Profiler.stop(_pt)
     return configItemID
 end
 

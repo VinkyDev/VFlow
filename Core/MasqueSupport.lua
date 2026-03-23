@@ -6,6 +6,8 @@
 local VFlow = _G.VFlow
 if not VFlow then return end
 
+local Profiler = VFlow.Profiler
+
 -- =========================================================
 -- SECTION 2: 注册与 ReSkin
 -- =========================================================
@@ -38,6 +40,7 @@ function MasqueSupport:RegisterButton(button, icon, border)
     if not masqueGroup then
         return
     end
+    Profiler.count("MS:RegisterButton")
 
     -- 已注册时 Masque 的 AddButton 会直接 return，不会重算 Icon/Cooldown 等区域；
     -- VFlow 改宽高后必须 ReSkin(按钮)，否则只有布局间距变、皮肤层仍按旧尺寸绘制。
@@ -89,6 +92,7 @@ function MasqueSupport:ReSkin()
     if not masqueGroup then
         return
     end
+    Profiler.count("MS:ReSkinAll")
     masqueGroup:ReSkin()
 end
 

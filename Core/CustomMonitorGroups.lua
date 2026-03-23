@@ -6,6 +6,8 @@
 local VFlow = _G.VFlow
 if not VFlow then return end
 
+local Profiler = VFlow.Profiler
+
 local MODULE_KEY = "VFlow.CustomMonitor"
 local PP = VFlow.PixelPerfect  -- 完美像素工具
 
@@ -198,6 +200,7 @@ end
 local function syncStore(storeKey, store)
     if not store then return end
 
+    local _pt = Profiler.start("CMG:syncStore:" .. storeKey)
     -- 销毁不再启用的容器，或者虽启用但已失效（如切天赋导致不可用）的容器
     local toDestroy = {}
     for spellID in pairs(_containers[storeKey]) do
@@ -218,6 +221,7 @@ local function syncStore(storeKey, store)
             end
         end
     end
+    Profiler.stop(_pt)
 end
 
 -- 全量同步（skills + buffs）
@@ -225,9 +229,11 @@ local function syncAll()
     if not VFlow.hasModule(MODULE_KEY) then return end
     local db = VFlow.getDB(MODULE_KEY)
     if not db then return end
+    local _pt = Profiler.start("CMG:syncAll")
     for _, storeKey in ipairs({ "skills", "buffs" }) do
         syncStore(storeKey, db[storeKey] or {})
     end
+    Profiler.stop(_pt)
 end
 
 -- =========================================================

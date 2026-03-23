@@ -6,6 +6,8 @@
 local VFlow = _G.VFlow
 if not VFlow then return end
 
+local Profiler = VFlow.Profiler
+
 local Keybind = {}
 VFlow.Keybind = Keybind
 
@@ -88,6 +90,7 @@ end
 -- =========================================================
 
 local function BuildSpellToKeyMap()
+    local _pt = Profiler.start("KB:BuildSpellToKeyMap")
     local map = {}
 
     local function add(spellID, key)
@@ -148,6 +151,7 @@ local function BuildSpellToKeyMap()
         end
     end
 
+    Profiler.stop(_pt)
     return map
 end
 

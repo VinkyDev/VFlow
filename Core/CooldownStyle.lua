@@ -277,6 +277,7 @@ local customHLFlushFrame = CreateFrame("Frame")
 customHLFlushFrame:Hide()
 customHLFlushFrame:SetScript("OnUpdate", function(self)
     self:Hide()
+    local _pt = Profiler.start("CDS:customHLFlush_OnUpdate")
     -- 单次刷新可能再次触发 CD hook 入队，同帧内多轮消化直到稳定（有上限防死循环）
     for _ = 1, 12 do
         local batch = pendingCustomHLFrames
@@ -288,6 +289,7 @@ customHLFlushFrame:SetScript("OnUpdate", function(self)
             end
         end
     end
+    Profiler.stop(_pt)
 end)
 
 local function ShouldDeferBuffCustomHighlightUpdate(frame)
@@ -376,6 +378,7 @@ local function ScanBuffGroupCustomHighlights()
 end
 
 local function RefreshAllOtherFeatureHighlights()
+    local _pt = Profiler.start("CDS:RefreshAllOtherFeatureHighlights")
     ScanCooldownViewerIcons(_G.EssentialCooldownViewer)
     ScanCooldownViewerIcons(_G.UtilityCooldownViewer)
     ScanCooldownViewerIcons(_G.BuffIconCooldownViewer)
@@ -390,6 +393,7 @@ local function RefreshAllOtherFeatureHighlights()
             TouchCustomHighlight(f)
         end
     end
+    Profiler.stop(_pt)
 end
 
 VFlow.on("PLAYER_REGEN_ENABLED", "VFlow.CustomHL.OutOfCombat", function()
@@ -1576,7 +1580,9 @@ SetupHooks = function()
     _barSyncRefreshFrame:SetScript("OnUpdate", function(self)
         self:Hide()
         _pendingBarSyncRefresh = false
+        local _pt = Profiler.start("CDS:barSync_OnUpdate")
         DoBuffBarRefresh(0)
+        Profiler.stop(_pt)
     end)
 
     local buffBarReleaseHandler = function()
@@ -1594,7 +1600,9 @@ SetupHooks = function()
     _syncRefreshFrame:SetScript("OnUpdate", function(self)
         self:Hide()
         _pendingSyncRefresh = false
+        local _pt = Profiler.start("CDS:buffSync_OnUpdate")
         DoBuffRefresh(0)
+        Profiler.stop(_pt)
     end)
 
     -- OnCooldownIDSet时：先ApplyStyle建立缓存，再ProvisionalPlace定位

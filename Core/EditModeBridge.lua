@@ -6,6 +6,8 @@
 local VFlow = _G.VFlow
 if not VFlow then return end
 
+local Profiler = VFlow.Profiler
+
 -- =========================================================
 -- SECTION 2: 目标 Viewer 与按钮注入
 -- =========================================================
@@ -187,6 +189,7 @@ local function HideNonCheckboxSettings(dialog, systemFrame)
     if not TARGET_FRAME_NAMES[frameName] then return end
     local container = dialog.Settings
     if not container then return end
+    local _pt = Profiler.start("EMB:HideNonCheckboxSettings")
     for _, child in ipairs({ container:GetChildren() }) do
         if child:IsShown() and not IsCheckboxSetting(child) then
             child:Hide()
@@ -194,6 +197,7 @@ local function HideNonCheckboxSettings(dialog, systemFrame)
     end
     if container.Layout then container:Layout() end
     if dialog.Layout then dialog:Layout() end
+    Profiler.stop(_pt)
 end
 
 local function HookEditModeDialog()
