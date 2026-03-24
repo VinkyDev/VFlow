@@ -26,6 +26,76 @@ local function resolveEntry(entry)
         entry.soundChannel or "Master"
 end
 
+--- 与 BuffScanner.ResolveSpellID 一致：BUFF 条目的主键常在 linkedSpellIDs[1]，spellID 可能为 0 或与配置不一致。
+local function resolveBuffViewerSpellID(info)
+    if not info then
+        return nil
+    end
+    if info.linkedSpellIDs and info.linkedSpellIDs[1] then
+        local lid = info.linkedSpellIDs[1]
+        if type(lid) == "number" and lid > 0 then
+            return lid
+        end
+    end
+    local sid = info.overrideSpellID or info.spellID
+    if type(sid) == "number" and sid > 0 then
+        return sid
+    end
+    return nil
+end
+
+local function aliasRaw(aliases, spellID)
+    if type(spellID) ~= "number" or spellID <= 0 then
+        return nil
+    end
+    return aliases[spellID] or aliases[tostring(spellID)]
+end
+
+local function findAliasEntry(aliases, info)
+    if type(aliases) ~= "table" or not info then
+        return nil
+    end
+
+    local entry = aliasRaw(aliases, resolveBuffViewerSpellID(info))
+    if entry then
+        return entry
+    end
+
+    entry = aliasRaw(aliases, info.spellID)
+    if entry then
+        return entry
+    end
+
+    entry = aliasRaw(aliases, info.overrideSpellID)
+    if entry then
+        return entry
+    end
+
+    if info.linkedSpellIDs then
+        for i = 1, #info.linkedSpellIDs do
+            entry = aliasRaw(aliases, info.linkedSpellIDs[i])
+            if entry then
+                return entry
+            end
+        end
+    end
+
+    local function tryBase(sid)
+        if type(sid) ~= "number" or sid <= 0 or not (C_Spell and C_Spell.GetBaseSpell) then
+            return nil
+        end
+        local base = C_Spell.GetBaseSpell(sid)
+        if base and base ~= sid then
+            return aliasRaw(aliases, base)
+        end
+        return nil
+    end
+
+    return tryBase(resolveBuffViewerSpellID(info))
+        or tryBase(info.spellID)
+        or tryBase(info.overrideSpellID)
+end
+
 local function tryInstallHook()
     if hookInstalled then
         return
@@ -56,26 +126,17 @@ local function tryInstallHook()
         end
 
         local info = cooldownItem and cooldownItem.cooldownInfo
+        if not info and cooldownItem and cooldownItem.cooldownID
+            and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
+            pcall(function()
+                info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cooldownItem.cooldownID)
+            end)
+        end
         if not info then
             return
         end
 
-        local spellID
-        pcall(function()
-            spellID = info.spellID
-        end)
-        if not spellID then
-            return
-        end
-
-        local entry = aliases[spellID]
-        if not entry then
-            pcall(function()
-                if info.overrideSpellID then
-                    entry = aliases[info.overrideSpellID]
-                end
-            end)
-        end
+        local entry = findAliasEntry(aliases, info)
         if not entry then
             return
         end
