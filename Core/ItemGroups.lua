@@ -601,35 +601,20 @@ local function CreateStandaloneIconFrame(container)
     stackHolder.Current = stackFS
     frame.ChargeCount = stackHolder
 
-    frame:EnableMouse(true)
-    frame:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        if self._vf_tipSpell then
-            GameTooltip:SetSpellByID(self._vf_tipSpell)
-        elseif self._vf_tipItem then
-            GameTooltip:SetItemByID(self._vf_tipItem)
-        end
-        GameTooltip:Show()
-    end)
-    frame:SetScript("OnLeave", function()
-        GameTooltip:Hide()
-    end)
+    -- 运行时图标不显示 GameTooltip，鼠标穿透
+    frame:EnableMouse(false)
 
     frame:Hide()
     return frame
 end
 
 local function ApplyEntryTexture(frame, entry)
-    frame._vf_tipSpell = nil
-    frame._vf_tipItem = nil
     if entry.kind == "trinket_slot" or entry.kind == "item_inventory" then
         local _, _, _, _, _, _, _, _, _, tex = C_Item.GetItemInfo(entry.itemID)
         frame.Icon:SetTexture(tex or 134400)
-        frame._vf_tipItem = entry.itemID
     else
         local si = C_Spell.GetSpellInfo(entry.spellID)
         frame.Icon:SetTexture((si and si.iconID) or 134400)
-        frame._vf_tipSpell = entry.spellID
     end
 end
 
