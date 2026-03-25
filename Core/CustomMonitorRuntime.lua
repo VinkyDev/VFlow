@@ -1573,6 +1573,13 @@ end
 
 local _elapsed = 0
 
+--- 条件不满足时不 Hide：保持 Shown + Alpha=0，布局/API/充能等与「始终显示」同路径（避免因 Hide 跳过更新）
+local function ApplyMonitorContainerVisibility(container, shouldShow)
+    if not container then return end
+    container:Show()
+    container:SetAlpha(shouldShow and 1 or 0)
+end
+
 local function ApplyBgColor(barFrame)
     local cfg = barFrame._cfg
     local bgc = cfg.bgColor or { r = 0.1, g = 0.1, b = 0.1, a = 0.5 }
@@ -1607,25 +1614,18 @@ local function UpdateAllBars()
         end
         local container = barFrame._container
 
-        if not shouldShow then
-            if container then container:Hide() end
-        else
-            if container then container:Show() end
-            ApplyBgColor(barFrame)
-            -- 使用配置中的isChargeSpell判断
-            if not barFrame._cfg.isChargeSpell then
-                -- 普通冷却条需要检查_segsDirty
-                if barFrame._segsDirty then
-                    local cw = barFrame._segContainer:GetWidth()
-                    if cw and cw > 0 then
-                        CreateSegments(barFrame, barFrame._segsNeedCount or 1, barFrame._cfg)
-                    end
+        ApplyMonitorContainerVisibility(container, shouldShow)
+        ApplyBgColor(barFrame)
+        if not barFrame._cfg.isChargeSpell then
+            if barFrame._segsDirty then
+                local cw = barFrame._segContainer:GetWidth()
+                if cw and cw > 0 then
+                    CreateSegments(barFrame, barFrame._segsNeedCount or 1, barFrame._cfg)
                 end
-                UpdateRegularCooldownBar(barFrame, spellID)
-            else
-                -- 充能条直接更新
-                UpdateChargeBar(barFrame, spellID)
             end
+            UpdateRegularCooldownBar(barFrame, spellID)
+        else
+            UpdateChargeBar(barFrame, spellID)
         end
     end
     Profiler.stop(_ps)
@@ -1677,13 +1677,7 @@ local function UpdateAllBars()
         if shouldShow and IsHiddenForSystemEditOnly(cfg) then
             shouldShow = false
         end
-        local container = barFrame._container
-
-        if not shouldShow then
-            if container then container:Hide() end
-        else
-            if container then container:Show() end
-        end
+        ApplyMonitorContainerVisibility(barFrame._container, shouldShow)
     end
     Profiler.stop(_pb)
 end
