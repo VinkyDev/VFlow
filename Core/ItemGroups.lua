@@ -532,6 +532,7 @@ end
 local GCD_SPELL_ID = 61304
 local CD_MIN_DISPLAY = 1.5
 local GetItemCooldownFn = C_Container and C_Container.GetItemCooldown
+local Utils = VFlow.Utils
 
 -- 前向引用：OnCooldownDone 里需同步灰度/swipe（CD 自然结束时未必触发 SPELL_UPDATE_COOLDOWNS）
 local ApplyEntryCooldown
@@ -646,7 +647,21 @@ local function HasMeaningfulItemCooldown(startTime, duration)
     return st and dur and dur >= CD_MIN_DISPLAY and st > 0
 end
 
---- 图标灰度与 Cooldown 子帧绑定：遮罩用 SetCooldown / SetCooldownFromDurationObject，变色跟引擎是否正在显示 CD（对齐 Core/CustomMonitorRuntime 条形监控）
+--- 物品 CD 是否值得画 swipe（普通数值走阈值；仅当起止时间含 secret 无法判定时才交给 Duration 分支）
+local function ItemCooldownShouldDisplay(startTime, duration, enable)
+    if enable ~= nil and enable ~= 1 and enable ~= true then
+        return false
+    end
+    if startTime == nil or duration == nil then return false end
+    if HasMeaningfulItemCooldown(startTime, duration) then return true end
+    local st, dur = SafeNum(startTime), SafeNum(duration)
+    if st ~= nil and dur ~= nil then
+        return false
+    end
+    return C_DurationUtil ~= nil and C_DurationUtil.CreateDuration ~= nil
+end
+
+--- 图标灰度与 Cooldown 子帧绑定：遮罩由 SetCooldownFromDurationObject / Duration 对象驱动（对齐暴雪 12.0+ 安全模型）
 local function SyncIconDesatFromCooldown(cd, iconTex)
     if not cd or not iconTex then return end
     local dim = false
@@ -674,9 +689,24 @@ end
 local function ApplySpellCooldownSwipe(cd, spellID)
     cd:Clear()
 
-    local gcdActive = false
+    local gcdInfo
     pcall(function()
-        gcdActive = C_Spell.GetSpellCooldownDuration(GCD_SPELL_ID) ~= nil
+        gcdInfo = C_Spell.GetSpellCooldown(GCD_SPELL_ID)
+    end)
+    local gcdActive = false
+    if gcdInfo then
+        if gcdInfo.isActive ~= nil then
+            gcdActive = gcdInfo.isActive == true
+        else
+            pcall(function()
+                gcdActive = C_Spell.GetSpellCooldownDuration(GCD_SPELL_ID) ~= nil
+            end)
+        end
+    end
+
+    local cdInfo
+    pcall(function()
+        cdInfo = C_Spell.GetSpellCooldown(spellID)
     end)
 
     local chargeDurObj, spellDurObj
@@ -687,16 +717,17 @@ local function ApplySpellCooldownSwipe(cd, spellID)
 
     local isOnGCD = false
     if gcdActive and spellDurObj then
-        local okGcd, onGcd = pcall(function()
-            local cdInfo = C_Spell.GetSpellCooldown(spellID)
-            return cdInfo and cdInfo.isOnGCD == true
-        end)
-        isOnGCD = okGcd and onGcd == true
+        isOnGCD = cdInfo and cdInfo.isOnGCD == true
+    end
+
+    local spellCdActive = true
+    if cdInfo and cdInfo.isActive ~= nil then
+        spellCdActive = cdInfo.isActive == true
     end
 
     if not isOnGCD then
         local durObj = chargeDurObj or spellDurObj
-        if durObj and cd.SetCooldownFromDurationObject then
+        if durObj and spellCdActive and cd.SetCooldownFromDurationObject then
             pcall(function()
                 cd:SetCooldownFromDurationObject(durObj, true)
             end)
@@ -704,14 +735,14 @@ local function ApplySpellCooldownSwipe(cd, spellID)
     end
 end
 
-local function TryApplyItemCooldownById(cd, itemID)
-    if not GetItemCooldownFn or not itemID then return false end
-    local st, duration, _en = GetItemCooldownFn(itemID)
-    if not HasMeaningfulItemCooldown(st, duration) then return false end
-    local ss, dd = SafeNum(st), SafeNum(duration)
-    if not ss or not dd then return false end
-    cd:SetCooldown(ss, dd)
-    return true
+local function TryApplyItemCooldownById(cd, hostFrame, itemID)
+    if not GetItemCooldownFn or not itemID or not hostFrame then return false end
+    local st, duration, en = GetItemCooldownFn(itemID)
+    if not ItemCooldownShouldDisplay(st, duration, en) then return false end
+    if Utils and Utils.setCooldownFromStartAndDuration(cd, hostFrame, st, duration) then
+        return true
+    end
+    return false
 end
 
 ApplyEntryCooldown = function(frame, entry)
@@ -721,19 +752,16 @@ ApplyEntryCooldown = function(frame, entry)
     cd:Clear()
 
     if entry.kind == "trinket_slot" then
-        local start, duration = GetInventoryItemCooldown("player", entry.slot)
-        if HasMeaningfulItemCooldown(start, duration) then
-            local ss, dd = SafeNum(start), SafeNum(duration)
-            if ss and dd then
-                cd:SetCooldown(ss, dd)
-            else
-                TryApplyItemCooldownById(cd, entry.itemID)
+        local start, duration, en = GetInventoryItemCooldown("player", entry.slot)
+        if ItemCooldownShouldDisplay(start, duration, en) then
+            if not (Utils and Utils.setCooldownFromStartAndDuration(cd, frame, start, duration)) then
+                TryApplyItemCooldownById(cd, frame, entry.itemID)
             end
         else
-            TryApplyItemCooldownById(cd, entry.itemID)
+            TryApplyItemCooldownById(cd, frame, entry.itemID)
         end
     elseif entry.kind == "item_inventory" then
-        if not TryApplyItemCooldownById(cd, entry.itemID) then
+        if not TryApplyItemCooldownById(cd, frame, entry.itemID) then
             ApplySpellCooldownSwipe(cd, entry.spellID)
         end
     else

@@ -115,7 +115,7 @@ local function GetGroupIdxForIcon(icon, spellMap)
         if info then
             local spellID = info.linkedSpellIDs and info.linkedSpellIDs[1]
             spellID = spellID or info.overrideSpellID or info.spellID
-            if spellID and spellID > 0 then
+            if spellID and type(spellID) == "number" and (not issecretvalue or not issecretvalue(spellID)) and spellID > 0 then
                 groupIdx = LookupSpellInGroupMap(spellID, spellMap)
                 if groupIdx then return groupIdx end
             end

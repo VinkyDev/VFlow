@@ -23,6 +23,13 @@ local function ResolveSpellID(info)
     return info.overrideSpellID or info.spellID
 end
 
+--- 战斗中 spellID 可能为 secret，禁止参与比较或 GetSpellInfo
+local function SpellIdSafeForLookup(spellID)
+    if not spellID or type(spellID) ~= "number" then return false end
+    if issecretvalue and issecretvalue(spellID) then return false end
+    return spellID > 0
+end
+
 -- =========================================================
 -- SECTION 3: 扫描调度
 -- =========================================================
@@ -44,7 +51,7 @@ local function ScanBuffViewers()
                     local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cooldownID)
                     if info then
                         local spellID = ResolveSpellID(info)
-                        if spellID and spellID > 0 then
+                        if SpellIdSafeForLookup(spellID) then
                             local spellInfo = C_Spell.GetSpellInfo(spellID)
                             if spellInfo and spellInfo.name and spellInfo.iconID then
                                 buffs[spellID] = {

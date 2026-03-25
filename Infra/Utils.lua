@@ -98,6 +98,28 @@ function Utils.placeholderSpellEntry(spellID)
     }
 end
 
+--- 12.0+ Cooldown 禁止对 SetCooldown 传入含 secret 的起止参数；使用 Duration 对象
+-- @param cd Cooldown 子帧
+-- @param hostFrame 用于挂接可复用 Duration 的宿主（如图标 Frame，字段 _vf_cooldownDurObj）
+-- @param startTime 起始时间（可与游戏 API 一致，含 secret）
+-- @param durationSeconds 持续长度（秒，可与 API 一致）
+-- @return 是否已成功调用 SetCooldownFromDurationObject
+function Utils.setCooldownFromStartAndDuration(cd, hostFrame, startTime, durationSeconds)
+    if not cd or not hostFrame then return false end
+    if not (C_DurationUtil and C_DurationUtil.CreateDuration and cd.SetCooldownFromDurationObject) then
+        return false
+    end
+    if not hostFrame._vf_cooldownDurObj then
+        hostFrame._vf_cooldownDurObj = C_DurationUtil.CreateDuration()
+    end
+    local durObj = hostFrame._vf_cooldownDurObj
+    local ok = pcall(function()
+        durObj:SetTimeFromStart(startTime, durationSeconds)
+        cd:SetCooldownFromDurationObject(durObj)
+    end)
+    return ok
+end
+
 -- 向后兼容：保留 VFlow.LayoutUtils 别名
 VFlow.LayoutUtils = {
     mergeLayouts = Utils.mergeLayouts,

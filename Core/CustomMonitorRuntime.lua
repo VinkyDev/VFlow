@@ -157,14 +157,22 @@ local function ResolveBarTexture(name)
     return BAR_TEXTURE
 end
 
+--- 先尝试一位小数；含 secret 等对 format 有限制时回退为原值（引擎默认约三位小数）
 local function SetRemainingText(text, durObj)
     local remaining
     pcall(function() remaining = durObj:GetRemainingDuration() end)
-    if not remaining then text:SetText("") return end
-    local ok = pcall(function()
+    if remaining == nil then
+        text:SetText("")
+        return
+    end
+    local ok1 = pcall(function()
         text:SetFormattedText("%.1f", remaining)
     end)
-    if not ok then text:SetText("") end
+    if ok1 then return end
+    local ok2 = pcall(function()
+        text:SetText(remaining)
+    end)
+    if not ok2 then text:SetText("") end
 end
 
 local function FillDirection(fillMode)
@@ -265,10 +273,25 @@ local function GetCooldownIDFromFrame(frame)
     return cdID
 end
 
+--- 仅用于映射/表键：含 secret 的 spellID 不可参与 >0 或与配置 ID 比较
+local function IsUsableNonSecretSpellId(id)
+    if not id or type(id) ~= "number" then return false end
+    if issecretvalue and issecretvalue(id) then return false end
+    return id > 0
+end
+
+local function SafeSpellIdEquals(a, b)
+    local ok, eq = pcall(function() return a == b end)
+    return ok and eq
+end
+
 local function ResolveSpellID(info)
     if not info then return nil end
     local linked = info.linkedSpellIDs and info.linkedSpellIDs[1]
-    return linked or info.overrideSpellID or (info.spellID and info.spellID > 0 and info.spellID) or nil
+    if IsUsableNonSecretSpellId(linked) then return linked end
+    if IsUsableNonSecretSpellId(info.overrideSpellID) then return info.overrideSpellID end
+    if IsUsableNonSecretSpellId(info.spellID) then return info.spellID end
+    return nil
 end
 
 -- 从单个 CDM 帧注册映射（只追加，可在战斗中调用）
@@ -279,17 +302,17 @@ local function RegisterCDMFrame(frame)
     local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
     if not info then return end
     local sid = ResolveSpellID(info)
-    if sid and sid > 0 and not _spellToCooldownID[sid] then
+    if sid and not _spellToCooldownID[sid] then
         _spellToCooldownID[sid] = cdID
     end
     if info.linkedSpellIDs then
         for _, lid in ipairs(info.linkedSpellIDs) do
-            if lid and lid > 0 and not _spellToCooldownID[lid] then
+            if IsUsableNonSecretSpellId(lid) and not _spellToCooldownID[lid] then
                 _spellToCooldownID[lid] = cdID
             end
         end
     end
-    if info.spellID and info.spellID > 0 and not _spellToCooldownID[info.spellID] then
+    if IsUsableNonSecretSpellId(info.spellID) and not _spellToCooldownID[info.spellID] then
         _spellToCooldownID[info.spellID] = cdID
     end
 end
@@ -330,13 +353,13 @@ local function TryMapSpellID(spellID)
                 local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
                 if not info then return false end
                 local sid = ResolveSpellID(info)
-                if sid == spellID or info.spellID == spellID then
+                if SafeSpellIdEquals(sid, spellID) or SafeSpellIdEquals(info.spellID, spellID) then
                     RegisterCDMFrame(frame)
                     return true
                 end
                 if info.linkedSpellIDs then
                     for _, lid in ipairs(info.linkedSpellIDs) do
-                        if lid == spellID then RegisterCDMFrame(frame); return true end
+                        if SafeSpellIdEquals(lid, spellID) then RegisterCDMFrame(frame); return true end
                     end
                 end
                 return false
@@ -830,23 +853,27 @@ end
 
 local function UpdateRegularCooldownBar(barFrame, spellID)
     local cfg = barFrame._cfg
-    local isOnGCD = false
+    local cdInfo
     pcall(function()
-        local info = C_Spell.GetSpellCooldown(spellID)
-        if info and info.isOnGCD then isOnGCD = true end
+        cdInfo = C_Spell.GetSpellCooldown(spellID)
     end)
+    local isOnGCD = cdInfo and cdInfo.isOnGCD == true
+    local spellCdActive = true
+    if cdInfo and cdInfo.isActive ~= nil then
+        spellCdActive = cdInfo.isActive == true
+    end
 
     local shadowCD = GetOrCreateShadowCooldown(barFrame)
     local durObj
     if isOnGCD then
-        shadowCD:SetCooldown(0, 0)
+        shadowCD:Clear()
     else
         pcall(function() durObj = C_Spell.GetSpellCooldownDuration(spellID) end)
-        if durObj then
+        if durObj and spellCdActive then
             shadowCD:Clear()
             pcall(function() shadowCD:SetCooldownFromDurationObject(durObj, true) end)
         else
-            shadowCD:SetCooldown(0, 0)
+            shadowCD:Clear()
         end
     end
 
@@ -859,7 +886,7 @@ local function UpdateRegularCooldownBar(barFrame, spellID)
     if not seg then return end
 
     -- 根据冷却状态设置颜色
-    if isOnCooldown and not isOnGCD and durObj then
+    if isOnCooldown and not isOnGCD and durObj and spellCdActive then
         -- 冷却中：使用rechargeColor（冷却中颜色）
         local rc = cfg.rechargeColor or cfg.barColor
         seg:SetStatusBarColor(rc.r, rc.g, rc.b, rc.a)
@@ -1000,7 +1027,15 @@ local function UpdateChargeBar(barFrame, spellID)
         activeChargeDurObj = barFrame._refreshCharge:GetTimerDuration()
     end
 
-    local shouldShowRecharge = (chargeDurObj ~= nil) and (activeChargeDurObj ~= nil)
+    local chargeCdActive = true
+    pcall(function()
+        local sinfo = C_Spell.GetSpellCooldown(spellID)
+        if sinfo and sinfo.isActive ~= nil then
+            chargeCdActive = sinfo.isActive == true
+        end
+    end)
+
+    local shouldShowRecharge = chargeCdActive and (chargeDurObj ~= nil) and (activeChargeDurObj ~= nil)
 
     if shouldShowRecharge then
         barFrame._refreshCharge:Show()
@@ -1228,16 +1263,10 @@ UpdateDurationBar = function(barFrame, spellID, barKey)
         if isRing and seg._isRing then
             -- 环形模式：每帧更新，与条形的SetTimerDuration行为一致
             local durObj = C_UnitAuras.GetAuraDuration(unit, auraInstanceID)
-            if durObj then
-                if seg.SetCooldownFromDurationObject then
+            if durObj and seg.SetCooldownFromDurationObject then
+                pcall(function()
                     seg:SetCooldownFromDurationObject(durObj)
-                else
-                    local start    = durObj:GetCooldownStartTime()
-                    local duration = durObj:GetCooldownDuration()
-                    if start and duration and duration > 0 then
-                        seg:SetCooldown(start, duration)
-                    end
-                end
+                end)
                 local rc = cfg.ringColor or { r = 0.2, g = 0.6, b = 1, a = 1 }
                 seg:SetSwipeColor(rc.r, rc.g, rc.b, rc.a)
                 seg._needsRefresh = false
@@ -1267,7 +1296,9 @@ UpdateDurationBar = function(barFrame, spellID, barKey)
         barFrame._trackedUnit           = nil
 
         if isRing and seg._isRing then
-            seg:SetCooldown(0, 0)  -- 清除进度
+            if seg.Clear then
+                seg:Clear()
+            end
             seg._needsRefresh = true  -- 下次激活时重新设置
         else
             seg:SetMinMaxValues(0, 1); seg:SetValue(0)

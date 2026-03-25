@@ -7,6 +7,7 @@ local VFlow = _G.VFlow
 if not VFlow then return end
 
 local Profiler = VFlow.Profiler
+local Utils = VFlow.Utils
 
 local MODULE_KEY = "VFlow.Buffs"
 local MasqueSupport = VFlow.MasqueSupport
@@ -205,8 +206,10 @@ local function ActivateIcon(spellID, itemID)
         frame.icon:SetTexture(itemIcon)
     end
 
-    -- 启动冷却
-    frame.cooldown:SetCooldown(GetTime(), duration)
+    -- 启动冷却（Duration 对象，避免 SetCooldown 传入不被允许的时间参数）
+    if not (Utils and Utils.setCooldownFromStartAndDuration(frame.cooldown, frame, GetTime(), duration)) then
+        if frame.cooldown.Clear then frame.cooldown:Clear() end
+    end
     frame:Show()
 
     -- 取消之前的定时器（如果有）
