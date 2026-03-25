@@ -556,8 +556,31 @@ local function HideIconGcdOptionEnabled()
     return db and db.hideIconGCD == true
 end
 
+--- BUFF / 光环类 CD 不按GCD隐藏遮罩层
+local function IsBuffAuraDurationCooldownIcon(button)
+    if not button then return false end
+    if button._vf_cdmKind == "buff" then return true end
+    if button.cooldownUseAuraDisplayTime then return true end
+    local p = button
+    for _ = 1, 18 do
+        if not p then break end
+        local n = p.GetName and p:GetName()
+        if type(n) == "string" then
+            if n == "BuffIconCooldownViewer" or n == "BuffBarCooldownViewer" then
+                return true
+            end
+            if n:match("^VFlow_BuffGroup_%d+$") then
+                return true
+            end
+        end
+        p = p.GetParent and p:GetParent()
+    end
+    return false
+end
+
 local function ApplyHideGcdSwipeIfNeeded(button)
     if not HideIconGcdOptionEnabled() or not button then return end
+    if IsBuffAuraDurationCooldownIcon(button) then return end
     local cd = button.Cooldown
     if not cd or not cd.IsShown or not cd:IsShown() then return end
     local spellID = GetButtonSpellIDForGcd(button)

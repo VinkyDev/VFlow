@@ -319,6 +319,7 @@ local function LayoutBuffGroups(groupBuckets)
 
                 -- 应用样式到自定义组图标（使用自定义组的配置）
                 for _, icon in ipairs(icons) do
+                    icon._vf_cdmKind = "buff"
                     if VFlow.StyleApply then
                         VFlow.StyleApply.ApplyIconSize(icon, w, h)
                         VFlow.StyleApply.ApplyButtonStyleIfStale(icon, cfg)
@@ -327,7 +328,6 @@ local function LayoutBuffGroups(groupBuckets)
                         MasqueSupport:RegisterButton(icon, icon.Icon)
                     end
                     icon:SetAlpha(1)
-                    icon._vf_cdmKind = "buff"
                 end
 
                 local isVertical = (cfg.vertical == true)
