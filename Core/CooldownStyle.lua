@@ -281,7 +281,9 @@ local function UpdateCustomHighlightForFrame(frame)
     end
 end
 
--- BUFF 激活瞬间会连续触发 CD 更新 / RefreshData / OnActiveStateChanged，合并到帧末只算一次，避免发光被反复打断
+-- BUFF 激活瞬间会连续触发 CD 更新 / RefreshData / OnActiveStateChanged，合并到帧末只算一次，避免发光被反复打断。
+-- 技能图标也必须延迟：SetCooldown hook 若在暴雪 RefreshData/充能缓存链内同步调用 C_Spell.GetSpellCooldown，
+-- 会使 spellChargeInfo.maxCharges 等 secret 带上 VFlow 污染，触发 Blizzard_CooldownViewer CacheChargeValues 报错。
 local pendingCustomHLFrames = {}
 local customHLFlushFrame = CreateFrame("Frame")
 customHLFlushFrame:Hide()
@@ -302,20 +304,10 @@ customHLFlushFrame:SetScript("OnUpdate", function(self)
     Profiler.stop(_pt)
 end)
 
-local function ShouldDeferBuffCustomHighlightUpdate(frame)
-    if GetCdmFrameKind(frame) == "buff" then return true end
-    if InferCdmKindFromParent(frame) == "buff" then return true end
-    return false
-end
-
 local function RequestCustomHighlightUpdate(frame)
     if not frame then return end
-    if ShouldDeferBuffCustomHighlightUpdate(frame) then
-        pendingCustomHLFrames[frame] = true
-        customHLFlushFrame:Show()
-    else
-        UpdateCustomHighlightForFrame(frame)
-    end
+    pendingCustomHLFrames[frame] = true
+    customHLFlushFrame:Show()
 end
 
 local function EnsureCustomHighlightHooks(frame)
