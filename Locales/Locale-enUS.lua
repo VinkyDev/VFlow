@@ -96,6 +96,7 @@ L["Position Settings"] = true
 L["X coordinate"] = true
 L["Y coordinate"] = true
 L["Preview and drag in {Edit mode} to change position"] = true
+L["Preview and drag in {Edit mode} to change position. Prefer Skill Monitor groups for Cooldown Manager spells; Extra CD Monitor is mainly for items and special abilities."] = true
 L["Edit mode"] = true
 L["Bar Config"] = true
 L["Bar length"] = true

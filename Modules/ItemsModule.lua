@@ -315,7 +315,7 @@ local function buildItemSpellSelector(groupConfig, options)
         {
             type = "interactiveText",
             cols = 24,
-            text = L["Preview and drag in {Edit mode} to change position"],
+            text = L["Preview and drag in {Edit mode} to change position. Prefer Skill Monitor groups for Cooldown Manager spells; Extra CD Monitor is mainly for items and special abilities."],
             links = {
                 [L["Edit mode"]] = function()
                     VFlow.toggleSystemEditMode()
