@@ -26,6 +26,17 @@ VFlow.registerModule(MODULE_KEY, {
 
 local CHANGELOG = {
 	{
+		version = "0.3.2",
+		date = "2026-03-25",
+		content = {
+			"兼容3.25暴雪新API",
+			"样式 - 图标新增隐藏GCD选项",
+			"所有插件创建的容器均支持依附框体和锚点配置",
+			"修复自定义图形监控 - 充能技能仅战斗中显示时异常显示的BUG",
+			"移除额外CD组的鼠标提示"
+		},
+	},
+	{
 		version = "0.3.1",
 		date = "2026-03-24",
 		content = {
