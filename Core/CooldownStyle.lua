@@ -1020,6 +1020,15 @@ local function RefreshSkillViewer(viewer, cfg)
             if f then laidOutFrames[f] = true end
         end
     end
+    if groupBuckets then
+        for _, bucket in pairs(groupBuckets) do
+            if bucket then
+                for _, icon in ipairs(bucket) do
+                    if icon then laidOutFrames[icon] = true end
+                end
+            end
+        end
+    end
     for _, icon in ipairs(allIcons) do
         if not laidOutFrames[icon] then
             if StyleApply.HideCustomGlow then StyleApply.HideCustomGlow(icon) end
