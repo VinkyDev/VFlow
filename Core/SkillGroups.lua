@@ -77,13 +77,19 @@ end
 -- SECTION 4: 图标分类
 -- =========================================================
 
+local function IsPositiveSpellId(spellID)
+    if spellID == nil then return false end
+    if issecretvalue and issecretvalue(spellID) then return false end
+    return type(spellID) == "number" and spellID > 0
+end
+
 local function LookupSpellInGroupMap(spellID, spellMap)
-    if not spellID or spellID <= 0 then return nil end
+    if not IsPositiveSpellId(spellID) then return nil end
     local groupIdx = spellMap[spellID]
     if groupIdx then return groupIdx end
     if C_Spell and C_Spell.GetBaseSpell then
         local baseID = C_Spell.GetBaseSpell(spellID)
-        if baseID and baseID ~= spellID then
+        if IsPositiveSpellId(baseID) and baseID ~= spellID then
             groupIdx = spellMap[baseID]
             if groupIdx then return groupIdx end
         end
@@ -91,29 +97,44 @@ local function LookupSpellInGroupMap(spellID, spellMap)
     return nil
 end
 
-local function GetGroupIdxForIcon(icon, spellMap)
-    local id, groupIdx
+local function AddSpellCandidate(list, spellID)
+    if not IsPositiveSpellId(spellID) then return end
+    list[#list + 1] = spellID
+end
 
+--- 技能 CDM 在「施法/冷却」与「光环激活」等阶段可能上报不同 spellID；仅取 linked[1] 会在操控时间、隐形等法术上漏匹配。
+local function CollectSpellCandidatesForGroup(icon)
+    local c = {}
     if icon.GetSpellID then
-        id = icon:GetSpellID()
-        if id and not issecretvalue(id) and type(id) == "number" and id > 0 then
-            groupIdx = LookupSpellInGroupMap(id, spellMap)
-            if groupIdx then return groupIdx end
-        end
+        AddSpellCandidate(c, icon:GetSpellID())
     end
-
-    if icon.cooldownID then
+    if icon.GetAuraSpellID then
+        AddSpellCandidate(c, icon:GetAuraSpellID())
+    end
+    if icon.cooldownID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
         local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(icon.cooldownID)
         if info then
-            local spellID = info.linkedSpellIDs and info.linkedSpellIDs[1]
-            spellID = spellID or info.overrideSpellID or info.spellID
-            if spellID and spellID > 0 then
-                groupIdx = LookupSpellInGroupMap(spellID, spellMap)
-                if groupIdx then return groupIdx end
+            AddSpellCandidate(c, info.overrideSpellID)
+            local baseID = info.spellID
+            if IsPositiveSpellId(baseID) and C_Spell and C_Spell.GetOverrideSpell then
+                AddSpellCandidate(c, C_Spell.GetOverrideSpell(baseID))
             end
+            if info.linkedSpellIDs then
+                for _, lid in ipairs(info.linkedSpellIDs) do
+                    AddSpellCandidate(c, lid)
+                end
+            end
+            AddSpellCandidate(c, info.spellID)
         end
     end
+    return c
+end
 
+local function GetGroupIdxForIcon(icon, spellMap)
+    for _, spellID in ipairs(CollectSpellCandidatesForGroup(icon)) do
+        local groupIdx = LookupSpellInGroupMap(spellID, spellMap)
+        if groupIdx then return groupIdx end
+    end
     return nil
 end
 
