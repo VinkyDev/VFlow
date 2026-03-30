@@ -940,6 +940,8 @@ local function UpdateChargeBar(barFrame, spellID)
     if issecretvalue and issecretvalue(maxCharges) then return end
     if not maxCharges or maxCharges < 1 then return end
 
+    local borderThickness = tonumber(cfg.borderThickness) or 1
+
     -- 创建背景层（显示未充能部分）
     if not barFrame._chargeBG then
         local bg = barFrame._segContainer:CreateTexture(nil, "BACKGROUND")
@@ -963,13 +965,14 @@ local function UpdateChargeBar(barFrame, spellID)
     barFrame._chargeBar:SetStatusBarColor(cfg.barColor.r, cfg.barColor.g, cfg.barColor.b, cfg.barColor.a)
     barFrame._chargeBar:SetMinMaxValues(0, maxCharges)
     barFrame._chargeBar:SetValue(currentCharges)
+    local dir = cfg.barDirection or "horizontal"
+    ApplyStatusBarOrientation(barFrame._chargeBar, dir)
     ApplyStatusBarReverseFill(barFrame._chargeBar, cfg.barReverse == true)
 
     -- 设置充能进度条（显示正在充能的进度）
     if not barFrame._refreshCharge then
         local refreshCharge = CreateFrame("StatusBar", nil, barFrame._segContainer)
         refreshCharge:SetStatusBarTexture(ResolveBarTexture(cfg.barTexture))
-        refreshCharge:SetPoint("LEFT", barFrame._chargeBar:GetStatusBarTexture(), "RIGHT")
         ConfigureStatusBar(refreshCharge)
         barFrame._refreshCharge = refreshCharge
     end
@@ -1001,14 +1004,65 @@ local function UpdateChargeBar(barFrame, spellID)
     -- 每次更新颜色（配置可能变化）
     local rc = cfg.rechargeColor or { r = 0.5, g = 0.8, b = 1, a = 1 }
     barFrame._refreshCharge:SetStatusBarColor(rc.r, rc.g, rc.b, rc.a)
+    ApplyStatusBarOrientation(barFrame._refreshCharge, dir)
     ApplyStatusBarReverseFill(barFrame._refreshCharge, cfg.barReverse == true)
 
-    -- 计算每个充能的宽度，设置refreshCharge的尺寸
+    -- 与 CreateSegments 一致：按 barDirection 计算单格尺寸，并锚定到主条填充前沿（下一格）
     local totalW = barFrame._segContainer:GetWidth()
     local totalH = barFrame._segContainer:GetHeight()
+    local barReverse = cfg.barReverse == true
     if totalW > 0 and totalH > 0 then
-        local chargeWidth = totalW / maxCharges
-        barFrame._refreshCharge:SetSize(chargeWidth, totalH)
+        local userGap = tonumber(cfg.segmentGap) or 0
+        local segmentGap = (maxCharges > 1) and (userGap - borderThickness) or 0
+        local ppScale = PP.GetPixelScale()
+        local function ToPixel(v) return math.floor(v / ppScale + 0.5) end
+        local function ToLogical(px) return px * ppScale end
+
+        local pxTotalW = ToPixel(totalW)
+        local pxTotalH = ToPixel(totalH)
+        local pxGap = ToPixel(segmentGap)
+
+        local pxSegW_Base, pxSegH_Base, pxRemainder
+        if dir == "vertical" then
+            pxSegW_Base = pxTotalW
+            local pxAvailableH = math.max(0, pxTotalH - (maxCharges - 1) * pxGap)
+            pxSegH_Base = math.floor(pxAvailableH / maxCharges)
+            pxRemainder = pxAvailableH % maxCharges
+        else
+            pxSegH_Base = pxTotalH
+            local pxAvailableW = math.max(0, pxTotalW - (maxCharges - 1) * pxGap)
+            pxSegW_Base = math.floor(pxAvailableW / maxCharges)
+            pxRemainder = pxAvailableW % maxCharges
+        end
+
+        local thisPxSegW = pxSegW_Base
+        local thisPxSegH = pxSegH_Base
+        if dir == "vertical" then
+            if 1 <= pxRemainder then thisPxSegH = thisPxSegH + 1 end
+        else
+            if 1 <= pxRemainder then thisPxSegW = thisPxSegW + 1 end
+        end
+        local logSegW = ToLogical(thisPxSegW)
+        local logSegH = ToLogical(thisPxSegH)
+
+        barFrame._refreshCharge:ClearAllPoints()
+        local tex = barFrame._chargeBar:GetStatusBarTexture()
+        if tex then
+            if dir == "vertical" then
+                if not barReverse then
+                    barFrame._refreshCharge:SetPoint("BOTTOM", tex, "TOP", 0, 0)
+                else
+                    barFrame._refreshCharge:SetPoint("TOP", tex, "BOTTOM", 0, 0)
+                end
+            else
+                if not barReverse then
+                    barFrame._refreshCharge:SetPoint("LEFT", tex, "RIGHT", 0, 0)
+                else
+                    barFrame._refreshCharge:SetPoint("RIGHT", tex, "LEFT", 0, 0)
+                end
+            end
+        end
+        barFrame._refreshCharge:SetSize(logSegW, logSegH)
     end
 
     -- 使用SetTimerDuration设置充能进度动画
@@ -1045,7 +1099,6 @@ local function UpdateChargeBar(barFrame, spellID)
     end
 
     -- 创建分隔线（使用完美像素边框）- 边框重合自动形成分隔线
-    local borderThickness = tonumber(cfg.borderThickness) or 1
     if maxCharges > 1 and borderThickness > 0 then
         barFrame._chargeBorders = barFrame._chargeBorders or {}
         -- 清理多余的边框
@@ -1056,13 +1109,11 @@ local function UpdateChargeBar(barFrame, spellID)
                 barFrame._chargeBorders[i] = nil
             end
         end
-        -- 创建或更新每段的边框容器
+        -- 创建或更新每段的边框容器（布局与 CreateSegments 一致，支持垂直分段）
         if totalW > 0 and totalH > 0 then
-            -- 应用segmentGap配置和像素对齐
             local userGap = tonumber(cfg.segmentGap) or 0
-            local segmentGap = userGap - borderThickness
+            local segmentGap = (maxCharges > 1) and (userGap - borderThickness) or 0
 
-            -- 像素对齐计算
             local ppScale = PP.GetPixelScale()
             local function ToPixel(v) return math.floor(v / ppScale + 0.5) end
             local function ToLogical(px) return px * ppScale end
@@ -1071,23 +1122,41 @@ local function UpdateChargeBar(barFrame, spellID)
             local pxTotalH = ToPixel(totalH)
             local pxGap = ToPixel(segmentGap)
 
-            -- 计算分段宽度（处理余数分配）
-            local pxAvailableW = math.max(0, pxTotalW - (maxCharges - 1) * pxGap)
-            local pxSegW_Base = math.floor(pxAvailableW / maxCharges)
-            local pxRemainder = pxAvailableW % maxCharges
+            local pxSegW_Base, pxSegH_Base, pxRemainder
+            if dir == "vertical" then
+                pxSegW_Base = pxTotalW
+                local pxAvailableH = math.max(0, pxTotalH - (maxCharges - 1) * pxGap)
+                pxSegH_Base = math.floor(pxAvailableH / maxCharges)
+                pxRemainder = pxAvailableH % maxCharges
+            else
+                pxSegH_Base = pxTotalH
+                local pxAvailableW = math.max(0, pxTotalW - (maxCharges - 1) * pxGap)
+                pxSegW_Base = math.floor(pxAvailableW / maxCharges)
+                pxRemainder = pxAvailableW % maxCharges
+            end
 
             local bc = cfg.borderColor or { r = 0.3, g = 0.3, b = 0.3, a = 1 }
             local currentPxOffset = 0
 
             for i = 1, maxCharges do
-                -- 将余数像素分配给前几个分段
-                local thisPxSegW = pxSegW_Base
-                if i <= pxRemainder then
-                    thisPxSegW = thisPxSegW + 1
+                local thisPxSegW, thisPxSegH
+                if dir == "vertical" then
+                    thisPxSegW = pxSegW_Base
+                    thisPxSegH = pxSegH_Base
+                    if i <= pxRemainder then
+                        thisPxSegH = thisPxSegH + 1
+                    end
+                else
+                    thisPxSegW = pxSegW_Base
+                    if i <= pxRemainder then
+                        thisPxSegW = thisPxSegW + 1
+                    end
+                    thisPxSegH = pxSegH_Base
                 end
 
                 local logOffset = ToLogical(currentPxOffset)
                 local logSegW = ToLogical(thisPxSegW)
+                local logSegH = ToLogical(thisPxSegH)
 
                 if not barFrame._chargeBorders[i] then
                     local borderFrame = CreateFrame("Frame", nil, barFrame._segContainer)
@@ -1096,17 +1165,20 @@ local function UpdateChargeBar(barFrame, spellID)
                 end
                 local borderFrame = barFrame._chargeBorders[i]
                 borderFrame:ClearAllPoints()
-                borderFrame:SetPoint("LEFT", barFrame._segContainer, "LEFT", logOffset, 0)
-                PP.SetSize(borderFrame, logSegW, totalH)
+                local anchor = (dir == "vertical") and "BOTTOMLEFT" or "TOPLEFT"
+                local offsetX = (dir == "vertical") and 0 or logOffset
+                local offsetY = (dir == "vertical") and logOffset or 0
+                borderFrame:SetPoint(anchor, barFrame._segContainer, anchor, offsetX, offsetY)
+                PP.SetSize(borderFrame, logSegW, logSegH)
                 local needRebuild = (not borderFrame._vfBorderThickness)
                     or (borderFrame._vfBorderThickness ~= borderThickness)
                     or (borderFrame._vfBorderW ~= logSegW)
-                    or (borderFrame._vfBorderH ~= totalH)
+                    or (borderFrame._vfBorderH ~= logSegH)
                 if needRebuild then
                     PP.CreateBorder(borderFrame, borderThickness, bc, true)
                     borderFrame._vfBorderThickness = borderThickness
                     borderFrame._vfBorderW = logSegW
-                    borderFrame._vfBorderH = totalH
+                    borderFrame._vfBorderH = logSegH
                     borderFrame._vfBorderColor = {
                         r = bc.r or 1,
                         g = bc.g or 1,
@@ -1130,8 +1202,11 @@ local function UpdateChargeBar(barFrame, spellID)
                 end
                 borderFrame:Show()
 
-                -- 更新下一个分段的偏移量
-                currentPxOffset = currentPxOffset + thisPxSegW + pxGap
+                if dir == "vertical" then
+                    currentPxOffset = currentPxOffset + thisPxSegH + pxGap
+                else
+                    currentPxOffset = currentPxOffset + thisPxSegW + pxGap
+                end
             end
         end
     else
