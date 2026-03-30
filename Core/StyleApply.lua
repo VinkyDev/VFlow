@@ -251,8 +251,292 @@ function StyleApply.ApplyKeybind(button, cfg)
 end
 
 -- =========================================================
--- SECTION 7: 遮罩层颜色 Hook（一次性）
+-- SECTION 7: 遮罩层与冷却显示（系统增益时间 vs 技能冷却）
 -- =========================================================
+
+--- 供 GCD 剥离与仅技能冷却路径共用
+local function GetButtonSpellIDForGcd(button)
+    if not button then return nil end
+    if button.GetSpellID then
+        local id = button:GetSpellID()
+        if id and (not issecretvalue or not issecretvalue(id)) and type(id) == "number" and id > 0 then
+            return id
+        end
+    end
+    if button.GetAuraSpellID then
+        local id = button:GetAuraSpellID()
+        if id and (not issecretvalue or not issecretvalue(id)) and type(id) == "number" and id > 0 then
+            return id
+        end
+    end
+    local cdID = button.cooldownID
+    if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
+        local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+        if info then
+            local spellID = info.linkedSpellIDs and info.linkedSpellIDs[1]
+            spellID = spellID or info.overrideSpellID or info.spellID
+            if spellID and spellID > 0 then
+                return spellID
+            end
+        end
+    end
+    return nil
+end
+
+--- 重要/效能/自定义技能管理器图标（非 BUFF 监视器）
+local function IsSkillCooldownManagerIcon(button)
+    if not button then return false end
+    if button._vf_cdmKind == "skill" then return true end
+    local p = button:GetParent()
+    local n = p and p.GetName and p:GetName()
+    if type(n) ~= "string" then return false end
+    if n == "EssentialCooldownViewer" or n == "UtilityCooldownViewer" then return true end
+    if n:match("^VFlow_SkillGroup_%d+$") then return true end
+    return false
+end
+
+--- 优先 button.cooldownInfo 的 spellID：关联 BUFF 激活时 GetSpellID/GetAuraSpellID 可能指向光环 ID
+local function GetSpellIDForSpellOnlyCooldown(button)
+    local info = button and button.cooldownInfo
+    if info then
+        local id = info.overrideSpellID or info.spellID
+        if id and (not issecretvalue or not issecretvalue(id)) and type(id) == "number" and id > 0 then
+            return id
+        end
+    end
+    return GetButtonSpellIDForGcd(button)
+end
+
+--- Step 曲线：仅在技能真实冷却中维持去饱和
+local spellOnlyDesatCurve
+local function GetSpellOnlyDesatCurve()
+    if spellOnlyDesatCurve then return spellOnlyDesatCurve end
+    if not (C_CurveUtil and C_CurveUtil.CreateCurve and Enum and Enum.LuaCurveType) then
+        return nil
+    end
+    local ok, c = pcall(function()
+        local curve = C_CurveUtil.CreateCurve()
+        curve:SetType(Enum.LuaCurveType.Step)
+        curve:AddPoint(0, 0)
+        curve:AddPoint(0.001, 1)
+        return curve
+    end)
+    if ok and c then spellOnlyDesatCurve = c end
+    return spellOnlyDesatCurve
+end
+
+--- StyleIcon.hideIconGCD
+local function StyleIconWantsHideGcdSwipe()
+    local db = VFlow.Store and VFlow.Store.getModuleRef and VFlow.Store.getModuleRef("VFlow.StyleIcon")
+    return db and db.hideIconGCD == true
+end
+
+local SPELL_ONLY_GCD_SPELL_ID = 61304
+
+--- SetUseAuraDisplayTime(false) + DurationObject；仅在 isOnGCD 且无 durObj 时 Clear，避免误清整块遮罩与读秒
+local function ApplySpellOnlyCooldownDisplay(button)
+    if not button._vf_hideBuffCooldownOverlay then return end
+    if not IsSkillCooldownManagerIcon(button) then return end
+    local cd = button.Cooldown
+    if not cd then return end
+
+    local spellID = GetSpellIDForSpellOnlyCooldown(button)
+    if not spellID then return end
+
+    local isOnGCD = button.isOnGCD == true
+    local tex = button.Icon
+
+    local hasChargeSource = type(button.HasVisualDataSource_Charges) == "function"
+        and button:HasVisualDataSource_Charges()
+    local chargeDurObj
+    if hasChargeSource and C_Spell and C_Spell.GetSpellChargeDuration then
+        local okCh, c = pcall(C_Spell.GetSpellChargeDuration, spellID)
+        if okCh then chargeDurObj = c end
+    end
+
+    local durObj
+    if C_Spell and C_Spell.GetSpellCooldownDuration then
+        local okD, d = pcall(C_Spell.GetSpellCooldownDuration, spellID)
+        if okD then durObj = d end
+    end
+
+    local cdInfo
+    if C_Spell and C_Spell.GetSpellCooldown then
+        local okI, inf = pcall(C_Spell.GetSpellCooldown, spellID)
+        if okI and type(inf) == "table" then
+            cdInfo = inf
+        end
+    end
+
+    -- 仅 GCD、技能本身已就绪时 isActive 仍可能为 true，用 Step 曲线会得到满去饱和 → 误伤「未在冷却」的图标
+    if tex and tex.SetDesaturation then
+        if cdInfo and cdInfo.isOnGCD == true then
+            tex:SetDesaturation(0)
+        elseif durObj and not hasChargeSource and cdInfo and cdInfo.isActive and durObj.EvaluateRemainingDuration then
+            local curve = GetSpellOnlyDesatCurve()
+            if curve then
+                local okEv, v = pcall(durObj.EvaluateRemainingDuration, durObj, curve, 0)
+                tex:SetDesaturation((okEv and v) or 0)
+            else
+                tex:SetDesaturation(1)
+            end
+        else
+            tex:SetDesaturation(0)
+        end
+    end
+
+    if cd.SetUseAuraDisplayTime then
+        pcall(cd.SetUseAuraDisplayTime, cd, false)
+    end
+
+    -- 技能/充能 CD 与仅 GCD 分离；仅 GCD 时用全局 GCD 法术（61304）的 DurationObject 画圈
+    local apiGcdOnly = cdInfo and cdInfo.isOnGCD == true
+    local wantGcdRing = isOnGCD or apiGcdOnly
+    local appliedSpellCd = false
+
+    if hasChargeSource and chargeDurObj and cd.SetCooldownFromDurationObject then
+        pcall(cd.SetCooldownFromDurationObject, cd, chargeDurObj, true)
+        if cd.SetDrawSwipe then pcall(cd.SetDrawSwipe, cd, true) end
+        appliedSpellCd = true
+    elseif durObj and cd.SetCooldownFromDurationObject and not apiGcdOnly then
+        pcall(cd.SetCooldownFromDurationObject, cd, durObj, true)
+        if cd.SetDrawSwipe then pcall(cd.SetDrawSwipe, cd, true) end
+        appliedSpellCd = true
+    end
+
+    if not appliedSpellCd then
+        if wantGcdRing and not StyleIconWantsHideGcdSwipe() then
+            local gcdInfoG
+            pcall(function()
+                gcdInfoG = C_Spell.GetSpellCooldown(SPELL_ONLY_GCD_SPELL_ID)
+            end)
+            local gcdActive = false
+            if gcdInfoG then
+                if gcdInfoG.isActive ~= nil then
+                    gcdActive = gcdInfoG.isActive == true
+                elseif C_Spell.GetSpellCooldownDuration then
+                    pcall(function()
+                        gcdActive = C_Spell.GetSpellCooldownDuration(SPELL_ONLY_GCD_SPELL_ID) ~= nil
+                    end)
+                end
+            end
+            local gcdDurObj
+            if C_Spell.GetSpellCooldownDuration then
+                local okG, g = pcall(C_Spell.GetSpellCooldownDuration, SPELL_ONLY_GCD_SPELL_ID)
+                if okG then gcdDurObj = g end
+            end
+            if gcdActive and gcdDurObj and cd.SetCooldownFromDurationObject then
+                pcall(cd.SetCooldownFromDurationObject, cd, gcdDurObj, true)
+                if cd.SetDrawSwipe then pcall(cd.SetDrawSwipe, cd, true) end
+            elseif cd.Clear then
+                pcall(cd.Clear, cd)
+            end
+        elseif cd.Clear then
+            pcall(cd.Clear, cd)
+        end
+    end
+end
+
+--- 前向声明：SPELL_UPDATE_COOLDOWN 刷新路径需绑定本函数为 upvalue
+local OnCooldownMaskDriverRefresh
+
+local function SkillsModuleWantsSpellOnlyCooldown()
+    local get = VFlow.Store and VFlow.Store.getModuleRef
+    if not get then return false end
+    local db = get("VFlow.Skills")
+    if not db then return false end
+    local function wants(c)
+        return type(c) == "table" and c.hideBuffCooldownOverlay == true
+    end
+    if wants(db.importantSkills) or wants(db.efficiencySkills) then
+        return true
+    end
+    for _, grp in ipairs(db.customGroups or {}) do
+        if wants(grp and grp.config) then
+            return true
+        end
+    end
+    return false
+end
+
+local spellOnlyCdEventHooked
+local spellOnlyCdFlushFrame
+local function EnsureSpellOnlyCooldownSpellUpdateFlush()
+    if spellOnlyCdEventHooked then return end
+    spellOnlyCdEventHooked = true
+    spellOnlyCdFlushFrame = CreateFrame("Frame")
+    spellOnlyCdFlushFrame:Hide()
+    spellOnlyCdFlushFrame:SetScript("OnUpdate", function(self)
+        self:Hide()
+        if not SkillsModuleWantsSpellOnlyCooldown() then return end
+        local SL = VFlow.StyleLayout
+        if not SL or not SL.CollectIcons then return end
+        for _, name in ipairs({ "EssentialCooldownViewer", "UtilityCooldownViewer" }) do
+            local viewer = _G[name]
+            if viewer then
+                local icons = SL.CollectIcons(viewer)
+                for i = 1, #icons do
+                    local b = icons[i]
+                    if b and b._vf_hideBuffCooldownOverlay and IsSkillCooldownManagerIcon(b) then
+                        OnCooldownMaskDriverRefresh(b)
+                    end
+                end
+            end
+        end
+        if VFlow.SkillGroups and VFlow.SkillGroups.forEachGroupIcon then
+            VFlow.SkillGroups.forEachGroupIcon(function(icon)
+                if icon and icon._vf_hideBuffCooldownOverlay and IsSkillCooldownManagerIcon(icon) then
+                    OnCooldownMaskDriverRefresh(icon)
+                end
+            end)
+        end
+    end)
+    VFlow.on("SPELL_UPDATE_COOLDOWN", "VFlow.StyleApply.SpellOnlyCd", function()
+        if not SkillsModuleWantsSpellOnlyCooldown() then return end
+        spellOnlyCdFlushFrame:Show()
+    end)
+end
+
+--- 技能监视器上主 Cooldown 是否正在显示「充能恢复」扇形（与充能层数恢复中的 DurationObject 一致）
+local function SkillButtonChargeRechargeSwipeActive(button)
+    if not button or not IsSkillCooldownManagerIcon(button) then return false end
+    if type(button.HasVisualDataSource_Charges) ~= "function" or not button:HasVisualDataSource_Charges() then
+        return false
+    end
+    local spellID = GetSpellIDForSpellOnlyCooldown(button)
+    if not spellID then
+        spellID = GetButtonSpellIDForGcd(button)
+    end
+    if not spellID or not C_Spell.GetSpellChargeDuration then return false end
+    local ok, dur = pcall(C_Spell.GetSpellChargeDuration, spellID)
+    return ok and dur ~= nil
+end
+
+local function ApplyCooldownMaskSwipeNow(self)
+    local cd = self.Cooldown
+    if not cd or not cd.SetSwipeColor then return end
+    local hideBuff = self._vf_hideBuffCooldownOverlay and IsSkillCooldownManagerIcon(self)
+    local color
+    if self._vf_hideBuffCooldownOverlay and IsSkillCooldownManagerIcon(self) and SkillButtonChargeRechargeSwipeActive(self) then
+        color = self._vf_chargeRechargeMaskColor or self._vf_cooldownMaskColor
+    elseif hideBuff then
+        color = self._vf_cooldownMaskColor
+    elseif self.cooldownUseAuraDisplayTime and self._vf_buffMaskColor then
+        color = self._vf_buffMaskColor
+    else
+        color = self._vf_cooldownMaskColor
+    end
+    if type(color) == "table" then
+        cd:SetSwipeColor(color.r or 1, color.g or 1, color.b or 1, color.a or 1)
+    end
+end
+
+OnCooldownMaskDriverRefresh = function(self)
+    if self._vf_hideBuffCooldownOverlay and IsSkillCooldownManagerIcon(self) then
+        ApplySpellOnlyCooldownDisplay(self)
+    end
+    ApplyCooldownMaskSwipeNow(self)
+end
 
 function StyleApply.ApplyAuraSwipeColor(button, groupCfg)
     local _pt = Profiler.start("SA:ApplyAuraSwipeColor")
@@ -260,30 +544,24 @@ function StyleApply.ApplyAuraSwipeColor(button, groupCfg)
 
     button._vf_buffMaskColor = groupCfg.buffMaskColor
     button._vf_cooldownMaskColor = groupCfg.cooldownMaskColor
+    button._vf_chargeRechargeMaskColor = groupCfg.chargeRechargeMaskColor
+    button._vf_hideBuffCooldownOverlay = groupCfg.hideBuffCooldownOverlay == true
 
-    if button.RefreshSpellCooldownInfo and not button._vf_refreshColorHooked then
-        hooksecurefunc(button, "RefreshSpellCooldownInfo", function(self)
-            local cd = self.Cooldown
-            if not cd or not cd.SetSwipeColor then return end
-            local color = self.cooldownUseAuraDisplayTime and self._vf_buffMaskColor or self._vf_cooldownMaskColor
-            if type(color) == "table" then
-                cd:SetSwipeColor(color.r or 1, color.g or 1, color.b or 1, color.a or 1)
-            end
-        end)
-        button._vf_refreshColorHooked = true
+    if button._vf_hideBuffCooldownOverlay then
+        EnsureSpellOnlyCooldownSpellUpdateFlush()
     end
 
-    if button.RefreshCooldownInfo and not button._vf_refreshColorHooked then
-        hooksecurefunc(button, "RefreshCooldownInfo", function(self)
-            local cd = self.Cooldown
-            if not cd or not cd.SetSwipeColor then return end
-            local color = self._vf_cooldownMaskColor
-            if type(color) == "table" then
-                cd:SetSwipeColor(color.r or 1, color.g or 1, color.b or 1, color.a or 1)
-            end
-        end)
+    if not button._vf_refreshColorHooked then
         button._vf_refreshColorHooked = true
+        if button.RefreshSpellCooldownInfo then
+            hooksecurefunc(button, "RefreshSpellCooldownInfo", OnCooldownMaskDriverRefresh)
+        end
+        if button.RefreshCooldownInfo then
+            hooksecurefunc(button, "RefreshCooldownInfo", OnCooldownMaskDriverRefresh)
+        end
     end
+
+    OnCooldownMaskDriverRefresh(button)
     Profiler.stop(_pt)
 end
 
@@ -324,12 +602,16 @@ function StyleApply.ApplyButtonStyle(button, cfg)
         StyleApply.ApplyKeybind(button, cfg)
     end
 
-    if cfg.buffMaskColor or cfg.cooldownMaskColor then
+    if cfg.buffMaskColor or cfg.cooldownMaskColor or cfg.chargeRechargeMaskColor or cfg.hideBuffCooldownOverlay then
         StyleApply.ApplyAuraSwipeColor(button, cfg)
     end
 
     -- 全局美化
     StyleApply.ApplyBeautify(button, cfg)
+
+    if button._vf_refreshColorHooked then
+        OnCooldownMaskDriverRefresh(button)
+    end
     Profiler.stop(_pt)
 end
 
@@ -522,34 +804,6 @@ end
 local pendingHideGcdButtons = {}
 local hideGcdFlushFrame = CreateFrame("Frame")
 hideGcdFlushFrame:Hide()
-
-local function GetButtonSpellIDForGcd(button)
-    if not button then return nil end
-    if button.GetSpellID then
-        local id = button:GetSpellID()
-        if id and (not issecretvalue or not issecretvalue(id)) and type(id) == "number" and id > 0 then
-            return id
-        end
-    end
-    if button.GetAuraSpellID then
-        local id = button:GetAuraSpellID()
-        if id and (not issecretvalue or not issecretvalue(id)) and type(id) == "number" and id > 0 then
-            return id
-        end
-    end
-    local cdID = button.cooldownID
-    if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-        local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
-        if info then
-            local spellID = info.linkedSpellIDs and info.linkedSpellIDs[1]
-            spellID = spellID or info.overrideSpellID or info.spellID
-            if spellID and spellID > 0 then
-                return spellID
-            end
-        end
-    end
-    return nil
-end
 
 local function HideIconGcdOptionEnabled()
     local db = VFlow.Store and VFlow.Store.getModuleRef and VFlow.Store.getModuleRef("VFlow.StyleIcon")
