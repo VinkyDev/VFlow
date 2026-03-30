@@ -177,9 +177,19 @@ end
 -- =========================================================
 
 local function buildSkillIconRows()
+    local merged = {}
+    local trackedImportant = VFlow.State.get("trackedSkills") or {}
+    local trackedUtility = VFlow.State.get("trackedUtilitySkills") or {}
+    for spellID, info in pairs(trackedImportant) do
+        merged[spellID] = info
+    end
+    for spellID, info in pairs(trackedUtility) do
+        if not merged[spellID] then
+            merged[spellID] = info
+        end
+    end
     local items = {}
-    local tracked = VFlow.State.get("trackedSkills") or {}
-    for spellID, info in pairs(tracked) do
+    for spellID, info in pairs(merged) do
         items[#items + 1] = {
             spellID = spellID,
             name = info.name,
@@ -276,7 +286,7 @@ local function buildSharedTopAndIconGrid(titleText, introText, legendText, forDe
         { type = "spacer", height = 6, cols = 24 },
         {
             type = "interactiveText",
-            cols = 22,
+            cols = 24,
             text = introText,
             links = getScanLinks(),
         },
@@ -578,6 +588,7 @@ local function renderTtsPage(container)
     end
 
     VFlow.State.watch("trackedSkills", "OtherFeatures.TTS.Skills", refreshAll)
+    VFlow.State.watch("trackedUtilitySkills", "OtherFeatures.TTS.UtilitySkills", refreshAll)
     VFlow.State.watch("trackedBuffs", "OtherFeatures.TTS.Buffs", refreshAll)
 end
 
@@ -589,6 +600,7 @@ local function renderHighlightPage(container)
     end
 
     VFlow.State.watch("trackedSkills", "OtherFeatures.Highlight.Skills", refreshAll)
+    VFlow.State.watch("trackedUtilitySkills", "OtherFeatures.Highlight.UtilitySkills", refreshAll)
     VFlow.State.watch("trackedBuffs", "OtherFeatures.Highlight.Buffs", refreshAll)
 end
 

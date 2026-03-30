@@ -41,40 +41,47 @@ end
 -- SECTION 3: 扫描调度
 -- =========================================================
 
-local function ScanSkillViewers()
-    if InCombatLockdown() then return end
-
-    local _pt = Profiler.start("SS:ScanSkillViewers")
-    local skills = {}
-
-    -- 只扫描重要技能查看器
-    local viewer = _G["EssentialCooldownViewer"]
-    if viewer and viewer.itemFramePool then
-        -- 遍历活动帧
-        for frame in viewer.itemFramePool:EnumerateActive() do
-            local cooldownID = frame.cooldownID
-            if cooldownID then
-                local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cooldownID)
-                if info then
-                    local spellID = ResolveSpellID(info)
-                    if spellID and spellID > 0 then
-                        local spellInfo = C_Spell.GetSpellInfo(spellID)
-                        if spellInfo and spellInfo.name and spellInfo.iconID then
-                            skills[spellID] = {
-                                spellID = spellID,
-                                name = spellInfo.name,
-                                icon = spellInfo.iconID,
-                                cooldownID = cooldownID,
-                            }
-                        end
+-- viewer：冷却管理器技能条；into：spellID -> { spellID, name, icon, cooldownID }
+local function CollectSpellsFromViewer(viewer, into)
+    if not viewer or not viewer.itemFramePool then
+        return
+    end
+    for frame in viewer.itemFramePool:EnumerateActive() do
+        local cooldownID = frame.cooldownID
+        if cooldownID then
+            local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cooldownID)
+            if info then
+                local spellID = ResolveSpellID(info)
+                if spellID and spellID > 0 then
+                    local spellInfo = C_Spell.GetSpellInfo(spellID)
+                    if spellInfo and spellInfo.name and spellInfo.iconID then
+                        into[spellID] = {
+                            spellID = spellID,
+                            name = spellInfo.name,
+                            icon = spellInfo.iconID,
+                            cooldownID = cooldownID,
+                        }
                     end
                 end
             end
         end
     end
+end
 
-    -- 更新全局状态
-    VFlow.State.update("trackedSkills", skills)
+--- 扫描冷却管理器技能条并写入 State。
+--- trackedSkills：仅「重要技能」条（供自定义技能组等只认重要条的逻辑使用，语义不变）。
+--- trackedUtilitySkills：仅「效能技能」条（播报/高亮等可再合并展示）。
+local function ScanSkillViewers()
+    if InCombatLockdown() then return end
+
+    local _pt = Profiler.start("SS:ScanSkillViewers")
+    local important = {}
+    CollectSpellsFromViewer(_G.EssentialCooldownViewer, important)
+    VFlow.State.update("trackedSkills", important)
+
+    local utility = {}
+    CollectSpellsFromViewer(_G.UtilityCooldownViewer, utility)
+    VFlow.State.update("trackedUtilitySkills", utility)
 
     Profiler.stop(_pt)
 end
