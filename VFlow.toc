@@ -1,6 +1,6 @@
 ## Interface: 120000,120001
 ## Title: |cff4085f2VFlow|r
-## Version: 0.3.4
+## Version: 0.4.0
 ## Author: Vinky
 ## Notes: 强大的冷却管理增强插件
 ## Category: Combat

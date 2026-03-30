@@ -26,6 +26,16 @@ VFlow.registerModule(MODULE_KEY, {
 
 local CHANGELOG = {
 	{
+		version = "0.4.0",
+		date = "2026-03-30",
+		content = {
+			"技能组新增隐藏增益遮罩层配置",
+			"自定义高亮和播报支持效能技能",
+			"修复自定义图形监控 - BUFF堆叠层数条清空时有延迟的bug, 修复充能条垂直布局时BUG",
+			"优化自定义BUFF分组的布局逻辑, 位置更稳定"
+		},
+	},
+	{
 		version = "0.3.4",
 		date = "2026-03-27",
 		content = {
