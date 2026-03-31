@@ -12,6 +12,10 @@ local Utils = VFlow.Utils
 local MODULE_KEY = "VFlow.Buffs"
 local MasqueSupport = VFlow.MasqueSupport
 
+local function getBuffsDB()
+    return VFlow.getDBIfReady and VFlow.getDBIfReady(MODULE_KEY) or nil
+end
+
 -- =========================================================
 -- SECTION 2: 模块状态
 -- =========================================================
@@ -120,7 +124,9 @@ end
 local function InitContainer()
     if _container then return end
 
-    local db = VFlow.getDB(MODULE_KEY)
+    local db = getBuffsDB()
+    if not db or not db.trinketPotion then return end
+
     local config = db.trinketPotion
 
     _container = CreateFrame("Frame", "VFlowItemBuffContainer", UIParent)
@@ -134,7 +140,7 @@ local function InitContainer()
         VFlow.DragFrame.register(_container, {
             label = "物品BUFF",
             getAnchorConfig = function()
-                local d = VFlow.getDB(MODULE_KEY)
+                local d = getBuffsDB()
                 return d and d.trinketPotion
             end,
             onPositionChanged = function(_, kind, x, y)
@@ -152,8 +158,8 @@ end
 local function UpdateContainerPosition()
     if not _container then return end
 
-    local db = VFlow.getDB(MODULE_KEY)
-    local config = db.trinketPotion
+    local db = getBuffsDB()
+    local config = db and db.trinketPotion
     if not config then return end
 
     VFlow.ContainerAnchor.ApplyFramePosition(_container, config, nil)
@@ -235,7 +241,11 @@ end
 local function ScanItems()
     local _pt = Profiler.start("TPM:ScanItems")
     InitContainer()
-    local db = VFlow.getDB(MODULE_KEY)
+    local db = getBuffsDB()
+    if not db or not db.trinketPotion then
+        Profiler.stop(_pt)
+        return 0
+    end
     local config = db.trinketPotion
 
     -- 保存旧池，用于帧复用
@@ -385,7 +395,11 @@ function RefreshLayout()
     if not _container then return end
 
     local _pt = Profiler.start("TPM:RefreshLayout")
-    local db = VFlow.getDB(MODULE_KEY)
+    local db = getBuffsDB()
+    if not db or not db.trinketPotion then
+        Profiler.stop(_pt)
+        return
+    end
     local config = db.trinketPotion
     local isEditMode = VFlow.State.get("isEditMode")
 
