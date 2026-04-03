@@ -265,6 +265,12 @@ local function HasAuraInstanceID(value)
     return true
 end
 
+-- CDM 偶发把整份 AuraData 挂在 auraInstanceID 上；C_UnitAuras 只要数值 ID。
+local function AuraInstanceIDForAPI(v)
+    if type(v) == "table" and v.auraInstanceID ~= nil then return v.auraInstanceID end
+    return v
+end
+
 local function GetCooldownIDFromFrame(frame)
     local cdID = frame.cooldownID
     if not cdID and frame.cooldownInfo then
@@ -442,6 +448,7 @@ local function UnlinkBarFromAura(barKey)
 end
 
 local function LinkBarToAura(barFrame, barKey, unit, auraInstanceID)
+    auraInstanceID = AuraInstanceIDForAPI(auraInstanceID)
     local auraKey = BuildAuraKey(unit, auraInstanceID)
     if not auraKey then return end
     local oldKey = _barToAuraKey[barKey]
@@ -455,6 +462,7 @@ end
 
 -- 按优先级在多个单位上查找 aura（展开版，避免闭包分配）
 local function GetAuraDataByInstanceID(auraInstanceID, preferredUnit, secondUnit)
+    auraInstanceID = AuraInstanceIDForAPI(auraInstanceID)
     if not HasAuraInstanceID(auraInstanceID) then return nil, nil end
     local data
     if preferredUnit and preferredUnit ~= "" then
@@ -1256,7 +1264,7 @@ UpdateDurationBar = function(barFrame, spellID, barKey)
             HookCDMFrame(cdmFrame, barKey)
             if HasAuraInstanceID(cdmFrame.auraInstanceID) then
                 auraActive     = true
-                auraInstanceID = cdmFrame.auraInstanceID
+                auraInstanceID = AuraInstanceIDForAPI(cdmFrame.auraInstanceID)
                 unit           = cdmFrame.auraDataUnit or "player"
                 barFrame._trackedAuraInstanceID = auraInstanceID
                 barFrame._trackedUnit           = unit
@@ -1266,17 +1274,19 @@ UpdateDurationBar = function(barFrame, spellID, barKey)
 
     -- 路径2：上次记录的 auraInstanceID
     if not auraActive and HasAuraInstanceID(barFrame._trackedAuraInstanceID) then
+        local tid = AuraInstanceIDForAPI(barFrame._trackedAuraInstanceID)
         local d
-        d = C_UnitAuras.GetAuraDataByAuraInstanceID("player", barFrame._trackedAuraInstanceID)
+        d = C_UnitAuras.GetAuraDataByAuraInstanceID("player", tid)
         if d then
             unit = "player"
         else
-            d = C_UnitAuras.GetAuraDataByAuraInstanceID("pet", barFrame._trackedAuraInstanceID)
+            d = C_UnitAuras.GetAuraDataByAuraInstanceID("pet", tid)
             if d then unit = "pet" end
         end
         if d then
             auraActive     = true
-            auraInstanceID = barFrame._trackedAuraInstanceID
+            auraInstanceID = tid
+            barFrame._trackedAuraInstanceID = tid
             barFrame._trackedUnit = unit
         end
     end
