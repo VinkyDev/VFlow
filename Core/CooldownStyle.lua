@@ -1596,6 +1596,13 @@ local function RequestRefresh(delay)
     end
 end
 
+local function RequestKeybindStyleRefresh(delay)
+    BumpButtonStyleVersion()
+    RequestRefresh(delay)
+end
+
+VFlow.RequestKeybindStyleRefresh = RequestKeybindStyleRefresh
+
 SetupHooks = function()
     if hooked then return end
     SetupBuffRuntimeHandlers()

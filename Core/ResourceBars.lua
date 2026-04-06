@@ -15,7 +15,6 @@ local RS = VFlow.ResourceStyles
 local Profiler = VFlow.Profiler
 local BFK = VFlow.BarFrameKit
 local PP = VFlow.PixelPerfect
-local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
 local E_PT = _G.Enum and Enum.PowerType
 
 local rb = {}
@@ -243,15 +242,6 @@ local initialized = false
 
 local SetDiscreteRechargeTicker
 
-local function ResolveFontPath(faceKey)
-    if LSM and faceKey and faceKey ~= "" and faceKey ~= "默认" then
-        local p = LSM:Fetch("font", faceKey, true)
-        if p then return p end
-    end
-    local p = (ChatFontNormal and ChatFontNormal:GetFont()) or "Fonts\\FRIZQT__.TTF"
-    return p
-end
-
 local function OutlineToken(outline)
     if outline == "THICKOUTLINE" then
         return "THICKOUTLINE"
@@ -264,15 +254,17 @@ end
 
 local function ApplyTextFont(fs, tf)
     if not fs or not tf then return end
-    local path = ResolveFontPath(tf.font)
     local sz = tonumber(tf.size) or 12
     local fontSig = table.concat({
-        tostring(path),
+        tostring(tf.font),
         tostring(sz),
         tostring(tf.outline or ""),
     }, "\031")
     if fs._vf_fontSig ~= fontSig then
-        fs:SetFont(path, sz, OutlineToken(tf.outline))
+        local applyFont = VFlow.UI and VFlow.UI.applyFont
+        if applyFont then
+            applyFont(fs, tf.font, sz, OutlineToken(tf.outline))
+        end
         fs._vf_fontSig = fontSig
     end
     local colorSig, r, g, b, a = BuildColorSignature(tf.color, 1, 1, 1, 1)

@@ -16,143 +16,281 @@ VFlow.Keybind = Keybind
 -- =========================================================
 
 local spellToKeyCache = {}
+local refreshPending = false
 
-local KEYBIND_BAR_PREFIXES = {
-    "ActionButton",
-    "MultiBarBottomLeftButton",
-    "MultiBarBottomRightButton",
-    "MultiBarRightButton",
-    "MultiBarLeftButton",
-}
-
-local KEYBIND_BINDING_NAMES = {
-    "ACTIONBUTTON",
-    "MULTIACTIONBAR1BUTTON",
-    "MULTIACTIONBAR2BUTTON",
-    "MULTIACTIONBAR4BUTTON",
-    "MULTIACTIONBAR3BUTTON",
+local BUTTON_ROW_PREFIXES = {
+    blizzard = {
+        [1] = "ActionButton",
+        [2] = "MultiBarBottomLeftButton",
+        [3] = "MultiBarBottomRightButton",
+        [4] = "MultiBarRightButton",
+        [5] = "MultiBarLeftButton",
+        [6] = "MultiBar5Button",
+        [7] = "MultiBar6Button",
+        [8] = "MultiBar7Button",
+    },
+    elvui = {
+        [1] = "ElvUI_Bar1Button",
+        [2] = "ElvUI_Bar2Button",
+        [3] = "ElvUI_Bar3Button",
+        [4] = "ElvUI_Bar4Button",
+        [5] = "ElvUI_Bar5Button",
+        [6] = "ElvUI_Bar6Button",
+        [7] = "ElvUI_Bar7Button",
+        [8] = "ElvUI_Bar8Button",
+        [9] = "ElvUI_Bar9Button",
+        [10] = "ElvUI_Bar10Button",
+        [13] = "ElvUI_Bar13Button",
+        [14] = "ElvUI_Bar14Button",
+        [15] = "ElvUI_Bar15Button",
+    },
+    dominos = {
+        [1] = "DominosActionButton",
+        [2] = "DominosActionButton",
+        [3] = "MultiBarRightActionButton",
+        [4] = "MultiBarLeftActionButton",
+        [5] = "MultiBarBottomRightActionButton",
+        [6] = "MultiBarBottomLeftActionButton",
+        [7] = "DominosActionButton",
+        [8] = "DominosActionButton",
+        [9] = "DominosActionButton",
+        [10] = "DominosActionButton",
+        [11] = "DominosActionButton",
+        [12] = "MultiBar5ActionButton",
+        [13] = "MultiBar6ActionButton",
+        [14] = "MultiBar7ActionButton",
+    },
 }
 
 -- =========================================================
 -- SECTION 3: 键位格式化与查询
 -- =========================================================
 
-local function FormatCompact(raw)
-    local s = raw:upper()
-    s = s:gsub("STRG%-", "CTRL-")
-    s = s:gsub("CONTROL%-", "CTRL-")
-    s = s:gsub("%s+", "")
+local function FormatKeyForDisplay(key)
+    if not key or key == "" then
+        return ""
+    end
 
-    local mods = ""
-    if s:find("CTRL-", 1, true) then mods = mods .. "C" end
-    if s:find("ALT-", 1, true) then mods = mods .. "A" end
-    if s:find("SHIFT-", 1, true) then mods = mods .. "S" end
-    if s:find("META-", 1, true) then mods = mods .. "M" end
+    local bindingText = GetBindingText and GetBindingText(key, "KEY_", true)
+    local displayKey = (bindingText and bindingText ~= "") and bindingText or key
+    if displayKey:find("|", 1, true) then
+        return displayKey
+    end
 
-    s = s:gsub("CTRL%-", "")
-    s = s:gsub("ALT%-", "")
-    s = s:gsub("SHIFT%-", "")
-    s = s:gsub("META%-", "")
+    local upperKey = key:upper()
 
-    s = s:gsub("MOUSEWHEELUP", "MU")
-    s = s:gsub("MOUSEWHEELDOWN", "MD")
-    s = s:gsub("MOUSEBUTTON(%d+)", "M%1")
-    s = s:gsub("BUTTON(%d+)", "M%1")
-    s = s:gsub("NUMPAD(%d+)", "N%1")
-    s = s:gsub("NUMPADPLUS", "N+")
-    s = s:gsub("NUMPADMINUS", "N-")
-    s = s:gsub("NUMPADMULTIPLY", "N*")
-    s = s:gsub("NUMPADDIVIDE", "N/")
-    s = s:gsub("HOME", "HM")
-    s = s:gsub("END", "ED")
-    s = s:gsub("INSERT", "INS")
-    s = s:gsub("DELETE", "DEL")
-    s = s:gsub("PAGEUP", "PU")
-    s = s:gsub("PAGEDOWN", "PD")
-    s = s:gsub("SPACEBAR", "SP")
-    s = s:gsub("BACKSPACE", "BS")
-    s = s:gsub("CAPSLOCK", "CL")
-    s = s:gsub("ESCAPE", "ESC")
-    s = s:gsub("RETURN", "RT")
-    s = s:gsub("ENTER", "RT")
-    s = s:gsub("TAB", "TB")
-    s = s:gsub("%+", "")
-    return mods .. s
-end
+    upperKey = upperKey:gsub("PADLTRIGGER", "LT")
+    upperKey = upperKey:gsub("PADRTRIGGER", "RT")
+    upperKey = upperKey:gsub("PADLSHOULDER", "LB")
+    upperKey = upperKey:gsub("PADRSHOULDER", "RB")
+    upperKey = upperKey:gsub("PADLSTICK", "LS")
+    upperKey = upperKey:gsub("PADRSTICK", "RS")
+    upperKey = upperKey:gsub("PADDPADUP", "D↑")
+    upperKey = upperKey:gsub("PADDPADDOWN", "D↓")
+    upperKey = upperKey:gsub("PADDPADLEFT", "D←")
+    upperKey = upperKey:gsub("PADDPADRIGHT", "D→")
+    upperKey = upperKey:gsub("^PAD", "")
 
-local function FormatKeyForDisplay(raw)
-    if not raw or raw == "" then return "" end
-    return FormatCompact(raw)
+    upperKey = upperKey:gsub("SHIFT%-", "S")
+    upperKey = upperKey:gsub("META%-", "M")
+    upperKey = upperKey:gsub("CTRL%-", "C")
+    upperKey = upperKey:gsub("ALT%-", "A")
+    upperKey = upperKey:gsub("STRG%-", "ST")
+    upperKey = upperKey:gsub("CONTROL%-", "C")
+
+    upperKey = upperKey:gsub("MOUSE%s?WHEEL%s?UP", "MU")
+    upperKey = upperKey:gsub("MOUSE%s?WHEEL%s?DOWN", "MD")
+    upperKey = upperKey:gsub("MIDDLE%s?MOUSE", "MM")
+    upperKey = upperKey:gsub("MOUSE%s?BUTTON%s?", "M")
+    upperKey = upperKey:gsub("BUTTON", "M")
+
+    upperKey = upperKey:gsub("NUMPAD%s?PLUS", "N+")
+    upperKey = upperKey:gsub("NUMPAD%s?MINUS", "N-")
+    upperKey = upperKey:gsub("NUMPAD%s?MULTIPLY", "N*")
+    upperKey = upperKey:gsub("NUMPAD%s?DIVIDE", "N/")
+    upperKey = upperKey:gsub("NUMPAD%s?DECIMAL", "N.")
+    upperKey = upperKey:gsub("NUMPAD%s?ENTER", "NEnt")
+    upperKey = upperKey:gsub("NUMPAD%s?", "N")
+    upperKey = upperKey:gsub("NUM%s?", "N")
+    upperKey = upperKey:gsub("NPAD%s?", "N")
+
+    upperKey = upperKey:gsub("PAGE%s?UP", "PGU")
+    upperKey = upperKey:gsub("PAGE%s?DOWN", "PGD")
+    upperKey = upperKey:gsub("INSERT", "INS")
+    upperKey = upperKey:gsub("DELETE", "DEL")
+    upperKey = upperKey:gsub("SPACEBAR", "Spc")
+    upperKey = upperKey:gsub("ENTER", "Ent")
+    upperKey = upperKey:gsub("ESCAPE", "Esc")
+    upperKey = upperKey:gsub("TAB", "Tab")
+    upperKey = upperKey:gsub("CAPS%s?LOCK", "Caps")
+    upperKey = upperKey:gsub("HOME", "Hom")
+    upperKey = upperKey:gsub("END", "End")
+
+    return upperKey
 end
 
 -- =========================================================
 -- 构建技能ID到键位的映射
 -- =========================================================
 
-local function BuildSpellToKeyMap()
-    local _pt = Profiler.start("KB:BuildSpellToKeyMap")
+local function IsPositiveSpellID(spellID)
+    return type(spellID) == "number" and spellID > 0
+end
+
+local function AddSpellAlias(map, spellID, key)
+    if not IsPositiveSpellID(spellID) or not key or key == "" or key == "●" then
+        return
+    end
+    if not map[spellID] then
+        map[spellID] = key
+    end
+    if C_Spell and C_Spell.GetOverrideSpell then
+        local overrideSpellID = C_Spell.GetOverrideSpell(spellID)
+        if IsPositiveSpellID(overrideSpellID) and not map[overrideSpellID] then
+            map[overrideSpellID] = key
+        end
+    end
+    if C_Spell and C_Spell.GetBaseSpell then
+        local baseSpellID = C_Spell.GetBaseSpell(spellID)
+        if IsPositiveSpellID(baseSpellID) and not map[baseSpellID] then
+            map[baseSpellID] = key
+        end
+    end
+end
+
+local function AssignResultForSlot(map, slot, keyBind)
+    if not slot or not keyBind or keyBind == "" or keyBind == "●" then
+        return
+    end
+
+    local actionType, id, subType = GetActionInfo(slot)
+    if not id then
+        return
+    end
+
+    if actionType == "spell" or (actionType == "macro" and subType == "spell") then
+        AddSpellAlias(map, id, keyBind)
+        return
+    end
+
+    if actionType == "macro" then
+        local macroSpellID
+        if GetMacroSpell then
+            macroSpellID = GetMacroSpell(id)
+            if not macroSpellID and GetActionText then
+                local macroName = GetActionText(slot)
+                if macroName then
+                    macroSpellID = GetMacroSpell(macroName)
+                end
+            end
+        end
+        AddSpellAlias(map, macroSpellID, keyBind)
+        return
+    end
+
+    if actionType == "item" and C_Item and C_Item.GetItemSpell then
+        local _, itemSpellID = C_Item.GetItemSpell(id)
+        AddSpellAlias(map, itemSpellID, keyBind)
+    end
+end
+
+local function GetActionsTableBySpellID()
     local map = {}
 
-    local function add(spellID, key)
-        if spellID and spellID > 0 and key and key ~= "" then
-            map[spellID] = key
-        end
-    end
-
-    local function ProcessSlot(slot, key)
-        if not key then return end
-        local kind, id, subType = GetActionInfo(slot)
-        if kind == "spell" and id then
-            add(id, key)
-            local override = C_Spell and C_Spell.GetOverrideSpell and C_Spell.GetOverrideSpell(id)
-            if override then add(override, key) end
-        elseif kind == "macro" and id then
-            if subType == "spell" then
-                add(id, key)
-                local override = C_Spell and C_Spell.GetOverrideSpell and C_Spell.GetOverrideSpell(id)
-                if override then add(override, key) end
-            else
-                local macroSpell = GetMacroSpell and GetMacroSpell(id)
-                if macroSpell then
-                    add(macroSpell, key)
-                    local override = C_Spell and C_Spell.GetOverrideSpell and C_Spell.GetOverrideSpell(macroSpell)
-                    if override then add(override, key) end
+    if _G.DominosActionButton1 then
+        for i = 1, 14 do
+            local bar = BUTTON_ROW_PREFIXES.dominos[i]
+            if bar then
+                for j = 1, 12 do
+                    local buttonName = bar
+                    if bar == "DominosActionButton" then
+                        buttonName = bar .. ((i - 1) * 12 + j)
+                    else
+                        buttonName = bar .. j
+                    end
+                    local button = _G[buttonName]
+                    local slot = button and button.action
+                    local keyBind = button and button.HotKey and button.HotKey:GetText()
+                    if button and slot and keyBind and keyBind ~= "●" then
+                        AssignResultForSlot(map, slot, keyBind)
+                    end
                 end
             end
         end
     end
 
-    -- 标准动作条
-    for barIdx, prefix in ipairs(KEYBIND_BAR_PREFIXES) do
-        local bindPrefix = KEYBIND_BINDING_NAMES[barIdx]
-        for i = 1, 12 do
-            local btn = _G[prefix .. i]
-            if btn and btn.action then
-                local slot = btn.action
-                local cmd = bindPrefix .. i
-                local key = GetBindingKey(cmd)
-                ProcessSlot(slot, key)
+    if _G.BT4Button1 then
+        for i = 1, 180 do
+            local button = _G["BT4Button" .. i]
+            local slot = button and button.action
+            local keyBind = button and button.HotKey and button.HotKey:GetText()
+            if button and slot and keyBind and keyBind ~= "●" then
+                AssignResultForSlot(map, slot, keyBind)
             end
         end
     end
 
-    -- ElvUI支持
-    if _G["ElvUI_Bar1Button1"] then
+    if _G.ElvUI_Bar1Button1 then
         for i = 1, 15 do
-            local barName = "ElvUI_Bar" .. i .. "Button"
-            for j = 1, 12 do
-                local btn = _G[barName .. j]
-                if btn and btn.action and btn.config and btn.config.keyBoundTarget then
-                    local slot = btn.action
-                    local key = GetBindingKey(btn.config.keyBoundTarget)
-                    ProcessSlot(slot, key)
+            local bar = BUTTON_ROW_PREFIXES.elvui[i]
+            if bar then
+                for j = 1, 12 do
+                    local button = _G[bar .. j]
+                    local slot = button and button.action
+                    if button and slot and button.config and button.config.keyBoundTarget then
+                        local keyBind = GetBindingKey(button.config.keyBoundTarget)
+                        if keyBind then
+                            AssignResultForSlot(map, slot, keyBind)
+                        end
+                    end
                 end
             end
         end
     end
 
-    Profiler.stop(_pt)
+    for i = 1, 8 do
+        local bar = BUTTON_ROW_PREFIXES.blizzard[i]
+        if bar then
+            for j = 1, 12 do
+                local button = _G[bar .. j]
+                local slot = button and button.action
+                local keyBoundTarget = button and button.commandName
+                if button and slot and keyBoundTarget then
+                    local keyBind = GetBindingKey(keyBoundTarget)
+                    if keyBind then
+                        AssignResultForSlot(map, slot, keyBind)
+                    end
+                end
+            end
+        end
+    end
+
     return map
+end
+
+local function BuildSpellToKeyMap()
+    local _pt = Profiler.start("KB:BuildSpellToKeyMap")
+    local rawMap = GetActionsTableBySpellID()
+    local formattedMap = {}
+
+    for spellID, rawKey in pairs(rawMap) do
+        if rawKey and rawKey ~= "" and rawKey ~= "●" and not formattedMap[spellID] then
+            local formattedKey = FormatKeyForDisplay(rawKey)
+            if formattedKey ~= "" then
+                formattedMap[spellID] = formattedKey
+            end
+        end
+    end
+
+    for spellID, keyBind in pairs(spellToKeyCache) do
+        if not formattedMap[spellID] then
+            formattedMap[spellID] = keyBind
+        end
+    end
+
+    spellToKeyCache = formattedMap
+    Profiler.stop(_pt)
+    return formattedMap
 end
 
 -- =========================================================
@@ -163,8 +301,17 @@ end
 function Keybind.GetSpellIDFromIcon(icon)
     if icon.cooldownID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
         local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(icon.cooldownID)
-        if info and info.spellID then
+        if info and IsPositiveSpellID(info.spellID) then
             return info.spellID
+        end
+    end
+    if icon.spellID and IsPositiveSpellID(icon.spellID) then
+        return icon.spellID
+    end
+    if icon.GetSpellID then
+        local spellID = icon:GetSpellID()
+        if IsPositiveSpellID(spellID) then
+            return spellID
         end
     end
     return nil
@@ -189,28 +336,56 @@ end
 function Keybind.GetKeyForSpell(spellID)
     if not spellID then return "" end
 
-    -- 重建缓存（如果需要）
     if next(spellToKeyCache) == nil then
         spellToKeyCache = BuildSpellToKeyMap()
     end
 
-    local rawKey = FindKeyForSpell(spellID, spellToKeyCache)
-    return FormatKeyForDisplay(rawKey)
+    return FindKeyForSpell(spellID, spellToKeyCache)
 end
 
--- 使缓存失效
 function Keybind.InvalidateCache()
     spellToKeyCache = {}
+end
+
+local function RequestSkillViewerRefresh(delay)
+    if refreshPending then
+        return
+    end
+    refreshPending = true
+    C_Timer.After(delay or 0.1, function()
+        refreshPending = false
+        if VFlow.RequestKeybindStyleRefresh then
+            VFlow.RequestKeybindStyleRefresh(0)
+        elseif VFlow.RequestCooldownStyleRefresh then
+            VFlow.RequestCooldownStyleRefresh()
+        end
+    end)
 end
 
 -- =========================================================
 -- SECTION 4: 事件监听
 -- =========================================================
 
-VFlow.on("ACTIONBAR_SLOT_CHANGED", "VFlow.Keybind", function()
+local function HandleKeybindRelatedChange()
     Keybind.InvalidateCache()
-end)
+    RequestSkillViewerRefresh(0.1)
+end
 
-VFlow.on("UPDATE_BINDINGS", "VFlow.Keybind", function()
-    Keybind.InvalidateCache()
-end)
+local KEYBIND_EVENTS = {
+    "PLAYER_ENTERING_WORLD",
+    "ACTIONBAR_SLOT_CHANGED",
+    "UPDATE_BINDINGS",
+    "UPDATE_BONUS_ACTIONBAR",
+    "PLAYER_TALENT_UPDATE",
+    "PLAYER_SPECIALIZATION_CHANGED",
+    "TRAIT_CONFIG_UPDATED",
+    "EDIT_MODE_LAYOUTS_UPDATED",
+    "PLAYER_REGEN_DISABLED",
+    "ACTIONBAR_HIDEGRID",
+    "ACTIONBAR_PAGE_CHANGED",
+    "GAME_PAD_ACTIVE_CHANGED",
+}
+
+for _, eventName in ipairs(KEYBIND_EVENTS) do
+    VFlow.on(eventName, "VFlow.Keybind." .. eventName, HandleKeybindRelatedChange)
+end

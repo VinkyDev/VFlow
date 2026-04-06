@@ -40,6 +40,30 @@ local INTERP_EASE_OUT = Enum.StatusBarInterpolation and Enum.StatusBarInterpolat
 -- 环形纹理路径格式
 local RING_TEXTURE_FMT = "Interface\\AddOns\\VFlow\\Assets\\Ring\\Ring_%spx.tga"
 
+local function ResolveFontFlags(outline)
+    if outline == "OUTLINE" or outline == "THICKOUTLINE" then
+        return outline
+    end
+    return ""
+end
+
+local function ApplyConfiguredFont(fs, tf)
+    if not fs then return end
+    local fontSize = tf and tf.size or 14
+    local fontFlags = ResolveFontFlags(tf and tf.outline)
+    local applyFont = VFlow.UI and VFlow.UI.applyFont
+    if applyFont then
+        applyFont(fs, tf and tf.font, fontSize, fontFlags)
+    end
+    if tf and tf.outline == "SHADOW" then
+        fs:SetShadowColor(0, 0, 0, 1)
+        fs:SetShadowOffset(1, -1)
+    else
+        fs:SetShadowColor(0, 0, 0, 0)
+        fs:SetShadowOffset(0, 0)
+    end
+end
+
 -- =========================================================
 -- SECTION 3: 显示条件判断
 -- =========================================================
@@ -1061,11 +1085,7 @@ local function UpdateChargeBar(barFrame, spellID)
         barFrame._refreshChargeClip = clip
 
         local txt = clip:CreateFontString(nil, "OVERLAY")
-        txt:SetFont(
-            VFlow.UI.resolveFontPath(tf.font),
-            tf.size or 14,
-            tf.outline or "OUTLINE"
-        )
+        ApplyConfiguredFont(txt, tf)
         txt:SetTextColor(fc.r, fc.g, fc.b, fc.a)
         txt:SetJustifyH("CENTER")
         local anchor = tf.position or "CENTER"
@@ -1674,11 +1694,7 @@ local function CreateBarFrame(spellID, cfg, container)
         local tAnchor = tf.position or "CENTER"
 
         barFrame._text = textHolder:CreateFontString(nil, "OVERLAY")
-        barFrame._text:SetFont(
-            VFlow.UI.resolveFontPath(tf.font),
-            tf.size    or 14,
-            tf.outline or "OUTLINE"
-        )
+        ApplyConfiguredFont(barFrame._text, tf)
         barFrame._text:SetTextColor(fc.r, fc.g, fc.b, fc.a)
         barFrame._text:SetPoint(tAnchor, textHolder, tAnchor, tf.offsetX or 0, tf.offsetY or 0)
         barFrame._text:SetJustifyH("CENTER")

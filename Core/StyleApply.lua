@@ -151,18 +151,9 @@ function StyleApply.ApplyFontStyle(fs, cfg, cachePrefix)
     local outlineKey = prefix .. "_outline"
 
     if fs[sizeKey] ~= size or fs[fontKey] ~= fontToken or fs[outlineKey] ~= outline then
-        local currentFont = fs:GetFont()
-        local fontPath
-        if type(fontToken) == "string" and fontToken ~= "" then
-            if VFlow.UI and VFlow.UI.resolveFontPath then
-                fontPath = VFlow.UI.resolveFontPath(fontToken)
-            else
-                fontPath = fontToken
-            end
-        end
-        local ok = fontPath and pcall(fs.SetFont, fs, fontPath, size, requestedFlags)
-        if not ok and currentFont then
-            pcall(fs.SetFont, fs, currentFont, size, requestedFlags)
+        local applyFont = VFlow.UI and VFlow.UI.applyFont
+        if applyFont then
+            applyFont(fs, fontToken, size, requestedFlags)
         end
         if outline == "SHADOW" then
             SafeSetShadow(fs, true)
