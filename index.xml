@@ -21,6 +21,7 @@
     <Script file="Modules\CustomMonitorModule.lua" />
     <Script file="Modules\ItemsModule.lua" />
     <Script file="Modules\OtherFeaturesModule.lua" />
+    <Script file="Modules\ResourcesModule.lua" />
 
     <!-- 主UI入口 -->
     <Script file="Core\MainUI.lua" />

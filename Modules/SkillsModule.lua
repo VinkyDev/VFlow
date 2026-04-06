@@ -468,7 +468,16 @@ local function renderGroupConfig(container, groupConfig, groupName, options)
                       min = UI_LIMITS.POSITION.min, max = UI_LIMITS.POSITION.max, step = 1, cols = 12 },
                 },
             },
-            { type = "description", text = L["Tip: Drag in Edit Mode to change position"], cols = 24 },
+            {
+                type = "interactiveText",
+                cols = 24,
+                text = L["Recommended to drag and use arrow keys in {Edit mode} to adjust position"],
+                links = {
+                    [L["Edit mode"]] = function()
+                        VFlow.toggleSystemEditMode()
+                    end,
+                },
+            },
         },
 
         -- 字体设置

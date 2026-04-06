@@ -206,6 +206,7 @@ local function InitGroupContainers()
 
             VFlow.DragFrame.register(container, {
                 label = group.name or ((VFlow.L and VFlow.L["Custom group"] or "Custom group") .. i),
+                menuKey = "buff_custom_" .. i,
                 getAnchorConfig = function()
                     return group.config
                 end,

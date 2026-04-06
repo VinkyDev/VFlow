@@ -205,9 +205,51 @@ function CA.ComputeStoredOffset(container, target, cfg)
     return cx - tx, cy - ty
 end
 
-function CA.ApplyFramePosition(frame, cfg, getAnchorOffset)
+--- 与 DragFrame 拖拽结束写入的语义一致：当前帧相对锚点配置下的「应写入 cfg/Store 的 x,y」。
+--- 布局未就绪（尚无有效屏幕坐标）时返回 nil,nil，避免把 0,0 误写入。
+function CA.GetCanonicalAnchorOffsets(frame, cfg)
+    if not frame or not cfg then
+        return nil, nil
+    end
+    local n = CA.NormalizeAnchorConfig(cfg)
+    if n.anchorFrame == "player" then
+        local target = CA.ResolvePlayerFrame()
+        if target then
+            local cap = INVERTED_ANCHORS[n.playerAnchorPosition] or "BOTTOMLEFT"
+            local cx, cy = getPlayerCorner(frame, cap)
+            if not cx then
+                return nil, nil
+            end
+            return CA.ComputePlayerAnchorOffsets(frame, target, n.playerAnchorPosition)
+        end
+        local cx, cy = anchorCoords(frame, "CENTER")
+        local tx, ty = anchorCoords(UIParent, "CENTER")
+        if not (cx and cy and tx and ty) then
+            return nil, nil
+        end
+        return cx - tx, cy - ty
+    end
+
+    local symTarget = CA.ResolveSymmetricTarget(n)
+    local myPt, theirPt = CA.GetSymmetricSetPoints(n)
+    local cx, cy = anchorCoords(frame, myPt)
+    local tx, ty = anchorCoords(symTarget, theirPt)
+    if not (cx and cy and tx and ty) then
+        return nil, nil
+    end
+    return cx - tx, cy - ty
+end
+
+---@param opts table|nil
+---  snapToPixelGrid==false 关闭 SnapFrameToPixelGrid（默认开）
+---  quantizeAnchorOffsets==false 关闭对 x/y 偏移的 PixelSnap（默认开，与 DragFrame 一致）
+---  canonicalSync=function(nx,ny) 在吸附后若与配置不一致则先写 cfg 再回调（用于 Store 持久化）
+function CA.ApplyFramePosition(frame, cfg, getAnchorOffset, opts)
     if not frame then return end
     local n = CA.NormalizeAnchorConfig(cfg)
+    local doSnap = not opts or opts.snapToPixelGrid ~= false
+    local doQuantize = not opts or opts.quantizeAnchorOffsets ~= false
+    local PP = VFlow.PixelPerfect
 
     local ox, oy = n.x, n.y
     if getAnchorOffset then
@@ -218,18 +260,45 @@ function CA.ApplyFramePosition(frame, cfg, getAnchorOffset)
     end
 
     if n.anchorFrame == "player" then
+        local ref = CA.ResolvePlayerFrame() or UIParent
+        if doQuantize and PP and PP.PixelSnap then
+            ox, oy = PP.PixelSnap(ox, ref), PP.PixelSnap(oy, ref)
+        end
         local ok = CA.ApplyContainerToPlayer(frame, n.playerAnchorPosition, ox, oy)
         if not ok then
+            local fx, fy = n.x or 0, n.y or 0
+            if doQuantize and PP and PP.PixelSnap then
+                fx, fy = PP.PixelSnap(fx, UIParent), PP.PixelSnap(fy, UIParent)
+            end
             frame:ClearAllPoints()
-            frame:SetPoint("CENTER", UIParent, "CENTER", n.x or 0, n.y or 0)
+            frame:SetPoint("CENTER", UIParent, "CENTER", fx, fy)
         end
-        return
+        if doSnap and PP and PP.SnapFrameToPixelGrid then
+            PP.SnapFrameToPixelGrid(frame)
+        end
+    else
+        local target = CA.ResolveSymmetricTarget(n)
+        if doQuantize and PP and PP.PixelSnap then
+            ox, oy = PP.PixelSnap(ox, target), PP.PixelSnap(oy, target)
+        end
+        local myPt, theirPt = CA.GetSymmetricSetPoints(n)
+        frame:ClearAllPoints()
+        frame:SetPoint(myPt, target, theirPt, ox, oy)
+        if doSnap and PP and PP.SnapFrameToPixelGrid then
+            PP.SnapFrameToPixelGrid(frame)
+        end
     end
 
-    local target = CA.ResolveSymmetricTarget(n)
-    local myPt, theirPt = CA.GetSymmetricSetPoints(n)
-    frame:ClearAllPoints()
-    frame:SetPoint(myPt, target, theirPt, ox, oy)
+    if doSnap and opts and opts.canonicalSync then
+        local nx, ny = CA.GetCanonicalAnchorOffsets(frame, cfg)
+        if nx ~= nil and ny ~= nil then
+            if math.abs(nx - (n.x or 0)) > 1e-5 or math.abs(ny - (n.y or 0)) > 1e-5 then
+                cfg.x = nx
+                cfg.y = ny
+                opts.canonicalSync(nx, ny)
+            end
+        end
+    end
 end
 
 VFlow.ContainerAnchor = CA

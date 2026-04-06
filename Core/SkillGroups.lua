@@ -214,6 +214,7 @@ local function EnsureGroupContainer(groupIdx)
 
     VFlow.DragFrame.register(container, {
         label = group.name or ((VFlow.L and VFlow.L["Custom skill group"] or "Custom skill group") .. groupIdx),
+        menuKey = "skill_custom_" .. groupIdx,
         getAnchorConfig = function()
             return group.config
         end,

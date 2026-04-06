@@ -377,7 +377,7 @@ local function ComputeSpellOnlyTargetDesaturation(button)
     return 0
 end
 
---- BUFF 续杯/刷新时暴雪会改 SetDesaturation，需在之后按技能 CD 再对齐（思路同 ACDM ApplyStyle 里对 Icon 的 hook）
+--- BUFF 续杯/刷新时暴雪会改 SetDesaturation，需在之后按技能 CD 再对齐
 local function EnsureSpellOnlyDesaturationHook(button)
     if button._vf_spellOnlyDesatHooked or IsVFItemAppendSkillSlot(button) then return end
     local tex = button.Icon

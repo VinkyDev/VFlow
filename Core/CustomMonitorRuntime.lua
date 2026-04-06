@@ -14,6 +14,7 @@ if not VFlow then return end
 
 local MODULE_KEY = "VFlow.CustomMonitor"
 local PP = VFlow.PixelPerfect  -- 完美像素工具
+local BFK = VFlow.BarFrameKit
 local Profiler = VFlow.Profiler
 
 -- =========================================================
@@ -27,8 +28,6 @@ local Profiler = VFlow.Profiler
 local UPDATE_INTERVAL = 0.1
 local MAP_RETRY_INTERVAL = 1.5
 local INACTIVE_PROBE_INTERVAL = 0.4
-local BAR_TEXTURE     = "Interface\\Buttons\\WHITE8X8"
-
 local BUFF_VIEWERS = {
     "BuffIconCooldownViewer",
     "BuffBarCooldownViewer",
@@ -123,40 +122,6 @@ _cdmFlushFrame:Hide()
 -- SECTION 5: 通用辅助
 -- =========================================================
 
-local function ConfigureStatusBar(bar)
-    local tex = bar:GetStatusBarTexture()
-    if tex then
-        tex:SetSnapToPixelGrid(false)
-        tex:SetTexelSnappingBias(0)
-    end
-end
-
---- 条形监控：布局纵向时须设置 StatusBar 朝向，否则纹理仍从左到右走
-local function ApplyStatusBarOrientation(bar, direction)
-    if not bar or not bar.SetOrientation then return end
-    if direction == "vertical" then
-        bar:SetOrientation("VERTICAL")
-    else
-        bar:SetOrientation("HORIZONTAL")
-    end
-end
-
---- 条形监控「反向」：沿当前朝向的填充轴镜像（横条左↔右，竖条下↔上）
-local function ApplyStatusBarReverseFill(bar, reversed)
-    if not bar or not bar.SetReverseFill then return end
-    bar:SetReverseFill(reversed == true)
-end
-
-local function ResolveBarTexture(name)
-    if not name or name == "默认" then return BAR_TEXTURE end
-    local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
-    if LSM then
-        local path = LSM:Fetch("statusbar", name)
-        if path then return path end
-    end
-    return BAR_TEXTURE
-end
-
 --- 先尝试一位小数；含 secret 等对 format 有限制时回退为原值（引擎默认约三位小数）
 local function SetRemainingText(text, durObj)
     local remaining
@@ -181,9 +146,6 @@ local function FillDirection(fillMode)
     end
     return Enum.StatusBarTimerDirection and Enum.StatusBarTimerDirection.ElapsedTime or 0
 end
-
-local INTERP_EASE_OUT = Enum.StatusBarInterpolation
-    and Enum.StatusBarInterpolation.ExponentialEaseOut or 0
 
 local function ApplyTimerDuration(seg, durObj, interpolation, direction)
     if not (durObj and seg.SetTimerDuration) then return false end
@@ -226,10 +188,10 @@ local function GetArcDetector(barFrame, threshold)
     det:SetSize(1, 1)
     det:SetPoint("BOTTOMLEFT", barFrame, "BOTTOMLEFT", 0, 0)
     det:SetAlpha(0)
-    det:SetStatusBarTexture(BAR_TEXTURE)
+    det:SetStatusBarTexture(BFK and BFK.DEFAULT_BAR_TEXTURE or "Interface\\Buttons\\WHITE8X8")
     det:SetMinMaxValues(threshold - 1, threshold)
     det:EnableMouse(false)
-    ConfigureStatusBar(det)
+    if BFK then BFK.ConfigureStatusBar(det) end
     barFrame._arcDetectors[threshold] = det
     return det
 end
@@ -610,6 +572,83 @@ end
 -- SECTION 10: StatusBar 分段创建（共用）
 -- =========================================================
 
+local function colKey(c)
+    if not c then return "-" end
+    return table.concat({ tostring(c.r), tostring(c.g), tostring(c.b), tostring(c.a) }, ";")
+end
+
+local function ShouldRenderGraphics(cfg)
+    return cfg and cfg.showGraphics ~= false
+end
+
+local function ShouldRenderText(cfg)
+    return cfg and cfg.showText ~= false
+end
+
+local function timerFontKey(cfg)
+    local t = cfg.timerFont or {}
+    local fc = t.color or {}
+    return table.concat({
+        tostring(t.font or ""),
+        tostring(t.size or 0),
+        tostring(t.outline or ""),
+        tostring(t.position or "CENTER"),
+        tostring(t.offsetX or 0),
+        tostring(t.offsetY or 0),
+        colKey(fc),
+    }, "\031")
+end
+
+--- CreateBarFrame 维度（含环形/条形共用的背景与计时文字区；不含 monitorType/充能业务模式）
+local function innerBarSignature(cfg)
+    return table.concat({
+        tostring(cfg.shape or "bar"),
+        tostring(cfg.showGraphics ~= false),
+        tostring(cfg.showText ~= false),
+        colKey(cfg.bgColor or { r = 0.1, g = 0.1, b = 0.1, a = 0.5 }),
+        tostring(cfg.showGraphics ~= false and cfg.showIcon ~= false),
+        tostring(cfg.iconSize or 20),
+        tostring(cfg.iconPosition or "LEFT"),
+        tostring(cfg.iconOffsetX or 0),
+        tostring(cfg.iconOffsetY or 0),
+        timerFontKey(cfg),
+    }, "\031")
+end
+
+--- CreateSegments 维度（含环形/堆叠阈值/充能路径）
+local function segmentLayoutSignature(cfg, barFrame)
+    local storeKey = barFrame._storeKey or "skills"
+    local shape = cfg.shape or "bar"
+    local mon = (storeKey == "buffs") and (barFrame._monitorType or cfg.monitorType or "duration") or ""
+    local bt = (BFK and BFK.ParseBorderThickness and BFK.ParseBorderThickness(cfg.borderThickness))
+        or tonumber(cfg.borderThickness) or 1
+    return table.concat({
+        shape,
+        storeKey,
+        mon,
+        tostring(cfg.showGraphics ~= false),
+        tostring(tonumber(cfg.maxStacks) or 5),
+        tostring(tonumber(cfg.segmentGap) or 0),
+        cfg.barDirection or "horizontal",
+        tostring(cfg.barReverse == true),
+        tostring(cfg.barTexture or ""),
+        tostring(tonumber(cfg.stackThreshold1) or 0),
+        tostring(tonumber(cfg.stackThreshold2) or 0),
+        colKey(cfg.stackColor1),
+        colKey(cfg.stackColor2),
+        colKey(cfg.barColor),
+        colKey(cfg.bgColor),
+        tostring(cfg.ringTexture or ""),
+        colKey(cfg.ringColor or { r = 0.2, g = 0.6, b = 1, a = 1 }),
+        tostring(cfg.ringThickness or 0),
+        tostring(cfg.barFillMode or ""),
+        tostring(bt),
+        colKey(cfg.borderColor),
+        storeKey == "skills" and tostring(cfg.isChargeSpell == true) or "",
+        tostring(cfg.ringSize or 0),
+    }, "\031")
+end
+
 local function ClearSegments(barFrame)
     if barFrame._segments then
         for _, seg in ipairs(barFrame._segments) do seg:Hide(); seg:SetParent(nil) end
@@ -635,6 +674,13 @@ end
 local function CreateSegments(barFrame, count, cfg, isStack, isRing)
     local _pt = Profiler.start("CMR:CreateSegments")
     ClearSegments(barFrame)
+    if not ShouldRenderGraphics(cfg) then
+        barFrame._segSig = segmentLayoutSignature(cfg, barFrame)
+        barFrame._segsDirty = false
+        barFrame._segsNeedCount = nil
+        Profiler.stop(_pt)
+        return
+    end
     if count < 1 then
         Profiler.stop(_pt)
         return
@@ -687,22 +733,18 @@ local function CreateSegments(barFrame, count, cfg, isStack, isRing)
         cd._needsRefresh = true
         barFrame._segments[1] = cd
 
+        barFrame._segSig = segmentLayoutSignature(cfg, barFrame)
         barFrame._segsDirty = false
         barFrame._segsNeedCount = nil
         Profiler.stop(_pt)
         return
     end
 
-    -- 条形模式（使用像素对齐计算）
-    local borderThickness = tonumber(cfg.borderThickness) or 1
-    local userGap = tonumber(cfg.segmentGap) or 0
-    -- 实际间距 = 用户间距 - 边框厚度（让边框重合）
-    local segmentGap = (count > 1) and (userGap - borderThickness) or 0
+    -- 条形模式：分段几何与边框同 BarFrameKit / ResourceBars（ref 像素比例 + 末格双锚点）
     local dir = cfg.barDirection or "horizontal"
     local barReverse = cfg.barReverse == true
-    local tex = ResolveBarTexture(cfg.barTexture)
+    local tex = BFK and BFK.ResolveBarTexture(cfg.barTexture) or "Interface\\Buttons\\WHITE8X8"
     local bc  = cfg.barColor or { r = 0.2, g = 0.6, b = 1, a = 1 }
-    local borderColor = cfg.borderColor or { r = 0.3, g = 0.3, b = 0.3, a = 1 }
 
     -- 阈值配置（isStack 时读取）
     local t1 = isStack and (tonumber(cfg.stackThreshold1) or 0) or 0
@@ -710,69 +752,11 @@ local function CreateSegments(barFrame, count, cfg, isStack, isRing)
     local c1 = cfg.stackColor1 or { r = 1, g = 0.5, b = 0, a = 1 }
     local c2 = cfg.stackColor2 or { r = 1, g = 0,   b = 0, a = 1 }
 
-    -- 像素对齐计算
-    local ppScale = PP.GetPixelScale()
-    local function ToPixel(v) return math.floor(v / ppScale + 0.5) end
-    local function ToLogical(px) return px * ppScale end
-
-    local pxTotalW = ToPixel(totalW)
-    local pxTotalH = ToPixel(totalH)
-    local pxGap = ToPixel(segmentGap)
-
-    -- 计算分段尺寸（处理余数分配）
-    local pxSegW_Base, pxSegH_Base, pxRemainder
-    if dir == "vertical" then
-        pxSegW_Base = pxTotalW
-        local pxAvailableH = math.max(0, pxTotalH - (count - 1) * pxGap)
-        pxSegH_Base = math.floor(pxAvailableH / count)
-        pxRemainder = pxAvailableH % count
-    else
-        pxSegH_Base = pxTotalH
-        local pxAvailableW = math.max(0, pxTotalW - (count - 1) * pxGap)
-        pxSegW_Base = math.floor(pxAvailableW / count)
-        pxRemainder = pxAvailableW % count
-    end
-
     local baseLevel = segContainer:GetFrameLevel()
-    local currentPxOffset = 0
 
     for i = 1, count do
-        -- 将余数像素分配给前几个分段
-        local thisPxSegW, thisPxSegH
-        if dir == "vertical" then
-            thisPxSegW = pxSegW_Base
-            thisPxSegH = pxSegH_Base
-            if i <= pxRemainder then
-                thisPxSegH = thisPxSegH + 1
-            end
-        else
-            thisPxSegW = pxSegW_Base
-            if i <= pxRemainder then
-                thisPxSegW = thisPxSegW + 1
-            end
-            thisPxSegH = pxSegH_Base
-        end
-
-        local logOffset = ToLogical(currentPxOffset)
-        local logSegW = ToLogical(thisPxSegW)
-        local logSegH = ToLogical(thisPxSegH)
-
-        local offsetX = (dir == "vertical") and 0 or logOffset
-        local offsetY = (dir == "vertical") and logOffset or 0
-        local anchor  = (dir == "vertical") and "BOTTOMLEFT" or "TOPLEFT"
-
-        -- 创建段容器（用于应用边框）
         local segFrame = CreateFrame("Frame", nil, segContainer)
         segFrame:SetFrameLevel(baseLevel)
-        segFrame:SetPoint(anchor, segContainer, anchor, offsetX, offsetY)
-        PP.SetSize(segFrame, logSegW, logSegH)
-
-        -- 更新下一个分段的偏移量
-        if dir == "vertical" then
-            currentPxOffset = currentPxOffset + thisPxSegH + pxGap
-        else
-            currentPxOffset = currentPxOffset + thisPxSegW + pxGap
-        end
 
         local bg = segFrame:CreateTexture(nil, "BACKGROUND")
         local bgc = cfg.bgColor or { r = 0.1, g = 0.1, b = 0.1, a = 0.5 }
@@ -786,9 +770,11 @@ local function CreateSegments(barFrame, count, cfg, isStack, isRing)
         seg:EnableMouse(false)
         seg:SetFrameLevel(baseLevel + 1)
         seg:SetAllPoints(segFrame)
-        ConfigureStatusBar(seg)
-        ApplyStatusBarOrientation(seg, dir)
-        ApplyStatusBarReverseFill(seg, barReverse)
+        if BFK then
+            BFK.ConfigureStatusBar(seg)
+            BFK.SetOrientation(seg, dir)
+            BFK.SetReverseFill(seg, barReverse)
+        end
 
         if isStack then
             seg:SetMinMaxValues(i - 1, i)
@@ -815,9 +801,11 @@ local function CreateSegments(barFrame, count, cfg, isStack, isRing)
                 ov1:EnableMouse(false)
                 ov1:SetFrameLevel(baseLevel + 2)
                 ov1:SetMinMaxValues((i < t1) and (t1 - 1) or (i - 1), (i < t1) and t1 or i)
-                ConfigureStatusBar(ov1)
-                ApplyStatusBarOrientation(ov1, dir)
-                ApplyStatusBarReverseFill(ov1, barReverse)
+                if BFK then
+                    BFK.ConfigureStatusBar(ov1)
+                    BFK.SetOrientation(ov1, dir)
+                    BFK.SetReverseFill(ov1, barReverse)
+                end
                 table.insert(barFrame._thresholdOverlays, ov1)
             end
             if t2 > 0 then
@@ -829,21 +817,36 @@ local function CreateSegments(barFrame, count, cfg, isStack, isRing)
                 ov2:EnableMouse(false)
                 ov2:SetFrameLevel(baseLevel + 3)
                 ov2:SetMinMaxValues((i < t2) and (t2 - 1) or (i - 1), (i < t2) and t2 or i)
-                ConfigureStatusBar(ov2)
-                ApplyStatusBarOrientation(ov2, dir)
-                ApplyStatusBarReverseFill(ov2, barReverse)
+                if BFK then
+                    BFK.ConfigureStatusBar(ov2)
+                    BFK.SetOrientation(ov2, dir)
+                    BFK.SetReverseFill(ov2, barReverse)
+                end
                 table.insert(barFrame._thresholdOverlays, ov2)
             end
         end
 
-        -- 创建边框Frame（在所有内容之上）
         local borderFrame = CreateFrame("Frame", nil, segFrame)
         borderFrame:SetFrameLevel(baseLevel + 4)
         borderFrame:SetAllPoints(segFrame)
         borderFrame:EnableMouse(false)
-        PP.CreateBorder(borderFrame, borderThickness, borderColor, true)
+        segFrame._vf_segmentBorder = borderFrame
     end
 
+    --- 与 ResourceBars 一致：像素比例以「正在分割的容器」为 ref（totalW/H 亦来自该容器）
+    if BFK and BFK.LayoutDiscreteBarSegmentFrames then
+        BFK.LayoutDiscreteBarSegmentFrames(segContainer, cfg, count, dir, barFrame._segFrames or {}, segContainer)
+    end
+    if BFK and BFK.ApplySegmentCellBorder then
+        for i = 1, count do
+            local sf = barFrame._segFrames and barFrame._segFrames[i]
+            if sf and sf._vf_segmentBorder then
+                BFK.ApplySegmentCellBorder(sf._vf_segmentBorder, cfg)
+            end
+        end
+    end
+
+    barFrame._segSig = segmentLayoutSignature(cfg, barFrame)
     barFrame._segsDirty     = false
     barFrame._segsNeedCount = nil
     Profiler.stop(_pt)
@@ -861,6 +864,8 @@ end
 
 local function UpdateRegularCooldownBar(barFrame, spellID)
     local cfg = barFrame._cfg
+    local showGraphics = ShouldRenderGraphics(cfg)
+    local showText = ShouldRenderText(cfg)
     local cdInfo
     pcall(function()
         cdInfo = C_Spell.GetSpellCooldown(spellID)
@@ -871,13 +876,15 @@ local function UpdateRegularCooldownBar(barFrame, spellID)
         spellCdActive = cdInfo.isActive == true
     end
 
-    local shadowCD = GetOrCreateShadowCooldown(barFrame)
     local durObj
-    if isOnGCD then
-        shadowCD:Clear()
-    else
+    local shadowCD = showGraphics and GetOrCreateShadowCooldown(barFrame) or nil
+    if not isOnGCD then
         pcall(function() durObj = C_Spell.GetSpellCooldownDuration(spellID) end)
-        if durObj and spellCdActive then
+    end
+    if showGraphics then
+        if isOnGCD then
+            shadowCD:Clear()
+        elseif durObj and spellCdActive then
             shadowCD:Clear()
             pcall(function() shadowCD:SetCooldownFromDurationObject(durObj, true) end)
         else
@@ -885,7 +892,25 @@ local function UpdateRegularCooldownBar(barFrame, spellID)
         end
     end
 
-    local isOnCooldown = shadowCD:IsShown()
+    local isOnCooldown = false
+    if showGraphics then
+        isOnCooldown = shadowCD:IsShown()
+    elseif durObj and spellCdActive then
+        pcall(function()
+            isOnCooldown = durObj:GetRemainingDuration() > 0
+        end)
+    end
+
+    if not showGraphics then
+        if barFrame._text then
+            if isOnCooldown and not isOnGCD and durObj and spellCdActive and showText then
+                SetRemainingText(barFrame._text, durObj)
+            else
+                barFrame._text:SetText("")
+            end
+        end
+        return
+    end
 
     if not barFrame._segments or #barFrame._segments ~= 1 then
         CreateSegments(barFrame, 1, cfg)
@@ -911,11 +936,13 @@ local function UpdateRegularCooldownBar(barFrame, spellID)
         seg:SetValue(1)
         if barFrame._text then barFrame._text:SetText("") end
     end
-    ApplyStatusBarReverseFill(seg, cfg.barReverse == true)
+    if BFK then BFK.SetReverseFill(seg, cfg.barReverse == true) end
 end
 
 local function UpdateChargeBar(barFrame, spellID)
     local cfg = barFrame._cfg
+    local showGraphics = ShouldRenderGraphics(cfg)
+    local showText = ShouldRenderText(cfg)
 
     -- 使用配置中预先判断的技能类型
     if not cfg.isChargeSpell then
@@ -933,6 +960,7 @@ local function UpdateChargeBar(barFrame, spellID)
 
     local currentCharges = chargeInfo.currentCharges
     local maxCharges = chargeInfo.maxCharges
+    local wasFullyCharged = barFrame._lastChargeWasFull == true
 
     -- 缓存非secret的maxCharges值，战斗中可能需要fallback
     if not (issecretvalue and issecretvalue(maxCharges)) then
@@ -948,6 +976,37 @@ local function UpdateChargeBar(barFrame, spellID)
     if issecretvalue and issecretvalue(maxCharges) then return end
     if not maxCharges or maxCharges < 1 then return end
 
+    local chargeDurObj = nil
+    pcall(function() chargeDurObj = C_Spell.GetSpellChargeDuration(spellID) end)
+
+    local activeChargeDurObj = chargeDurObj
+    local recharging = true
+    pcall(function()
+        if type(currentCharges) == "number" and type(maxCharges) == "number" then
+            if not (issecretvalue and (issecretvalue(currentCharges) or issecretvalue(maxCharges))) then
+                recharging = currentCharges < maxCharges
+            end
+        end
+    end)
+
+    local shouldShowRecharge = recharging and (chargeDurObj ~= nil) and (activeChargeDurObj ~= nil)
+    if not showGraphics then
+        if barFrame._text then
+            if showText and shouldShowRecharge then
+                SetRemainingText(barFrame._text, activeChargeDurObj)
+            else
+                barFrame._text:SetText("")
+            end
+        end
+        if type(currentCharges) == "number" and type(maxCharges) == "number"
+            and not (issecretvalue and (issecretvalue(currentCharges) or issecretvalue(maxCharges))) then
+            barFrame._lastChargeWasFull = currentCharges >= maxCharges
+        else
+            barFrame._lastChargeWasFull = false
+        end
+        return
+    end
+
     local borderThickness = tonumber(cfg.borderThickness) or 1
 
     -- 创建背景层（显示未充能部分）
@@ -962,30 +1021,35 @@ local function UpdateChargeBar(barFrame, spellID)
     -- 设置主充能条（显示已有充能数）
     if not barFrame._chargeBar then
         local chargeBar = CreateFrame("StatusBar", nil, barFrame._segContainer)
-        chargeBar:SetStatusBarTexture(ResolveBarTexture(cfg.barTexture))
+        chargeBar:SetStatusBarTexture(BFK and BFK.ResolveBarTexture(cfg.barTexture) or "Interface\\Buttons\\WHITE8X8")
         chargeBar:SetAllPoints(barFrame._segContainer)
         chargeBar:SetFrameLevel(barFrame._segContainer:GetFrameLevel() + 1)
-        ConfigureStatusBar(chargeBar)
+        if BFK then BFK.ConfigureStatusBar(chargeBar) end
         barFrame._chargeBar = chargeBar
     end
 
-    -- 每次更新颜色（配置可能变化）
+    -- 每次更新颜色与材质（配置可能变化）
+    local barTex = BFK and BFK.ResolveBarTexture(cfg.barTexture) or "Interface\\Buttons\\WHITE8X8"
+    barFrame._chargeBar:SetStatusBarTexture(barTex)
+    if BFK then BFK.ConfigureStatusBar(barFrame._chargeBar) end
     barFrame._chargeBar:SetStatusBarColor(cfg.barColor.r, cfg.barColor.g, cfg.barColor.b, cfg.barColor.a)
     barFrame._chargeBar:SetMinMaxValues(0, maxCharges)
     barFrame._chargeBar:SetValue(currentCharges)
     local dir = cfg.barDirection or "horizontal"
-    ApplyStatusBarOrientation(barFrame._chargeBar, dir)
-    ApplyStatusBarReverseFill(barFrame._chargeBar, cfg.barReverse == true)
+    if BFK then
+        BFK.SetOrientation(barFrame._chargeBar, dir)
+        BFK.SetReverseFill(barFrame._chargeBar, cfg.barReverse == true)
+    end
 
     -- 设置充能进度条（显示正在充能的进度）
     if not barFrame._refreshCharge then
         local refreshCharge = CreateFrame("StatusBar", nil, barFrame._segContainer)
-        refreshCharge:SetStatusBarTexture(ResolveBarTexture(cfg.barTexture))
-        ConfigureStatusBar(refreshCharge)
+        refreshCharge:SetStatusBarTexture(BFK and BFK.ResolveBarTexture(cfg.barTexture) or "Interface\\Buttons\\WHITE8X8")
+        if BFK then BFK.ConfigureStatusBar(refreshCharge) end
         barFrame._refreshCharge = refreshCharge
     end
 
-    if not barFrame._refreshChargeText then
+    if showText and not barFrame._refreshChargeText then
         local tf = cfg.timerFont or {}
         local fc = tf.color or { r = 1, g = 1, b = 1, a = 1 }
         -- 裁剪容器：跟随 _refreshCharge，隐藏时文字自动隐藏，SetClipsChildren 处理溢出
@@ -1009,11 +1073,15 @@ local function UpdateChargeBar(barFrame, spellID)
         barFrame._refreshChargeText = txt
     end
 
-    -- 每次更新颜色（配置可能变化）
+    -- 每次更新颜色与材质（配置可能变化）
     local rc = cfg.rechargeColor or { r = 0.5, g = 0.8, b = 1, a = 1 }
+    barFrame._refreshCharge:SetStatusBarTexture(barTex)
+    if BFK then BFK.ConfigureStatusBar(barFrame._refreshCharge) end
     barFrame._refreshCharge:SetStatusBarColor(rc.r, rc.g, rc.b, rc.a)
-    ApplyStatusBarOrientation(barFrame._refreshCharge, dir)
-    ApplyStatusBarReverseFill(barFrame._refreshCharge, cfg.barReverse == true)
+    if BFK then
+        BFK.SetOrientation(barFrame._refreshCharge, dir)
+        BFK.SetReverseFill(barFrame._refreshCharge, cfg.barReverse == true)
+    end
 
     -- 与 CreateSegments 一致：按 barDirection 计算单格尺寸，并锚定到主条填充前沿（下一格）
     local totalW = barFrame._segContainer:GetWidth()
@@ -1074,8 +1142,6 @@ local function UpdateChargeBar(barFrame, spellID)
     end
 
     -- 使用SetTimerDuration设置充能进度动画
-    local chargeDurObj = nil
-    pcall(function() chargeDurObj = C_Spell.GetSpellChargeDuration(spellID) end)
     pcall(function()
         barFrame._refreshCharge:SetTimerDuration(
             chargeDurObj,
@@ -1084,32 +1150,29 @@ local function UpdateChargeBar(barFrame, spellID)
         )
     end)
 
-    local activeChargeDurObj = nil
+    activeChargeDurObj = nil
     if barFrame._refreshCharge.GetTimerDuration then
         activeChargeDurObj = barFrame._refreshCharge:GetTimerDuration()
     end
 
-    local recharging = true
-    pcall(function()
-        if type(currentCharges) == "number" and type(maxCharges) == "number" then
-            if not (issecretvalue and (issecretvalue(currentCharges) or issecretvalue(maxCharges))) then
-                recharging = currentCharges < maxCharges
-            end
-        end
-    end)
+    local suppressRechargeThisFrame = false
+    if wasFullyCharged and recharging then
+        suppressRechargeThisFrame = true
+    end
 
-    local shouldShowRecharge = recharging and (chargeDurObj ~= nil) and (activeChargeDurObj ~= nil)
+    shouldShowRecharge = recharging and (chargeDurObj ~= nil) and (activeChargeDurObj ~= nil)
 
     if shouldShowRecharge then
         barFrame._refreshCharge:Show()
+        barFrame._refreshCharge:SetAlpha(suppressRechargeThisFrame and 0 or 1)
     else
         barFrame._refreshCharge:Hide()
+        barFrame._refreshCharge:SetAlpha(1)
     end
 
     -- 创建分隔线（使用完美像素边框）- 边框重合自动形成分隔线
     if maxCharges > 1 and borderThickness > 0 then
         barFrame._chargeBorders = barFrame._chargeBorders or {}
-        -- 清理多余的边框
         for i = maxCharges + 1, #barFrame._chargeBorders do
             if barFrame._chargeBorders[i] then
                 PP.HideBorder(barFrame._chargeBorders[i])
@@ -1117,7 +1180,6 @@ local function UpdateChargeBar(barFrame, spellID)
                 barFrame._chargeBorders[i] = nil
             end
         end
-        -- 创建或更新每段的边框容器（布局与 CreateSegments 一致，支持垂直分段）
         if totalW > 0 and totalH > 0 then
             local userGap = tonumber(cfg.segmentGap) or 0
             local segmentGap = (maxCharges > 1) and (userGap - borderThickness) or 0
@@ -1178,6 +1240,7 @@ local function UpdateChargeBar(barFrame, spellID)
                 local offsetY = (dir == "vertical") and logOffset or 0
                 borderFrame:SetPoint(anchor, barFrame._segContainer, anchor, offsetX, offsetY)
                 PP.SetSize(borderFrame, logSegW, logSegH)
+
                 local needRebuild = (not borderFrame._vfBorderThickness)
                     or (borderFrame._vfBorderThickness ~= borderThickness)
                     or (borderFrame._vfBorderW ~= logSegW)
@@ -1238,6 +1301,13 @@ local function UpdateChargeBar(barFrame, spellID)
             barFrame._refreshChargeText:SetText("")
         end
     end
+
+    if type(currentCharges) == "number" and type(maxCharges) == "number"
+        and not (issecretvalue and (issecretvalue(currentCharges) or issecretvalue(maxCharges))) then
+        barFrame._lastChargeWasFull = currentCharges >= maxCharges
+    else
+        barFrame._lastChargeWasFull = false
+    end
 end
 
 -- =========================================================
@@ -1246,6 +1316,8 @@ end
 
 UpdateDurationBar = function(barFrame, spellID, barKey)
     local cfg = barFrame._cfg
+    local showGraphics = ShouldRenderGraphics(cfg)
+    local showText = ShouldRenderText(cfg)
 
     -- 若尚未有映射，尝试补建（找到后不再重复查，barKey 已缓存在 barFrame 上）
     if not _spellToCooldownID[spellID] then
@@ -1322,6 +1394,28 @@ UpdateDurationBar = function(barFrame, spellID, barKey)
         end
     end
 
+    if not showGraphics then
+        if auraActive and auraInstanceID and unit then
+            barFrame._lastKnownActive = true
+            if barFrame._text then
+                local durObj = C_UnitAuras.GetAuraDuration(unit, auraInstanceID)
+                if showText and durObj then
+                    SetRemainingText(barFrame._text, durObj)
+                else
+                    barFrame._text:SetText("")
+                end
+            end
+        else
+            barFrame._lastKnownActive = false
+            barFrame._trackedAuraInstanceID = nil
+            barFrame._trackedUnit = nil
+            if barFrame._text then
+                barFrame._text:SetText("")
+            end
+        end
+        return
+    end
+
     -- 判断是否为环形
     local isRing = (cfg.shape == "ring")
 
@@ -1374,7 +1468,7 @@ UpdateDurationBar = function(barFrame, spellID, barKey)
                 seg:SetMinMaxValues(0, 1); seg:SetValue(1)
                 if barFrame._text then barFrame._text:SetText("") end
             end
-            ApplyStatusBarReverseFill(seg, cfg.barReverse == true)
+            if BFK then BFK.SetReverseFill(seg, cfg.barReverse == true) end
         end
     else
         barFrame._lastKnownActive = false
@@ -1388,7 +1482,7 @@ UpdateDurationBar = function(barFrame, spellID, barKey)
             seg._needsRefresh = true  -- 下次激活时重新设置
         else
             seg:SetMinMaxValues(0, 1); seg:SetValue(0)
-            ApplyStatusBarReverseFill(seg, cfg.barReverse == true)
+            if BFK then BFK.SetReverseFill(seg, cfg.barReverse == true) end
         end
         if barFrame._text then barFrame._text:SetText("") end
     end
@@ -1400,6 +1494,8 @@ end
 
 UpdateStackBar = function(barFrame, spellID, barKey)
     local cfg       = barFrame._cfg
+    local showGraphics = ShouldRenderGraphics(cfg)
+    local showText = ShouldRenderText(cfg)
     local maxStacks = tonumber(cfg.maxStacks) or 5
     if maxStacks < 1 then maxStacks = 1 end
 
@@ -1459,21 +1555,21 @@ UpdateStackBar = function(barFrame, spellID, barKey)
         barFrame._nilCount = 0
     end
 
-    if not barFrame._segments or #barFrame._segments ~= maxStacks then
+    if showGraphics and (not barFrame._segments or #barFrame._segments ~= maxStacks) then
         CreateSegments(barFrame, maxStacks, cfg, true)
     end
-    if not barFrame._segments then return end
+    if showGraphics and not barFrame._segments then return end
 
     local isSecret = issecretvalue and issecretvalue(stacks)
 
-    if isSecret then
+    if showGraphics and isSecret then
         SetStackSegmentsValue(barFrame, stacks)
         FeedArcDetectors(barFrame, stacks, maxStacks)
         local resolved = GetExactCount(barFrame, maxStacks)
         if type(resolved) == "number" then
             barFrame._lastKnownStacks = resolved
         end
-    else
+    elseif showGraphics then
         if barFrame._arcDetectors then
             for i = 1, maxStacks do
                 local det = barFrame._arcDetectors[i]
@@ -1491,6 +1587,10 @@ UpdateStackBar = function(barFrame, spellID, barKey)
     end
 
     if barFrame._text then
+        if not showText then
+            barFrame._text:SetText("")
+            return
+        end
         if isSecret then
             barFrame._text:SetText(stacks)
         elseif stacks == 0 then
@@ -1508,23 +1608,26 @@ end
 local function CreateBarFrame(spellID, cfg, container)
     if container._bar then container._bar:Hide() end
 
+    local showGraphics = ShouldRenderGraphics(cfg)
+    local showText = ShouldRenderText(cfg)
     local barFrame = CreateFrame("Frame", nil, container)
     barFrame:SetAllPoints(container)
     barFrame:SetFrameStrata(container:GetFrameStrata())
     barFrame:SetFrameLevel(container:GetFrameLevel() + 1)
 
-    local bg = barFrame:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints()
-    -- 环形模式下隐藏矩形背景（环形纹理自带透明通道）
-    if cfg.shape == "ring" then
-        bg:SetColorTexture(0, 0, 0, 0)
-    else
-        local bgc = cfg.bgColor or { r = 0.1, g = 0.1, b = 0.1, a = 0.5 }
-        bg:SetColorTexture(bgc.r, bgc.g, bgc.b, bgc.a)
+    if showGraphics then
+        local bg = barFrame:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints()
+        if cfg.shape == "ring" then
+            bg:SetColorTexture(0, 0, 0, 0)
+        else
+            local bgc = cfg.bgColor or { r = 0.1, g = 0.1, b = 0.1, a = 0.5 }
+            bg:SetColorTexture(bgc.r, bgc.g, bgc.b, bgc.a)
+        end
+        barFrame._bg = bg
     end
-    barFrame._bg = bg
 
-    if cfg.showIcon ~= false then
+    if showGraphics and cfg.showIcon ~= false then
         local iconFrame = CreateFrame("Frame", nil, container)
         iconFrame:SetFrameStrata(container:GetFrameStrata())
         local iconSize  = cfg.iconSize or 20
@@ -1553,7 +1656,9 @@ local function CreateBarFrame(spellID, cfg, container)
     segContainer:SetAllPoints(barFrame)
     segContainer:SetFrameLevel(barFrame:GetFrameLevel() + 1)
     segContainer:EnableMouse(false)
-    segContainer:SetClipsChildren(true)  -- 裁剪超出容器的子元素（充能条关键）
+    --- 勿对整条形容器 Clip：与 ResourceBars 一致；Clip 会在接缝/尾部与 PixelPerfect 1px 边框锯齿叠粗。
+    --- 充能数字溢出由 _refreshChargeClip:SetClipsChildren(true) 处理。
+    segContainer:SetClipsChildren(false)
     barFrame._segContainer = segContainer
 
     local textHolder = CreateFrame("Frame", nil, barFrame)
@@ -1563,19 +1668,21 @@ local function CreateBarFrame(spellID, cfg, container)
     textHolder:EnableMouse(false)
     barFrame._textHolder = textHolder
 
-    local tf      = cfg.timerFont or {}
-    local fc      = tf.color or { r = 1, g = 1, b = 1, a = 1 }
-    local tAnchor = tf.position or "CENTER"
+    if showText then
+        local tf      = cfg.timerFont or {}
+        local fc      = tf.color or { r = 1, g = 1, b = 1, a = 1 }
+        local tAnchor = tf.position or "CENTER"
 
-    barFrame._text = textHolder:CreateFontString(nil, "OVERLAY")
-    barFrame._text:SetFont(
-        VFlow.UI.resolveFontPath(tf.font),
-        tf.size    or 14,
-        tf.outline or "OUTLINE"
-    )
-    barFrame._text:SetTextColor(fc.r, fc.g, fc.b, fc.a)
-    barFrame._text:SetPoint(tAnchor, textHolder, tAnchor, tf.offsetX or 0, tf.offsetY or 0)
-    barFrame._text:SetJustifyH("CENTER")
+        barFrame._text = textHolder:CreateFontString(nil, "OVERLAY")
+        barFrame._text:SetFont(
+            VFlow.UI.resolveFontPath(tf.font),
+            tf.size    or 14,
+            tf.outline or "OUTLINE"
+        )
+        barFrame._text:SetTextColor(fc.r, fc.g, fc.b, fc.a)
+        barFrame._text:SetPoint(tAnchor, textHolder, tAnchor, tf.offsetX or 0, tf.offsetY or 0)
+        barFrame._text:SetJustifyH("CENTER")
+    end
 
     barFrame._cfg                  = cfg
     barFrame._spellID              = spellID
@@ -1588,6 +1695,7 @@ local function CreateBarFrame(spellID, cfg, container)
     barFrame._cachedChargeInfo     = nil
     barFrame._cachedMaxCharges     = 0
     barFrame._needsChargeRefresh   = true
+    barFrame._lastChargeWasFull    = false
     barFrame._lastFillMode         = nil
     barFrame._chargeBar            = nil  -- OctoChargeBar方案：主充能条
     barFrame._refreshCharge        = nil  -- OctoChargeBar方案：充能进度条
@@ -1642,6 +1750,7 @@ local function DestroyBar(storeKey, spellID)
         barFrame._refreshCharge = nil
         barFrame._refreshChargeText = nil
     end
+    barFrame._lastChargeWasFull = false
     if barFrame._chargeBorders then
         for _, borderFrame in ipairs(barFrame._chargeBorders) do
             PP.HideBorder(borderFrame)
@@ -1669,6 +1778,8 @@ local function EnsureBar(storeKey, spellID, cfg, container)
 
     local barFrame = CreateBarFrame(spellID, cfg, container)
     barFrame._container = container  -- 存储容器引用，用于显示/隐藏
+    barFrame._storeKey = storeKey
+    barFrame._innerSig = innerBarSignature(cfg)
     if storeKey == "buffs" then
         local monitorType = cfg.monitorType or "duration"
         barFrame._monitorType = monitorType
@@ -1700,6 +1811,7 @@ end
 
 local function ApplyBgColor(barFrame)
     local cfg = barFrame._cfg
+    if not ShouldRenderGraphics(cfg) then return end
     local bgc = cfg.bgColor or { r = 0.1, g = 0.1, b = 0.1, a = 0.5 }
     if barFrame._bg then
         if cfg.shape == "ring" then
@@ -1766,11 +1878,12 @@ local function UpdateAllBars()
         end
         if doUpdate then
             ApplyBgColor(barFrame)
-            if barFrame._segsDirty then
+            if ShouldRenderGraphics(cfg) and barFrame._segsDirty then
                 local cw = barFrame._segContainer:GetWidth()
                 if cw and cw > 0 then
+                    local isRing = (cfg.shape == "ring") and barFrame._monitorType ~= "stacks"
                     CreateSegments(barFrame, barFrame._segsNeedCount or 1, cfg,
-                        barFrame._monitorType == "stacks")
+                        barFrame._monitorType == "stacks", isRing)
                 end
             end
             if barFrame._monitorType == "stacks" then
@@ -1878,6 +1991,49 @@ end)
 -- SECTION 18: 公共接口（由 CustomMonitorGroups 调用）
 -- =========================================================
 
+--- 配置变化时按「内线框 / 分段」签名增量更新，无需 Store 键正则维护。
+local function SyncBarConfig(storeKey, spellID, cfg)
+    if not cfg then return end
+    local tbl = (storeKey == "skills") and _activeSkillBars or _activeBuffBars
+    local barFrame = tbl[spellID]
+    if not barFrame then return end
+
+    if storeKey == "buffs" then
+        cfg.isChargeSpell = false
+    end
+
+    local newInner = innerBarSignature(cfg)
+    if newInner ~= barFrame._innerSig then
+        EnsureBar(storeKey, spellID, cfg, barFrame._container)
+        return
+    end
+
+    barFrame._cfg = cfg
+
+    if storeKey == "buffs" then
+        local monitorType = cfg.monitorType or "duration"
+        if barFrame._monitorType ~= monitorType then
+            barFrame._monitorType = monitorType
+            if monitorType == "duration" then
+                _activeDurationBars[spellID] = barFrame
+            else
+                _activeDurationBars[spellID] = nil
+            end
+        end
+        barFrame._buffBarDirty = true
+    elseif storeKey == "skills" and cfg.isChargeSpell then
+        barFrame._needsChargeRefresh = true
+    end
+
+    local newSeg = segmentLayoutSignature(cfg, barFrame)
+    if newSeg ~= (barFrame._segSig or "") then
+        barFrame._segsDirty = true
+        if barFrame._segsNeedCount == nil then
+            barFrame._segsNeedCount = 1
+        end
+    end
+end
+
 VFlow.CustomMonitorRuntime = {
     onContainerReady = function(storeKey, spellID, cfg, container)
         EnsureBar(storeKey, spellID, cfg, container)
@@ -1890,4 +2046,19 @@ VFlow.CustomMonitorRuntime = {
             _updateFrame:Hide()
         end
     end,
+
+    --- 容器像素尺寸变化（如同步技能条宽度）：段几何需重建
+    notifyContainerGeometryChanged = function(storeKey, spellID)
+        local tbl = storeKey == "skills" and _activeSkillBars or _activeBuffBars
+        local barFrame = spellID and tbl[spellID]
+        if barFrame then
+            barFrame._segsDirty = true
+            barFrame._needsChargeRefresh = true
+            if barFrame._segsNeedCount == nil then
+                barFrame._segsNeedCount = 1
+            end
+        end
+    end,
+
+    syncBarConfig = SyncBarConfig,
 }

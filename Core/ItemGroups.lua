@@ -348,6 +348,7 @@ local function EnsureGroupContainer(groupId)
 
     VFlow.DragFrame.register(container, {
         label = label,
+        menuKey = groupId == 0 and "item_monitor" or ("item_custom_" .. groupId),
         getAnchorConfig = function()
             return GetConfigForGroupId(groupId)
         end,

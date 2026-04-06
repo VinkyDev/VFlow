@@ -139,6 +139,7 @@ local function InitContainer()
     if VFlow.DragFrame then
         VFlow.DragFrame.register(_container, {
             label = "物品BUFF",
+            menuKey = "buff_trinket_potion",
             getAnchorConfig = function()
                 local d = getBuffsDB()
                 return d and d.trinketPotion

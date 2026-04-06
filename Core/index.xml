@@ -1,4 +1,7 @@
 <Ui>
+    <Script file="Core\ClassResourceMap.lua"/>
+    <Script file="Core\ResourceStyles.lua"/>
+    <Script file="Core\ResourceBars.lua"/>
     <Script file="Core\MasqueSupport.lua"/>
     <Script file="Core\Keybind.lua"/>
     <Script file="Core\StyleApply.lua"/>

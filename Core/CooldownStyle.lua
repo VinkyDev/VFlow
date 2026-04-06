@@ -765,6 +765,35 @@ end
 -- SECTION 6: 技能 Viewer 刷新
 -- =========================================================
 
+local _lastLayoutNotifyEssWidth, _lastLayoutNotifyUtilWidth
+
+local function ConsumeSkillViewerWidthChange(force)
+    local ew = _G.EssentialCooldownViewer and _G.EssentialCooldownViewer:GetWidth() or 0
+    local uw = _G.UtilityCooldownViewer and _G.UtilityCooldownViewer:GetWidth() or 0
+    if not force
+        and _lastLayoutNotifyEssWidth ~= nil
+        and _lastLayoutNotifyUtilWidth ~= nil
+        and math.abs(ew - _lastLayoutNotifyEssWidth) < 0.5
+        and math.abs(uw - _lastLayoutNotifyUtilWidth) < 0.5 then
+        return false
+    end
+    _lastLayoutNotifyEssWidth = ew
+    _lastLayoutNotifyUtilWidth = uw
+    return true
+end
+
+local function NotifySkillViewerLayoutDependents(force)
+    if not ConsumeSkillViewerWidthChange(force) then
+        return
+    end
+    if VFlow.ResourceBars and VFlow.ResourceBars.OnSkillViewerLayoutChanged then
+        VFlow.ResourceBars.OnSkillViewerLayoutChanged()
+    end
+    if VFlow.CustomMonitorGroups and VFlow.CustomMonitorGroups.OnSkillViewerLayoutChanged then
+        VFlow.CustomMonitorGroups.OnSkillViewerLayoutChanged()
+    end
+end
+
 local function RefreshSkillViewer(viewer, cfg)
     local _pt = Profiler.start("CDS:RefreshSkillViewer")
     if not viewer or not cfg then Profiler.stop(_pt) return end
@@ -811,6 +840,7 @@ local function RefreshSkillViewer(viewer, cfg)
         viewer._vf_refreshing = false
         Profiler.stop(_pt)
         StyleLayout.InvalidateCollectIconsCache(viewer)
+        NotifySkillViewerLayoutDependents()
         return
     end
 
@@ -1034,6 +1064,9 @@ local function RefreshSkillViewer(viewer, cfg)
             if StyleApply.HideCustomGlow then StyleApply.HideCustomGlow(icon) end
             if StyleApply.HideGlow then StyleApply.HideGlow(icon) end
             if icon._vf_border then icon._vf_border:Hide() end
+            -- 池化格只 Hide 了边框时，幂等版本仍是最新 → ApplyButtonStyleIfStale / ApplyBeautify 会跳过，切天赋复用按钮后边框不恢复
+            icon._vf_btnStyleVer = nil
+            icon._vf_styleVer = nil
             if icon:IsShown() and not (icon.Icon and icon.Icon:GetTexture()) then
                 icon:SetAlpha(0)
             end
@@ -1073,6 +1106,7 @@ local function RefreshSkillViewer(viewer, cfg)
     viewer._vf_refreshing = false
     Profiler.stop(_pt)
     StyleLayout.InvalidateCollectIconsCache(viewer)
+    NotifySkillViewerLayoutDependents()
 end
 
 -- =========================================================

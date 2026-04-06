@@ -120,6 +120,32 @@ function Utils.setCooldownFromStartAndDuration(cd, hostFrame, startTime, duratio
     return ok
 end
 
+--- 条「沿填充轴长度」：手动值或与重要/效能技能条（CooldownViewer）当前宽度同步
+--- @param cfg table 配置表（含 manualKey / modeKey）
+--- @param options? { manualKey?: string, modeKey?: string, defaultMode?: string }
+function Utils.ResolveSyncedBarSpan(cfg, options)
+    if not cfg then
+        return 200
+    end
+    options = options or {}
+    local manualKey = options.manualKey or "barWidth"
+    local modeKey = options.modeKey or "barWidthMode"
+    local defaultMode = options.defaultMode or "manual"
+    local manual = tonumber(cfg[manualKey]) or 200
+    local mode = cfg[modeKey] or defaultMode
+    if mode == "sync_essential" or mode == "sync_utility" then
+        local viewer = mode == "sync_essential" and _G.EssentialCooldownViewer
+            or _G.UtilityCooldownViewer
+        if viewer and viewer.GetWidth then
+            local w = viewer:GetWidth()
+            if type(w) == "number" and w > 1 then
+                return w
+            end
+        end
+    end
+    return manual
+end
+
 -- 向后兼容：保留 VFlow.LayoutUtils 别名
 VFlow.LayoutUtils = {
     mergeLayouts = Utils.mergeLayouts,

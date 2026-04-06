@@ -26,6 +26,15 @@ VFlow.registerModule(MODULE_KEY, {
 
 local CHANGELOG = {
 	{
+		version = "0.5.0",
+		date = "2026-04-05",
+		content = {
+			"新增资源条模块",
+			"全面升级编辑模式样式和逻辑, 所有框体支持右键打开Vflow对应设置页, 支持完美边框吸附",
+			"升级自定义图形监控模块, 支持宽度模式设置"
+		},
+	},
+	{
 		version = "0.4.0",
 		date = "2026-03-30",
 		content = {

@@ -1,6 +1,7 @@
 --[[ Core 依赖：
-  - Core/VisibilityControl.lua：按本模块条件与作用域控制内置 Viewer 与注册帧显隐
+  - Core/VisibilityControl.lua：按本模块条件与作用域控制内置 Viewer、注册帧与资源条显隐
   - Core/CooldownStyle.lua：与冷却/BUFF 区整体显示逻辑协同
+  - Core/ResourceBars.lua：读 VisibilityControl.ShouldApplyGlobalVisibilityHide("resourceBars")
 ]]
 
 -- =========================================================
@@ -36,6 +37,7 @@ local defaults = {
     applyToUtilitySkills   = true,  -- 效能技能
     applyToBuffs           = true,  -- BUFF条
     applyToTrackedBuffs    = true,  -- 追踪的BUFF条
+    applyToResourceBars    = true,  -- VFlow 主/次资源条
 }
 
 local db = VFlow.getDB(MODULE_KEY, defaults)
@@ -46,6 +48,9 @@ local db = VFlow.getDB(MODULE_KEY, defaults)
 
 local function renderContent(container, _menuKey)
     local Grid = VFlow.Grid
+    if VFlow.Utils and VFlow.Utils.applyDefaults then
+        VFlow.Utils.applyDefaults(db, defaults)
+    end
 
     local layout = {
         { type = "title", text = L["Display Conditions"], cols = 24 },
@@ -82,8 +87,9 @@ local function renderContent(container, _menuKey)
         { type = "spacer", height = 4, cols = 24 },
         { type = "checkbox", key = "applyToImportantSkills", label = L["Important skills"], cols = 12 },
         { type = "checkbox", key = "applyToUtilitySkills", label = L["Efficiency skills"], cols = 12 },
-        { type = "checkbox", key = "applyToBuffs", label = L["BUFF bar"], cols = 12 },
+        { type = "checkbox", key = "applyToBuffs", label = "BUFF", cols = 12 },
         { type = "checkbox", key = "applyToTrackedBuffs", label = L["Tracked BUFF bar"], cols = 12 },
+        { type = "checkbox", key = "applyToResourceBars", label = L["Resource bars"], cols = 12 },
         { type = "spacer", height = 10, cols = 24 },
     }
 

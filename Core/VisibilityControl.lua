@@ -48,7 +48,7 @@ local registeredFrames = {}
 
 --- 注册UI元素（用于自定义UI元素，如CustomMonitor）
 -- @param frame Frame 要控制的帧
--- @param scopeType string 作用域类型："importantSkills" | "utilitySkills" | "buffs" | "trackedBuffs"
+-- @param scopeType string 作用域类型："importantSkills" | "utilitySkills" | "buffs" | "trackedBuffs" | "resourceBars"
 function VisibilityControl.RegisterFrame(frame, scopeType)
     if not frame then return end
     registeredFrames[frame] = scopeType
@@ -76,6 +76,7 @@ local configCache = {
     applyToUtilitySkills = true,
     applyToBuffs = true,
     applyToTrackedBuffs = true,
+    applyToResourceBars = true,
 }
 
 -- =========================================================
@@ -127,12 +128,18 @@ local function IsScopeEnabled(scopeType)
         utilitySkills   = "applyToUtilitySkills",
         buffs           = "applyToBuffs",
         trackedBuffs    = "applyToTrackedBuffs",
+        resourceBars    = "applyToResourceBars",
     }
 
     local scopeKey = scopeMap[scopeType]
     if not scopeKey then return false end
 
     return configCache[scopeKey] == true
+end
+
+--- 某作用域勾选且当前全局条件要求隐藏时返回 true（供 ResourceBars 等与 RegisterFrame 无关的逻辑内联判断）
+function VisibilityControl.ShouldApplyGlobalVisibilityHide(scopeType)
+    return IsScopeEnabled(scopeType) and ShouldHide()
 end
 
 -- =========================================================
@@ -191,6 +198,13 @@ function VisibilityControl.EvaluateAll()
             registeredFrames[frame] = nil
         end
     end
+
+    -- 资源条未 RegisterFrame，显隐在内联判断中：状态/显示条件变化时需立即刷新
+    local RB = VFlow.ResourceBars
+    if RB and RB.RefreshAll then
+        RB.RefreshAll()
+    end
+
     Profiler.stop(_pt)
 end
 

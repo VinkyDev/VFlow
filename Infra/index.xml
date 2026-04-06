@@ -4,6 +4,7 @@
     <Script file="Infra\Store.lua"/>
     <Script file="Infra\Pool.lua"/>
     <Script file="Infra\PixelPerfect.lua"/>
+    <Script file="Infra\BarFrameKit.lua"/>
     <Script file="Infra\UI.lua"/>
     <Script file="Infra\Utils.lua"/>
     <Script file="Infra\Grid.lua"/>

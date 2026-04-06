@@ -212,6 +212,16 @@ local menuItems = {
     },
     {
         type = "category",
+        key = "resources",
+        label = L["Resource bar"],
+        children = {
+            { key = "resource_styles", label = L["General resource appearance"], module = "Resources" },
+            { key = "resource_primary", label = L["Primary resource bar"], module = "Resources" },
+            { key = "resource_secondary", label = L["Secondary resource bar"], module = "Resources" },
+        }
+    },
+    {
+        type = "category",
         key = "items",
         label = L["Extra CD Monitor"],
         children = {
@@ -228,16 +238,6 @@ local menuItems = {
             { key = "other_highlight", label = L["Custom Highlight"], module = "OtherFeatures" },
         }
     },
-    -- 资源条
-    -- {
-    --     type = "category",
-    --     key = "resources",
-    --     label = "资源条",
-    --     children = {
-    --         { key = "resource_health", label = "生命值", module = "Resources" },
-    --         { key = "resource_power", label = "职业资源", module = "Resources" },
-    --     }
-    -- },
 }
 
 -- =========================================================
@@ -1048,21 +1048,37 @@ end)
 -- SECTION 10: 战斗门控与全局入口
 -- =========================================================
 
-local pendingShowAfterCombat = false
+local pendingOpenRequest = nil
+local pendingOpenContext = nil
+
+local function performOpenRequest(menuKey, context)
+    createMainFrame()
+    mainFrame:Show()
+    pendingOpenContext = nil
+    if not menuKey then
+        return
+    end
+    local moduleName = findModuleByMenuKey(menuKey)
+    if moduleName then
+        pendingOpenContext = {
+            menuKey = menuKey,
+            context = context,
+        }
+        showContent(menuKey, moduleName)
+    end
+end
 
 -- 监听战斗状态变化
 VFlow.State.watch("inCombat", "VFlow.MainUI", function(inCombat)
     if inCombat then
-        -- 进入战斗，关闭主面板
         if mainFrame and mainFrame:IsShown() then
             mainFrame:Hide()
         end
     else
-        -- 离开战斗，如果有待打开的请求则打开
-        if pendingShowAfterCombat then
-            pendingShowAfterCombat = false
-            createMainFrame()
-            mainFrame:Show()
+        if pendingOpenRequest then
+            local request = pendingOpenRequest
+            pendingOpenRequest = nil
+            performOpenRequest(request.menuKey, request.context)
         end
     end
 end)
@@ -1107,26 +1123,26 @@ end
 VFlow.MainUI = {
     show = function()
         if VFlow.State.inCombat then
-            pendingShowAfterCombat = true
+            pendingOpenRequest = {}
             print("|cff00ff00VFlow:|r " .. L["Cannot open settings in combat, will open after combat ends"])
             return
         end
-        createMainFrame()
-        mainFrame:Show()
+        performOpenRequest()
     end,
     hide = function()
-        pendingShowAfterCombat = false
+        pendingOpenRequest = nil
+        pendingOpenContext = nil
         if mainFrame then
             mainFrame:Hide()
         end
     end,
     toggle = function()
         if VFlow.State.inCombat then
-            if pendingShowAfterCombat then
-                pendingShowAfterCombat = false
+            if pendingOpenRequest then
+                pendingOpenRequest = nil
                 print("|cff00ff00VFlow:|r " .. L["Cancelled auto open after combat"])
             else
-                pendingShowAfterCombat = true
+                pendingOpenRequest = {}
                 print("|cff00ff00VFlow:|r " .. L["Cannot open settings in combat, will open after combat ends"])
             end
             return
@@ -1138,18 +1154,16 @@ VFlow.MainUI = {
             mainFrame:Show()
         end
     end,
-    openMenu = function(menuKey)
+    openMenu = function(menuKey, context)
         if VFlow.State.inCombat then
-            pendingShowAfterCombat = true
+            pendingOpenRequest = {
+                menuKey = menuKey,
+                context = context,
+            }
             print("|cff00ff00VFlow:|r " .. L["Cannot open settings in combat, will open after combat ends"])
             return
         end
-        createMainFrame()
-        mainFrame:Show()
-        local moduleName = findModuleByMenuKey(menuKey)
-        if moduleName then
-            showContent(menuKey, moduleName)
-        end
+        performOpenRequest(menuKey, context)
     end,
     refresh = function()
         if mainFrame and mainFrame:IsShown() then
@@ -1167,6 +1181,14 @@ VFlow.MainUI = {
     end,
     getCurrentMenuKey = function()
         return currentMenuKey
+    end,
+    consumeOpenContext = function(menuKey)
+        if pendingOpenContext and pendingOpenContext.menuKey == menuKey then
+            local context = pendingOpenContext.context
+            pendingOpenContext = nil
+            return context
+        end
+        return nil
     end,
 }
 

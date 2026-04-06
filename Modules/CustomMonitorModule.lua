@@ -51,6 +51,12 @@ local BAR_DIRECTION_OPTIONS = {
     { L["Vertical"], "vertical" },
 }
 
+local BAR_LENGTH_MODE_OPTIONS = {
+    { L["Manual width"], "manual" },
+    { L["Match important skills bar"], "sync_essential" },
+    { L["Match efficiency skills bar"], "sync_utility" },
+}
+
 local BAR_FILL_OPTIONS = {
     { L["Fill"], "fill" },
     { L["Drain"], "drain" },
@@ -118,6 +124,7 @@ local function getDefaultSpellConfig()
         playerAnchorPosition  = "BOTTOMLEFT",
         x                     = 0,
         y                     = 0,
+        barLengthMode         = "manual",
         barLength             = 200,
         barThickness          = 20,
         barColor              = { r = 0.2, g = 0.6, b = 1, a = 1 }, -- 充能技能：已充能颜色 / 冷却技能：就绪时颜色
@@ -133,6 +140,8 @@ local function getDefaultSpellConfig()
         borderColor           = { r = 0, g = 0, b = 0, a = 1 },
         borderThickness       = "1",
         segmentGap            = 0, -- 分段间距（像素，0=边框重合）
+        showGraphics          = true,
+        showText              = true,
         timerFont             = {
             size     = 14,
             font     = "默认",
@@ -279,26 +288,18 @@ local function buildSpellConfigLayout(monitorTypeOptions, timerFontLabel, isSkil
             { type = "subtitle", text = L["Base Settings"], cols = 24 },
             { type = "separator", cols = 24 },
             { type = "checkbox", key = "enabled", label = L["Enable custom monitor"], cols = 12 },
-            { type = "checkbox", key = "hideInCooldownManager", label = L["Hide in CDM (requires RL)"], cols = 12 },
-            { type = "checkbox", key = "hideInSystemEditMode", label = L["Hide in Edit Mode"], cols = 12 },
-        },
-        {
+            { type = "spacer", height = 1, cols = 24 },
             { type = "dropdown", key = "monitorType", label = L["Monitor Type"], cols = 12, items = monitorTypeOptions },
             {
                 type = "dropdown",
                 key = "shape",
                 label = L["Monitor Shape"],
                 cols = 12,
-                items = getShapeItems,    -- 传递函数，Grid会在渲染时调用
-                dependsOn = "monitorType" -- 依赖monitorType，变化时重新渲染
+                items = getShapeItems,
+                dependsOn = "monitorType"
             },
-            {
-                type = "dropdown",
-                key = "frameStrata",
-                label = L["Graphics Layer"],
-                cols = 12,
-                items = FRAME_STRATA_OPTIONS
-            },
+            { type = "checkbox", key = "hideInCooldownManager", label = L["Hide in CDM (requires RL)"], cols = 12 },
+            { type = "checkbox", key = "hideInSystemEditMode", label = L["Hide in Edit Mode"], cols = 12 },
         },
         not isSkill and {
             {
@@ -350,6 +351,227 @@ local function buildSpellConfigLayout(monitorTypeOptions, timerFontLabel, isSkil
                 },
             },
         } or {},
+        {
+            { type = "spacer", height = 10, cols = 24 },
+            { type = "subtitle", text = L["Display Content"], cols = 24 },
+            { type = "separator", cols = 24 },
+            { type = "checkbox", key = "showGraphics", label = L["Show graphics"], cols = 8 },
+            { type = "checkbox", key = "showText", label = L["Show text"], cols = 8 },
+            { type = "checkbox", key = "showIcon", label = L["Show icon"], cols = 8 },
+        },
+        {
+            {
+                type = "if",
+                dependsOn = "showGraphics",
+                condition = function(cfg) return cfg.showGraphics ~= false end,
+                children = {
+                    { type = "spacer", height = 10, cols = 24 },
+                    { type = "subtitle", text = L["Graphics Style"], cols = 24 },
+                    { type = "separator", cols = 24 },
+                    {
+                        type = "dropdown",
+                        key = "frameStrata",
+                        label = L["Graphics Layer"],
+                        cols = 12,
+                        items = FRAME_STRATA_OPTIONS
+                    },
+                    {
+                        type = "if",
+                        dependsOn = "shape",
+                        condition = function(cfg) return cfg.shape == "bar" end,
+                        children = {
+                            {
+                                type = "dropdown",
+                                key = "barLengthMode",
+                                label = L["Width mode"],
+                                cols = 12,
+                                items = BAR_LENGTH_MODE_OPTIONS,
+                            },
+                            {
+                                type = "if",
+                                dependsOn = "barLengthMode",
+                                condition = function(c)
+                                    return (c.barLengthMode or "manual") == "manual"
+                                end,
+                                children = {
+                                    {
+                                        type = "slider",
+                                        key = "barLength",
+                                        label = L["Bar length"],
+                                        min = UI_LIMITS.BAR_LENGTH.min,
+                                        max = UI_LIMITS.BAR_LENGTH.max,
+                                        step = 1,
+                                        cols = 12
+                                    },
+                                },
+                            },
+                            {
+                                type = "slider",
+                                key = "barThickness",
+                                label = L["Bar height"],
+                                min = UI_LIMITS.BAR_THICK.min,
+                                max = UI_LIMITS.BAR_THICK.max,
+                                step = 1,
+                                cols = 12
+                            },
+                            { type = "colorPicker", key = "barColor", label = barColorLabel, hasAlpha = true, cols = 8 },
+                            rechargeColorLabel and {
+                                type = "colorPicker",
+                                key = "rechargeColor",
+                                label = rechargeColorLabel,
+                                hasAlpha = true,
+                                cols = 8
+                            } or { type = "spacer", cols = 0 },
+                            {
+                                type = "texturePicker",
+                                key = "barTexture",
+                                label = L["Bar texture"],
+                                cols = 24
+                            },
+                            {
+                                type = "dropdown",
+                                key = "barDirection",
+                                label = L["Direction"],
+                                cols = 8,
+                                items = BAR_DIRECTION_OPTIONS
+                            },
+                            {
+                                type = "if",
+                                dependsOn = "shape",
+                                condition = function(cfg)
+                                    return cfg.shape == "bar" and not isChargeSpell
+                                end,
+                                children = {
+                                    {
+                                        type = "dropdown",
+                                        key = "barFillMode",
+                                        label = L["Fill direction"],
+                                        cols = 8,
+                                        items = BAR_FILL_OPTIONS
+                                    },
+                                    {
+                                        type = "checkbox",
+                                        key = "barReverse",
+                                        label = L["Reverse"],
+                                        cols = 8,
+                                    },
+                                }
+                            },
+                        },
+                    },
+                    {
+                        type = "if",
+                        dependsOn = "shape",
+                        condition = function(cfg) return cfg.shape == "ring" end,
+                        children = {
+                            {
+                                type = "slider",
+                                key = "ringSize",
+                                label = L["Ring size"],
+                                min = 20,
+                                max = 500,
+                                step = 1,
+                                cols = 12
+                            },
+                            {
+                                type = "dropdown",
+                                key = "ringTexture",
+                                label = L["Ring texture"],
+                                cols = 12,
+                                items = {
+                                    { "10px", "10" },
+                                    { "20px", "20" },
+                                    { "30px", "30" },
+                                    { "40px", "40" },
+                                }
+                            },
+                            { type = "colorPicker", key = "ringColor", label = L["Ring color"], hasAlpha = true, cols = 8 },
+                        }
+                    },
+                    { type = "colorPicker", key = "bgColor", label = L["Background color"], hasAlpha = true, cols = 8 },
+                    { type = "colorPicker", key = "borderColor", label = L["Border color"], hasAlpha = true, cols = 8 },
+                    {
+                        type = "dropdown",
+                        key = "borderThickness",
+                        label = L["Border thickness"],
+                        cols = 8,
+                        items = BORDER_THICKNESS_OPTIONS
+                    },
+                    {
+                        type = "slider",
+                        key = "segmentGap",
+                        label = L["Segment gap"],
+                        min = 0,
+                        max = 10,
+                        step = 1,
+                        cols = 8
+                    },
+                },
+            },
+        },
+        {
+            {
+                type = "if",
+                dependsOn = "showText",
+                condition = function(cfg) return cfg.showText ~= false end,
+                children = mergeLayouts({
+                    { type = "spacer", height = 10, cols = 24 },
+                }, Grid.fontGroup("timerFont", timerFontLabel)),
+            },
+        },
+        {
+            {
+                type = "if",
+                dependsOn = "showGraphics",
+                condition = function(cfg) return cfg.showGraphics ~= false end,
+                children = {
+                    {
+                        type = "if",
+                        dependsOn = "showIcon",
+                        condition = function(cfg) return cfg.showIcon end,
+                        children = {
+                            { type = "spacer", height = 10, cols = 24 },
+                            { type = "subtitle", text = L["Skill Icon"], cols = 24 },
+                            { type = "separator", cols = 24 },
+                            {
+                                type = "slider",
+                                key = "iconSize",
+                                label = L["Icon size"],
+                                min = UI_LIMITS.ICON_SIZE.min,
+                                max = UI_LIMITS.ICON_SIZE.max,
+                                step = 1,
+                                cols = 12
+                            },
+                            {
+                                type = "dropdown",
+                                key = "iconPosition",
+                                label = L["Icon position"],
+                                cols = 12,
+                                items = ICON_POSITION_OPTIONS
+                            },
+                            {
+                                type = "slider",
+                                key = "iconOffsetX",
+                                label = L["X offset"],
+                                min = UI_LIMITS.ICON_OFFSET.min,
+                                max = UI_LIMITS.ICON_OFFSET.max,
+                                step = 1,
+                                cols = 12
+                            },
+                            {
+                                type = "slider",
+                                key = "iconOffsetY",
+                                label = L["Y offset"],
+                                min = UI_LIMITS.ICON_OFFSET.min,
+                                max = UI_LIMITS.ICON_OFFSET.max,
+                                step = 1,
+                                cols = 12
+                            },
+                        },
+                    },
+                },
+            },
+        },
         {
             { type = "spacer", height = 10, cols = 24 },
             { type = "subtitle", text = L["Position Settings"], cols = 24 },
@@ -466,193 +688,7 @@ local function buildSpellConfigLayout(monitorTypeOptions, timerFontLabel, isSkil
         },
         {
             { type = "spacer", height = 10, cols = 24 },
-            {
-                type = "if",
-                dependsOn = "shape",
-                condition = function(cfg) return cfg.shape == "bar" end,
-                children = {
-                    { type = "subtitle", text = L["Bar Config"], cols = 24 },
-                    { type = "separator", cols = 24 },
-                    {
-                        type = "slider",
-                        key = "barLength",
-                        label = L["Bar length"],
-                        min = UI_LIMITS.BAR_LENGTH.min,
-                        max = UI_LIMITS.BAR_LENGTH.max,
-                        step = 1,
-                        cols = 12
-                    },
-                    {
-                        type = "slider",
-                        key = "barThickness",
-                        label = L["Bar height"],
-                        min = UI_LIMITS.BAR_THICK.min,
-                        max = UI_LIMITS.BAR_THICK.max,
-                        step = 1,
-                        cols = 12
-                    },
-                    { type = "colorPicker", key = "barColor", label = barColorLabel, hasAlpha = true, cols = 8 },
-                }
-            },
-            {
-                type = "if",
-                dependsOn = "shape",
-                condition = function(cfg) return cfg.shape == "ring" end,
-                children = {
-                    { type = "subtitle", text = L["Ring Config"], cols = 24 },
-                    { type = "separator", cols = 24 },
-                    {
-                        type = "slider",
-                        key = "ringSize",
-                        label = L["Ring size"],
-                        min = 20,
-                        max = 500,
-                        step = 1,
-                        cols = 12
-                    },
-                    {
-                        type = "dropdown",
-                        key = "ringTexture",
-                        label = L["Ring texture"],
-                        cols = 12,
-                        items = {
-                            { "10px", "10" },
-                            { "20px", "20" },
-                            { "30px", "30" },
-                            { "40px", "40" },
-                        }
-                    },
-                    { type = "colorPicker", key = "ringColor", label = L["Ring color"], hasAlpha = true, cols = 8 },
-                }
-            },
-        },
-        rechargeColorLabel and {
-            {
-                type = "if",
-                dependsOn = "shape",
-                condition = function(cfg) return cfg.shape == "bar" end,
-                children = {
-                    { type = "colorPicker", key = "rechargeColor", label = rechargeColorLabel, hasAlpha = true, cols = 8 },
-                }
-            },
-        } or {},
-        {
-            {
-                type = "if",
-                dependsOn = "shape",
-                condition = function(cfg) return cfg.shape == "bar" end,
-                children = {
-                    { type = "texturePicker", key = "barTexture", label = L["Bar texture"], cols = 24 },
-                    {
-                        type = "dropdown",
-                        key = "barDirection",
-                        label = L["Direction"],
-                        cols = 8,
-                        items = BAR_DIRECTION_OPTIONS
-                    },
-                    -- 充能技能走 UpdateChargeBar，不使用填充方向/反向
-                    {
-                        type = "if",
-                        dependsOn = "shape",
-                        condition = function(cfg)
-                            return cfg.shape == "bar" and not isChargeSpell
-                        end,
-                        children = {
-                            {
-                                type = "dropdown",
-                                key = "barFillMode",
-                                label = L["Fill direction"],
-                                cols = 8,
-                                items = BAR_FILL_OPTIONS
-                            },
-                            {
-                                type = "checkbox",
-                                key = "barReverse",
-                                label = L["Reverse"],
-                                cols = 16,
-                            },
-                        }
-                    },
-                }
-            },
-        },
-        {
-            { type = "spacer", height = 10, cols = 24 },
-            { type = "subtitle", text = L["Style Config"], cols = 24 },
-            { type = "separator", cols = 24 },
-            { type = "colorPicker", key = "bgColor", label = L["Background color"], hasAlpha = true, cols = 8 },
-            { type = "colorPicker", key = "borderColor", label = L["Border color"], hasAlpha = true, cols = 8 },
-            {
-                type = "dropdown",
-                key = "borderThickness",
-                label = L["Border thickness"],
-                cols = 8,
-                items = BORDER_THICKNESS_OPTIONS
-            },
-            {
-                type = "slider",
-                key = "segmentGap",
-                label = L["Segment gap"],
-                min = 0,
-                max = 10,
-                step = 1,
-                cols = 8
-            },
-        },
-        {
-            { type = "spacer", height = 10, cols = 24 },
-            Grid.fontGroup("timerFont", timerFontLabel),
-        },
-        {
-            { type = "spacer", height = 10, cols = 24 },
-            { type = "subtitle", text = L["Skill Icon"], cols = 24 },
-            { type = "separator", cols = 24 },
-            { type = "checkbox", key = "showIcon", label = L["Show icon"], cols = 12 },
-            {
-                type = "if",
-                dependsOn = "showIcon",
-                condition = function(cfg) return cfg.showIcon end,
-                children = {
-                    {
-                        type = "slider",
-                        key = "iconSize",
-                        label = L["Icon size"],
-                        min = UI_LIMITS.ICON_SIZE.min,
-                        max = UI_LIMITS.ICON_SIZE.max,
-                        step = 1,
-                        cols = 12
-                    },
-                    {
-                        type = "dropdown",
-                        key = "iconPosition",
-                        label = L["Icon position"],
-                        cols = 12,
-                        items = ICON_POSITION_OPTIONS
-                    },
-                    {
-                        type = "slider",
-                        key = "iconOffsetX",
-                        label = L["X offset"],
-                        min = UI_LIMITS.ICON_OFFSET.min,
-                        max = UI_LIMITS.ICON_OFFSET.max,
-                        step = 1,
-                        cols = 12
-                    },
-                    {
-                        type = "slider",
-                        key = "iconOffsetY",
-                        label = L["Y offset"],
-                        min = UI_LIMITS.ICON_OFFSET.min,
-                        max = UI_LIMITS.ICON_OFFSET.max,
-                        step = 1,
-                        cols = 12
-                    },
-                },
-            },
-        },
-        {
-            { type = "spacer", height = 10, cols = 24 },
-            visibilityGroup(not isSkill), -- BUFF监控传true
+            visibilityGroup(not isSkill),
         }
     )
 end
@@ -667,6 +703,7 @@ local function renderContent(container, menuKey)
     local isSkill  = (menuKey == "custom_spell")
     local store    = isSkill and db.skills or db.buffs
     local storeKey = isSkill and "skills" or "buffs"
+    local openContext = VFlow.MainUI and VFlow.MainUI.consumeOpenContext and VFlow.MainUI.consumeOpenContext(menuKey)
 
     local Grid     = VFlow.Grid
 
@@ -700,7 +737,7 @@ local function renderContent(container, menuKey)
     configFrame:SetPoint("TOPLEFT", selectorFrame, "TOPRIGHT", 10, 0)
     configFrame:SetPoint("BOTTOMRIGHT", bodyFrame, "BOTTOMRIGHT", 0, 0)
 
-    local selectedID = nil
+    local selectedID = openContext and openContext.selectedID or nil
 
     -- 无选中提示
     local hintFrame = CreateFrame("Frame", nil, configFrame)
