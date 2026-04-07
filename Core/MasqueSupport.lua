@@ -48,7 +48,6 @@ function MasqueSupport:RegisterButton(button, icon, border)
         if w and h and button._vf_masqueSkinnedW == w and button._vf_masqueSkinnedH == h then
             return
         end
-        Profiler.count("MS:RegisterButton")
         if w and h then
             masqueGroup:ReSkin(button)
             button._vf_masqueSkinnedW = w
@@ -56,8 +55,6 @@ function MasqueSupport:RegisterButton(button, icon, border)
         end
         return
     end
-
-    Profiler.count("MS:RegisterButton")
 
     -- 注册到 Masque
     -- 注意：VFlow接管的图标结构可能因Viewer不同而异，需要调用者传入正确的组件
@@ -96,8 +93,12 @@ function MasqueSupport:ReSkin()
     if not masqueGroup then
         return
     end
-    Profiler.count("MS:ReSkinAll")
     masqueGroup:ReSkin()
+end
+
+if Profiler and Profiler.registerTableCount then
+    Profiler.registerTableCount(MasqueSupport, "RegisterButton", "MS:RegisterButton")
+    Profiler.registerTableCount(MasqueSupport, "ReSkin", "MS:ReSkinAll")
 end
 
 -- 注册 Masque 皮肤改变回调

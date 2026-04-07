@@ -9,6 +9,7 @@ if not VFlow then return end
 local Profiler = VFlow.Profiler
 
 local MODULE_KEY = "VFlow.OtherFeatures"
+local onCooldownViewerAlert
 
 -- =========================================================
 -- SECTION 2: Hook 与解析
@@ -107,7 +108,11 @@ local function tryInstallHook()
     hookInstalled = true
 
     hooksecurefunc("CooldownViewerAlert_PlayAlert", function(cooldownItem, _spellName, alert)
-        Profiler.count("CTT:CooldownViewerAlert_PlayAlert")
+        onCooldownViewerAlert(cooldownItem, _spellName, alert)
+    end)
+end
+
+onCooldownViewerAlert = function(cooldownItem, _spellName, alert)
         local db = VFlow.getDBIfReady(MODULE_KEY)
         if not db then
             return
@@ -155,6 +160,13 @@ local function tryInstallHook()
         elseif mode == "sound" and sound ~= "" then
             PlaySoundFile(sound, channel or "Master")
         end
+end
+
+if Profiler and Profiler.registerCount then
+    Profiler.registerCount("CTT:CooldownViewerAlert_PlayAlert", function()
+        return onCooldownViewerAlert
+    end, function(fn)
+        onCooldownViewerAlert = fn
     end)
 end
 

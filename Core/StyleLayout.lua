@@ -63,9 +63,7 @@ end
 
 -- 收集viewer下所有图标帧（轻量缓存：仅子级数 + 池活动数；排序在池成员不变时复用）
 function StyleLayout.CollectIcons(viewer)
-    local _pt = Profiler.start("SL:CollectIcons")
     if not viewer then
-        Profiler.stop(_pt)
         return {}
     end
 
@@ -73,7 +71,6 @@ function StyleLayout.CollectIcons(viewer)
     local poolN = PoolActiveCount(viewer.itemFramePool)
     local cached = viewer._vf_sl_icons
     if cached and viewer._vf_sl_cn == childN and viewer._vf_sl_pn == poolN then
-        Profiler.stop(_pt)
         return cached
     end
 
@@ -99,13 +96,11 @@ function StyleLayout.CollectIcons(viewer)
     viewer._vf_sl_icons = icons
     viewer._vf_sl_cn = childN
     viewer._vf_sl_pn = poolN
-    Profiler.stop(_pt)
     return icons
 end
 
 -- 过滤可见图标
 function StyleLayout.FilterVisible(icons)
-    local _pt = Profiler.start("SL:FilterVisible")
     local visible = {}
     for i = 1, #icons do
         local icon = icons[i]
@@ -116,17 +111,14 @@ function StyleLayout.FilterVisible(icons)
             end
         end
     end
-    Profiler.stop(_pt)
     return visible
 end
 
 -- 按每行上限分行
 function StyleLayout.BuildRows(limit, icons)
-    local _pt = Profiler.start("SL:BuildRows")
     local rows = {}
     if limit <= 0 then
         rows[1] = icons
-        Profiler.stop(_pt)
         return rows
     end
     for i = 1, #icons do
@@ -134,17 +126,14 @@ function StyleLayout.BuildRows(limit, icons)
         rows[ri] = rows[ri] or {}
         rows[ri][#rows[ri] + 1] = icons[i]
     end
-    Profiler.stop(_pt)
     return rows
 end
 
 -- 同步viewer尺寸与实际图标边界框
 function StyleLayout.UpdateViewerSizeToMatchIcons(viewer, icons)
     if not viewer or not icons or #icons == 0 then return end
-    local _pt = Profiler.start("SL:UpdateViewerSizeToMatchIcons")
     local vScale = viewer:GetEffectiveScale()
     if not vScale or vScale == 0 then
-        Profiler.stop(_pt)
         return
     end
 
@@ -164,7 +153,6 @@ function StyleLayout.UpdateViewerSizeToMatchIcons(viewer, icons)
     end
 
     if left >= right or bottom >= top then
-        Profiler.stop(_pt)
         return
     end
 
@@ -175,5 +163,11 @@ function StyleLayout.UpdateViewerSizeToMatchIcons(viewer, icons)
     if curW and curH and (abs(curW - targetW) >= 1 or abs(curH - targetH) >= 1) then
         viewer:SetSize(targetW, targetH)
     end
-    Profiler.stop(_pt)
+end
+
+if Profiler and Profiler.registerTableScope then
+    Profiler.registerTableScope(StyleLayout, "CollectIcons", "SL:CollectIcons")
+    Profiler.registerTableScope(StyleLayout, "FilterVisible", "SL:FilterVisible")
+    Profiler.registerTableScope(StyleLayout, "BuildRows", "SL:BuildRows")
+    Profiler.registerTableScope(StyleLayout, "UpdateViewerSizeToMatchIcons", "SL:UpdateViewerSizeToMatchIcons")
 end

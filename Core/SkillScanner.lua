@@ -71,10 +71,10 @@ end
 --- 扫描冷却管理器技能条并写入 State。
 --- trackedSkills：仅「重要技能」条（供自定义技能组等只认重要条的逻辑使用，语义不变）。
 --- trackedUtilitySkills：仅「效能技能」条（播报/高亮等可再合并展示）。
-local function ScanSkillViewers()
-    if InCombatLockdown() then return end
+local ScanSkillViewers
 
-    local _pt = Profiler.start("SS:ScanSkillViewers")
+ScanSkillViewers = function()
+    if InCombatLockdown() then return end
     local important = {}
     CollectSpellsFromViewer(_G.EssentialCooldownViewer, important)
     VFlow.State.update("trackedSkills", important)
@@ -82,8 +82,6 @@ local function ScanSkillViewers()
     local utility = {}
     CollectSpellsFromViewer(_G.UtilityCooldownViewer, utility)
     VFlow.State.update("trackedUtilitySkills", utility)
-
-    Profiler.stop(_pt)
 end
 
 local function ScheduleScan()
@@ -106,3 +104,12 @@ VFlow.on("TRAIT_CONFIG_UPDATED", "SkillScanner", ScheduleScan)
 VFlow.SkillScanner = {
     scan = ScanSkillViewers,
 }
+
+if Profiler and Profiler.registerScope then
+    Profiler.registerScope("SS:ScanSkillViewers", function()
+        return ScanSkillViewers
+    end, function(fn)
+        ScanSkillViewers = fn
+        VFlow.SkillScanner.scan = fn
+    end)
+end

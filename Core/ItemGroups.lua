@@ -28,21 +28,21 @@ local _appendFrameLists = {} -- [viewerName][groupId] = { frames }
 local _standaloneRefreshPending = false
 local RefreshAllStandaloneLayouts
 local RefreshAllAppendCooldowns
+local StandaloneRefreshOnUpdate
 
 local _standaloneRefreshFrame = CreateFrame("Frame")
 _standaloneRefreshFrame:Hide()
-_standaloneRefreshFrame:SetScript("OnUpdate", function(self)
+StandaloneRefreshOnUpdate = function(self)
     self:Hide()
     if _standaloneRefreshPending then
-        local _pt = Profiler.start("IG:DeferredRefresh")
         _standaloneRefreshPending = false
         RefreshAllAppendCooldowns()
         if RefreshAllStandaloneLayouts then
             RefreshAllStandaloneLayouts()
         end
-        Profiler.stop(_pt)
     end
-end)
+end
+_standaloneRefreshFrame:SetScript("OnUpdate", StandaloneRefreshOnUpdate)
 
 local function ScheduleStandaloneRefresh()
     _standaloneRefreshPending = true
@@ -153,14 +153,13 @@ local function RegisterConfigSpells(cfg, groupId)
 end
 
 local function RebuildSpellMap()
-    local _pt = Profiler.start("IG:RebuildSpellMap")
-    if not _mapDirty then Profiler.stop(_pt) return _spellToGroupId end
+    if not _mapDirty then return _spellToGroupId end
     _mapDirty = false
 
     wipe(_spellToGroupId)
 
     local db = VFlow.getDBIfReady(MODULE_KEY)
-    if not db then Profiler.stop(_pt) return _spellToGroupId end
+    if not db then return _spellToGroupId end
 
     if db.mainGroup then
         RegisterConfigSpells(db.mainGroup, 0)
@@ -172,7 +171,6 @@ local function RebuildSpellMap()
         end
     end
 
-    Profiler.stop(_pt)
     return _spellToGroupId
 end
 
@@ -251,7 +249,6 @@ end
 
 --- 在 SkillGroups 之后：单独分组 / 追加模式均在 viewer 中隐藏暴雪按钮，由自建帧展示
 local function ProcessSkillViewerIcons(viewer, mainVisible)
-    local _pt = Profiler.start("IG:ProcessSkillViewerIcons")
     local spellMap = RebuildSpellMap()
     local newMain = {}
 
@@ -294,7 +291,6 @@ local function ProcessSkillViewerIcons(viewer, mainVisible)
         end
     end
 
-    Profiler.stop(_pt)
     return newMain, {}
 end
 
@@ -371,13 +367,11 @@ local function EnsureGroupContainer(groupId)
 end
 
 local function InitGroupContainers()
-    local _pt = Profiler.start("IG:InitGroupContainers")
     local db = VFlow.getDBIfReady(MODULE_KEY)
     for gid in pairs(_containers) do
         ReleaseGroupContainer(gid)
     end
     if not db then
-        Profiler.stop(_pt)
         return
     end
 
@@ -389,7 +383,6 @@ local function InitGroupContainers()
             EnsureGroupContainer(i)
         end
     end
-    Profiler.stop(_pt)
 end
 
 -- =========================================================
@@ -399,7 +392,6 @@ end
 --- 物品组内监控条目（单独分组与追加模式共用）
 local function BuildTrackedEntries(cfg)
     if not cfg or cfg.enabled == false then return {} end
-    local _pt = Profiler.start("IG:BuildTrackedEntries")
     local seen = {}
     local entries = {}
     local function add(e)
@@ -467,7 +459,6 @@ local function BuildTrackedEntries(cfg)
         end
     end
 
-    Profiler.stop(_pt)
     return entries
 end
 
@@ -801,8 +792,6 @@ end
 local function LayoutStandaloneIconGrid(container, cfg, groupId, icons)
     local count = #icons
     if count == 0 then return end
-
-    local _pt = Profiler.start("IG:LayoutStandaloneIconGrid")
     local iconW = cfg.width or 35
     local iconH = cfg.height or 35
     local spacingX = cfg.spacingX or 2
@@ -867,7 +856,6 @@ local function LayoutStandaloneIconGrid(container, cfg, groupId, icons)
     end
     container:SetSize(maxRowW * iconScale, totalH * iconScale)
     ApplyContainerAnchor(container, cfg)
-    Profiler.stop(_pt)
 end
 
 local function SkillRowsAsCellRows(skillRows)
@@ -882,7 +870,6 @@ local function SkillRowsAsCellRows(skillRows)
 end
 
 local function SyncAppendFrameList(viewer, groupId, cfg, entries)
-    local _pt = Profiler.start("IG:SyncAppendFrameList")
     local vk = ViewerCacheKey(viewer)
     if not _appendFrameLists[vk] then
         _appendFrameLists[vk] = {}
@@ -915,7 +902,6 @@ local function SyncAppendFrameList(viewer, groupId, cfg, entries)
         UpdateAppendItemStackDisplay(frame, entry)
         ApplyItemZeroCountPresentation(frame, entry, cfg)
     end
-    Profiler.stop(_pt)
 end
 
 --- 删除自定义组后，大于 #customGroups 的 groupId 槽位上可能仍挂着追加帧；清理并释放引用
@@ -961,11 +947,9 @@ local function PruneOrphanItemGroupRuntime()
 end
 
 local function SyncAllAppendForViewer(viewer)
-    local _pt = Profiler.start("IG:SyncAllAppendForViewer")
     PruneOrphanItemGroupRuntime()
     local db = VFlow.getDBIfReady(MODULE_KEY)
     if not db then
-        Profiler.stop(_pt)
         return
     end
     local function syncOne(groupId, cfg)
@@ -979,7 +963,6 @@ local function SyncAllAppendForViewer(viewer)
     for i, g in ipairs(db.customGroups or {}) do
         syncOne(i, g and g.config)
     end
-    Profiler.stop(_pt)
 end
 
 local function AppendCellsForGroup(viewer, groupId, cfg)
@@ -1005,14 +988,11 @@ local function AppendCellsForGroup(viewer, groupId, cfg)
 end
 
 local function MergeSkillRowsWithAppend(viewer, limit, skillRows)
-    local _pt = Profiler.start("IG:MergeSkillRowsWithAppend")
     SyncAllAppendForViewer(viewer)
 
     local db = VFlow.getDBIfReady(MODULE_KEY)
     if not db then
-        local out = SkillRowsAsCellRows(skillRows)
-        Profiler.stop(_pt)
-        return out
+        return SkillRowsAsCellRows(skillRows)
     end
 
     local appendGroups = {}
@@ -1026,9 +1006,7 @@ local function MergeSkillRowsWithAppend(viewer, limit, skillRows)
     end
 
     if #appendGroups == 0 then
-        local out = SkillRowsAsCellRows(skillRows)
-        Profiler.stop(_pt)
-        return out
+        return SkillRowsAsCellRows(skillRows)
     end
 
     local maxSkillRow = #(skillRows or {})
@@ -1119,7 +1097,6 @@ local function MergeSkillRowsWithAppend(viewer, limit, skillRows)
                 sequence[#sequence + 1] = cell
             end
         end
-        Profiler.stop(_pt)
         return { sequence }
     end
 
@@ -1142,12 +1119,10 @@ local function MergeSkillRowsWithAppend(viewer, limit, skillRows)
         end
         overflow = ov
     end
-    Profiler.stop(_pt)
     return newRows
 end
 
 RefreshAllAppendCooldowns = function()
-    local _pt = Profiler.start("IG:RefreshAllAppendCooldowns")
     for _, groups in pairs(_appendFrameLists) do
         for groupId, list in pairs(groups) do
             local icfg = GetConfigForGroupId(groupId)
@@ -1160,7 +1135,6 @@ RefreshAllAppendCooldowns = function()
             end
         end
     end
-    Profiler.stop(_pt)
 end
 
 local function SyncStandaloneFrameList(container, groupId, cfg, entries)
@@ -1245,10 +1219,8 @@ local function RefreshStandaloneGroup(groupId)
 end
 
 RefreshAllStandaloneLayouts = function()
-    local _pt = Profiler.start("IG:RefreshAllStandaloneLayouts")
     local db = VFlow.getDBIfReady(MODULE_KEY)
     if not db then
-        Profiler.stop(_pt)
         return
     end
     local hasStandalone = db.mainGroup and ShouldStandaloneExtract(db.mainGroup)
@@ -1261,7 +1233,6 @@ RefreshAllStandaloneLayouts = function()
         end
     end
     if not hasStandalone then
-        Profiler.stop(_pt)
         return
     end
 
@@ -1273,7 +1244,6 @@ RefreshAllStandaloneLayouts = function()
             RefreshStandaloneGroup(i)
         end
     end
-    Profiler.stop(_pt)
 end
 
 local function LayoutItemGroupsCompat()
@@ -1290,6 +1260,52 @@ VFlow.ItemGroups = {
     syncAppendFramesForViewer = SyncAllAppendForViewer,
     refreshAppendFrameStack = UpdateAppendItemStackDisplay,
 }
+
+if Profiler and Profiler.registerScope then
+    Profiler.registerScope("IG:DeferredRefresh", function()
+        return StandaloneRefreshOnUpdate
+    end, function(fn)
+        StandaloneRefreshOnUpdate = fn
+        _standaloneRefreshFrame:SetScript("OnUpdate", fn)
+    end)
+    Profiler.registerScope("IG:RebuildSpellMap", function()
+        return RebuildSpellMap
+    end, function(fn)
+        RebuildSpellMap = fn
+    end)
+    Profiler.registerScope("IG:InitGroupContainers", function()
+        return InitGroupContainers
+    end, function(fn)
+        InitGroupContainers = fn
+    end)
+    Profiler.registerScope("IG:BuildTrackedEntries", function()
+        return BuildTrackedEntries
+    end, function(fn)
+        BuildTrackedEntries = fn
+    end)
+    Profiler.registerScope("IG:LayoutStandaloneIconGrid", function()
+        return LayoutStandaloneIconGrid
+    end, function(fn)
+        LayoutStandaloneIconGrid = fn
+    end)
+    Profiler.registerScope("IG:SyncAppendFrameList", function()
+        return SyncAppendFrameList
+    end, function(fn)
+        SyncAppendFrameList = fn
+    end)
+    Profiler.registerScope("IG:RefreshAllAppendCooldowns", function()
+        return RefreshAllAppendCooldowns
+    end, function(fn)
+        RefreshAllAppendCooldowns = fn
+    end)
+end
+
+if Profiler and Profiler.registerTableScope then
+    Profiler.registerTableScope(VFlow.ItemGroups, "processSkillViewerIcons", "IG:ProcessSkillViewerIcons")
+    Profiler.registerTableScope(VFlow.ItemGroups, "refreshStandaloneLayouts", "IG:RefreshAllStandaloneLayouts")
+    Profiler.registerTableScope(VFlow.ItemGroups, "mergeSkillRowsWithAppend", "IG:MergeSkillRowsWithAppend")
+    Profiler.registerTableScope(VFlow.ItemGroups, "syncAppendFramesForViewer", "IG:SyncAllAppendForViewer")
+end
 
 VFlow.on("PLAYER_ENTERING_WORLD", "ItemGroups", function()
     MarkMapDirty()

@@ -70,7 +70,6 @@ end
 
 -- 判断是否应该显示条
 local function ShouldShowBar(cfg, isBuffActive)
-    Profiler.count("CMR:ShouldShowBar")
     local mode = cfg.visibilityMode or "hide"
     local conditionMet = false
 
@@ -312,7 +311,6 @@ end
 -- 全量扫描重建映射（仅脱战时调用，需要 wipe 清表）
 local function ScanCDMViewers()
     if InCombatLockdown() then return end
-    local _pt = Profiler.start("CMR:ScanCDMViewers")
     wipe(_spellToCooldownID)
     wipe(_cooldownIDToFrame)
     wipe(_spellMapRetryAt)
@@ -326,7 +324,6 @@ local function ScanCDMViewers()
             end
         end
     end
-    Profiler.stop(_pt)
 end
 
 -- 战斗中为单个 spellID 补建映射（只追加，找到即停）
@@ -335,7 +332,6 @@ local function TryMapSpellID(spellID)
     local now = GetTime and GetTime() or 0
     local retryAt = _spellMapRetryAt[spellID]
     if retryAt and now < retryAt then return end
-    local _pt = Profiler.start("CMR:TryMapSpellID")
     for _, viewerName in ipairs(BUFF_VIEWERS) do
         local viewer = _G[viewerName]
         if viewer then
@@ -360,7 +356,6 @@ local function TryMapSpellID(spellID)
                 for frame in viewer.itemFramePool:EnumerateActive() do
                     if check(frame) then
                         _spellMapRetryAt[spellID] = nil
-                        Profiler.stop(_pt)
                         return
                     end
                 end
@@ -368,7 +363,6 @@ local function TryMapSpellID(spellID)
                 for _, child in ipairs({ viewer:GetChildren() }) do
                     if check(child) then
                         _spellMapRetryAt[spellID] = nil
-                        Profiler.stop(_pt)
                         return
                     end
                 end
@@ -376,14 +370,12 @@ local function TryMapSpellID(spellID)
         end
     end
     _spellMapRetryAt[spellID] = now + MAP_RETRY_INTERVAL
-    Profiler.stop(_pt)
 end
 
 local function FindCDMFrame(cooldownID)
     if not cooldownID then return nil end
     local cached = _cooldownIDToFrame[cooldownID]
     if cached then return cached end
-    local _pt = Profiler.start("CMR:FindCDMFrame")
     for _, viewerName in ipairs(BUFF_VIEWERS) do
         local viewer = _G[viewerName]
         if viewer then
@@ -392,7 +384,6 @@ local function FindCDMFrame(cooldownID)
                     local cdID = GetCooldownIDFromFrame(frame)
                     if cdID == cooldownID then
                         _cooldownIDToFrame[cdID] = frame
-                        Profiler.stop(_pt)
                         return frame
                     end
                 end
@@ -401,14 +392,12 @@ local function FindCDMFrame(cooldownID)
                     local cdID = GetCooldownIDFromFrame(child)
                     if cdID == cooldownID then
                         _cooldownIDToFrame[cdID] = child
-                        Profiler.stop(_pt)
                         return child
                     end
                 end
             end
         end
     end
-    Profiler.stop(_pt)
     return nil
 end
 
@@ -475,7 +464,6 @@ local UpdateStackBar   -- 前向声明
 local UpdateDurationBar
 
 local function FlushCDMFrameChanges()
-    local _pt = Profiler.start("CMR:OnCDMFrameChanged")
     local batch = {}
     for fr in pairs(_cdmFlushPending) do
         batch[#batch + 1] = fr
@@ -513,7 +501,6 @@ local function FlushCDMFrameChanges()
             end
         end
     end
-    Profiler.stop(_pt)
 end
 
 local function DeferCDMFrameChanged(frame, ...)
@@ -696,17 +683,14 @@ end
 -- isStack=true 时启用阈值覆盖层
 -- isRing=true 时创建环形（仅用于BUFF持续时间，单段）
 local function CreateSegments(barFrame, count, cfg, isStack, isRing)
-    local _pt = Profiler.start("CMR:CreateSegments")
     ClearSegments(barFrame)
     if not ShouldRenderGraphics(cfg) then
         barFrame._segSig = segmentLayoutSignature(cfg, barFrame)
         barFrame._segsDirty = false
         barFrame._segsNeedCount = nil
-        Profiler.stop(_pt)
         return
     end
     if count < 1 then
-        Profiler.stop(_pt)
         return
     end
 
@@ -715,7 +699,6 @@ local function CreateSegments(barFrame, count, cfg, isStack, isRing)
     if totalW <= 0 then
         barFrame._segsDirty     = true
         barFrame._segsNeedCount = count
-        Profiler.stop(_pt)
         return
     end
 
@@ -760,7 +743,6 @@ local function CreateSegments(barFrame, count, cfg, isStack, isRing)
         barFrame._segSig = segmentLayoutSignature(cfg, barFrame)
         barFrame._segsDirty = false
         barFrame._segsNeedCount = nil
-        Profiler.stop(_pt)
         return
     end
 
@@ -873,7 +855,6 @@ local function CreateSegments(barFrame, count, cfg, isStack, isRing)
     barFrame._segSig = segmentLayoutSignature(cfg, barFrame)
     barFrame._segsDirty     = false
     barFrame._segsNeedCount = nil
-    Profiler.stop(_pt)
 end
 
 -- 将层数值同时设给基础分段和阈值覆盖层
@@ -1871,8 +1852,7 @@ local function ApplyBgColor(barFrame)
     end
 end
 
-local function UpdateAllBars()
-    local _ps = Profiler.start("CMR:UpdateSkillBars")
+local function UpdateSkillBars()
     for spellID, barFrame in pairs(_activeSkillBars) do
         -- 检查显示条件
         local shouldShow = ShouldShowBar(barFrame._cfg, false)
@@ -1895,9 +1875,9 @@ local function UpdateAllBars()
             UpdateChargeBar(barFrame, spellID)
         end
     end
-    Profiler.stop(_ps)
+end
 
-    local _pb = Profiler.start("CMR:UpdateBuffBars")
+local function UpdateBuffBars()
     for spellID, barFrame in pairs(_activeBuffBars) do
         local cfg = barFrame._cfg
         local isBuffActive = barFrame._lastKnownActive or false
@@ -1949,18 +1929,21 @@ local function UpdateAllBars()
         end
         ApplyMonitorContainerVisibility(barFrame._container, shouldShow)
     end
-    Profiler.stop(_pb)
+end
+
+local function UpdateAllBars()
+    UpdateSkillBars()
+    UpdateBuffBars()
 end
 
 local _updateFrame = CreateFrame("Frame")
-_updateFrame:SetScript("OnUpdate", function(_, dt)
+local UpdateFrameOnUpdate = function(_, dt)
     _elapsed = _elapsed + dt
     if _elapsed < UPDATE_INTERVAL then return end
     _elapsed = 0
-    local _pt = Profiler.start("CMR:UpdateAllBars")
     UpdateAllBars()
-    Profiler.stop(_pt)
-end)
+end
+_updateFrame:SetScript("OnUpdate", UpdateFrameOnUpdate)
 _updateFrame:Hide()
 
 VFlow.State.watch("systemEditMode", "CustomMonitorRuntime_Vis", function()
@@ -2027,6 +2010,63 @@ end)
 -- =========================================================
 -- SECTION 18: 公共接口（由 CustomMonitorGroups 调用）
 -- =========================================================
+
+if Profiler and Profiler.registerCount then
+    Profiler.registerCount("CMR:ShouldShowBar", function()
+        return ShouldShowBar
+    end, function(fn)
+        ShouldShowBar = fn
+    end)
+end
+
+if Profiler and Profiler.registerScope then
+    Profiler.registerScope("CMR:ScanCDMViewers", function()
+        return ScanCDMViewers
+    end, function(fn)
+        ScanCDMViewers = fn
+    end)
+    Profiler.registerScope("CMR:TryMapSpellID", function()
+        return TryMapSpellID
+    end, function(fn)
+        TryMapSpellID = fn
+    end)
+    Profiler.registerScope("CMR:FindCDMFrame", function()
+        return FindCDMFrame
+    end, function(fn)
+        FindCDMFrame = fn
+    end)
+    Profiler.registerScope("CMR:OnCDMFrameChanged", function()
+        return FlushCDMFrameChanges
+    end, function(fn)
+        FlushCDMFrameChanges = fn
+    end)
+    Profiler.registerScope("CMR:CreateSegments", function()
+        return CreateSegments
+    end, function(fn)
+        CreateSegments = fn
+    end)
+    Profiler.registerScope("CMR:UpdateSkillBars", function()
+        return UpdateSkillBars
+    end, function(fn)
+        UpdateSkillBars = fn
+    end)
+    Profiler.registerScope("CMR:UpdateBuffBars", function()
+        return UpdateBuffBars
+    end, function(fn)
+        UpdateBuffBars = fn
+    end)
+    Profiler.registerScope("CMR:UpdateAllBars", function()
+        return UpdateAllBars
+    end, function(fn)
+        UpdateAllBars = fn
+    end)
+    Profiler.registerScope("CMR:UpdateAllBars_OnUpdate", function()
+        return UpdateFrameOnUpdate
+    end, function(fn)
+        UpdateFrameOnUpdate = fn
+        _updateFrame:SetScript("OnUpdate", fn)
+    end)
+end
 
 --- 配置变化时按「内线框 / 分段」签名增量更新，无需 Store 键正则维护。
 local function SyncBarConfig(storeKey, spellID, cfg)

@@ -88,7 +88,6 @@ end
 
 function VFlow.ItemsManualOrder.Ensure(cfg)
     if not cfg then return end
-    local _pt = Profiler.start("IMO:Ensure")
     cfg.itemIDs = cfg.itemIDs or {}
     cfg.spellIDs = cfg.spellIDs or {}
 
@@ -179,5 +178,8 @@ function VFlow.ItemsManualOrder.Ensure(cfg)
             seen[k] = true
         end
     end
-    Profiler.stop(_pt)
+end
+
+if Profiler and Profiler.registerTableScope then
+    Profiler.registerTableScope(VFlow.ItemsManualOrder, "Ensure", "IMO:Ensure")
 end

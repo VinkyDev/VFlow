@@ -127,7 +127,6 @@ end
 -- =========================================================
 
 function StyleApply.ApplyIconSize(button, w, h)
-    Profiler.count("SA:ApplyIconSize")
     if button._vf_w == w and button._vf_h == h then return end
     button:SetSize(w, h)
     button._vf_w = w
@@ -135,8 +134,7 @@ function StyleApply.ApplyIconSize(button, w, h)
 end
 
 function StyleApply.ApplyFontStyle(fs, cfg, cachePrefix)
-    local _pt = Profiler.start("SA:ApplyFontStyle")
-    if not fs or not cfg then Profiler.stop(_pt) return end
+    if not fs or not cfg then return end
     local prefix = cachePrefix or "_vf"
 
     local size = cfg.size or 14
@@ -187,7 +185,6 @@ function StyleApply.ApplyFontStyle(fs, cfg, cachePrefix)
         fs:SetPoint(position, parent, position, ox, oy)
         fs[posKey] = position; fs[oxKey] = ox; fs[oyKey] = oy
     end
-    Profiler.stop(_pt)
 end
 
 -- =========================================================
@@ -195,13 +192,11 @@ end
 -- =========================================================
 
 function StyleApply.ApplyKeybind(button, cfg)
-    local _pt = Profiler.start("SA:ApplyKeybind")
-    if not button or not cfg then Profiler.stop(_pt) return end
+    if not button or not cfg then return end
 
     local show = cfg.showKeybind
     if not show then
         if button._vf_keybindFrame then button._vf_keybindFrame:Hide() end
-        Profiler.stop(_pt)
         return
     end
 
@@ -238,7 +233,6 @@ function StyleApply.ApplyKeybind(button, cfg)
     else
         button._vf_keybindFrame:Hide()
     end
-    Profiler.stop(_pt)
 end
 
 -- =========================================================
@@ -611,8 +605,7 @@ OnCooldownMaskDriverRefresh = function(self)
 end
 
 function StyleApply.ApplyAuraSwipeColor(button, groupCfg)
-    local _pt = Profiler.start("SA:ApplyAuraSwipeColor")
-    if not button or not groupCfg then Profiler.stop(_pt) return end
+    if not button or not groupCfg then return end
 
     button._vf_buffMaskColor = groupCfg.buffMaskColor
     button._vf_cooldownMaskColor = groupCfg.cooldownMaskColor
@@ -635,7 +628,6 @@ function StyleApply.ApplyAuraSwipeColor(button, groupCfg)
     end
 
     OnCooldownMaskDriverRefresh(button)
-    Profiler.stop(_pt)
 end
 
 -- =========================================================
@@ -643,8 +635,7 @@ end
 -- =========================================================
 
 function StyleApply.ApplyButtonStyle(button, cfg)
-    local _pt = Profiler.start("SA:ApplyButtonStyle")
-    if not button or not cfg then Profiler.stop(_pt) return end
+    if not button or not cfg then return end
 
     if cfg.stackFont then
         local stackFS = StyleApply.GetStackFontString(button)
@@ -685,7 +676,6 @@ function StyleApply.ApplyButtonStyle(button, cfg)
     if button._vf_refreshColorHooked then
         OnCooldownMaskDriverRefresh(button)
     end
-    Profiler.stop(_pt)
 end
 
 --- 全局样式版本（VFlow._buttonStyleVersion）未变则跳过，避免热路径重复跑字体/美化
@@ -1045,10 +1035,9 @@ end
 -- =========================================================
 
 function StyleApply.ApplyBeautify(button, groupCfg)
-    local _pt = Profiler.start("SA:ApplyBeautify")
     RefreshStyleCache()
 
-    if button._vf_styleVer == styleCacheVersion then Profiler.stop(_pt) return end
+    if button._vf_styleVer == styleCacheVersion then return end
     button._vf_styleVer = styleCacheVersion
 
     ApplyIconZoom(button, groupCfg)
@@ -1058,7 +1047,6 @@ function StyleApply.ApplyBeautify(button, groupCfg)
     if styleCache.hideIconGCD then
         QueueHideGcdSwipeApply(button)
     end
-    Profiler.stop(_pt)
 end
 
 -- =========================================================
@@ -1166,14 +1154,12 @@ function StyleApply.HideGlow(frame)
 end
 
 function StyleApply.RefreshActiveGlows()
-    local _pt = Profiler.start("SA:RefreshActiveGlows")
     for frame in pairs(activeGlowFrames) do
         if frame._vf_glowActive then
             StyleApply.HideGlow(frame)
             StyleApply.ShowGlow(frame)
         end
     end
-    Profiler.stop(_pt)
 end
 
 function StyleApply.ShowCustomGlow(frame)
@@ -1204,14 +1190,12 @@ function StyleApply.HideCustomGlow(frame)
 end
 
 function StyleApply.RefreshActiveCustomGlows()
-    local _pt = Profiler.start("SA:RefreshActiveCustomGlows")
     for frame in pairs(activeCustomGlowFrames) do
         if frame._vf_customGlowActive then
             StyleApply.HideCustomGlow(frame)
             StyleApply.ShowCustomGlow(frame)
         end
     end
-    Profiler.stop(_pt)
 end
 
 function StyleApply.RefreshGlowCache()
@@ -1292,7 +1276,6 @@ function StyleApply.HookAlertManager()
 end
 
 local function ScanActiveAlerts()
-    local _pt = Profiler.start("SA:ScanActiveAlerts")
     local viewers = {
         _G["EssentialCooldownViewer"],
         _G["UtilityCooldownViewer"],
@@ -1309,7 +1292,28 @@ local function ScanActiveAlerts()
             end
         end
     end
-    Profiler.stop(_pt)
+end
+
+if Profiler and Profiler.registerTableCount then
+    Profiler.registerTableCount(StyleApply, "ApplyIconSize", "SA:ApplyIconSize")
+end
+
+if Profiler and Profiler.registerTableScope then
+    Profiler.registerTableScope(StyleApply, "ApplyFontStyle", "SA:ApplyFontStyle")
+    Profiler.registerTableScope(StyleApply, "ApplyKeybind", "SA:ApplyKeybind")
+    Profiler.registerTableScope(StyleApply, "ApplyAuraSwipeColor", "SA:ApplyAuraSwipeColor")
+    Profiler.registerTableScope(StyleApply, "ApplyButtonStyle", "SA:ApplyButtonStyle")
+    Profiler.registerTableScope(StyleApply, "ApplyBeautify", "SA:ApplyBeautify")
+    Profiler.registerTableScope(StyleApply, "RefreshActiveGlows", "SA:RefreshActiveGlows")
+    Profiler.registerTableScope(StyleApply, "RefreshActiveCustomGlows", "SA:RefreshActiveCustomGlows")
+end
+
+if Profiler and Profiler.registerScope then
+    Profiler.registerScope("SA:ScanActiveAlerts", function()
+        return ScanActiveAlerts
+    end, function(fn)
+        ScanActiveAlerts = fn
+    end)
 end
 
 function StyleApply.InitializeGlow()

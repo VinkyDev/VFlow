@@ -269,7 +269,6 @@ local function GetActionsTableBySpellID()
 end
 
 local function BuildSpellToKeyMap()
-    local _pt = Profiler.start("KB:BuildSpellToKeyMap")
     local rawMap = GetActionsTableBySpellID()
     local formattedMap = {}
 
@@ -289,8 +288,15 @@ local function BuildSpellToKeyMap()
     end
 
     spellToKeyCache = formattedMap
-    Profiler.stop(_pt)
     return formattedMap
+end
+
+if Profiler and Profiler.registerScope then
+    Profiler.registerScope("KB:BuildSpellToKeyMap", function()
+        return BuildSpellToKeyMap
+    end, function(fn)
+        BuildSpellToKeyMap = fn
+    end)
 end
 
 -- =========================================================

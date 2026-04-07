@@ -38,6 +38,7 @@ local needRefetchRefs = true
 local BURST_TICKS = 5
 local BURST_THROTTLE = 0.033
 local WATCHDOG_THROTTLE = 0.30
+local RuntimeOnUpdate
 
 local function cacheVisible(visible)
     wipe(cachedFrames)
@@ -100,74 +101,80 @@ end
 function BuffRuntime.enable()
     if enabled then return end
     enabled = true
-    frame:SetScript("OnUpdate", function()
-        if not handlers then
-            BuffRuntime.disable()
-            return
-        end
+    frame:SetScript("OnUpdate", RuntimeOnUpdate)
+end
 
-        -- 只在 dirty 或首次时重新获取 viewer/cfg
-        if needRefetchRefs then
-            cachedViewer = handlers.getViewer and handlers.getViewer() or nil
-            cachedCfg = handlers.getConfig and handlers.getConfig() or nil
-            needRefetchRefs = false
-        end
+RuntimeOnUpdate = function()
+    if not handlers then
+        BuffRuntime.disable()
+        return
+    end
 
-        local viewer = cachedViewer
-        local cfg = cachedCfg
-        if not viewer or not cfg then
-            BuffRuntime.disable()
-            return
-        end
+    if needRefetchRefs then
+        cachedViewer = handlers.getViewer and handlers.getViewer() or nil
+        cachedCfg = handlers.getConfig and handlers.getConfig() or nil
+        needRefetchRefs = false
+    end
 
-        local now = GetTime()
-        if not viewer:IsShown() then
-            if now < nextUpdate then return end
-            nextUpdate = now + WATCHDOG_THROTTLE
-            return
-        end
-        if viewer._vf_refreshing then
-            if now < nextUpdate then return end
-            nextUpdate = now + BURST_THROTTLE
-            return
-        end
+    local viewer = cachedViewer
+    local cfg = cachedCfg
+    if not viewer or not cfg then
+        BuffRuntime.disable()
+        return
+    end
 
-        local throttle = (dirty or burst > 0) and BURST_THROTTLE or WATCHDOG_THROTTLE
+    local now = GetTime()
+    if not viewer:IsShown() then
         if now < nextUpdate then return end
-        nextUpdate = now + throttle
+        nextUpdate = now + WATCHDOG_THROTTLE
+        return
+    end
+    if viewer._vf_refreshing then
+        if now < nextUpdate then return end
+        nextUpdate = now + BURST_THROTTLE
+        return
+    end
 
-        local _pt = Profiler.start("BuffRT:OnUpdate")
+    local throttle = (dirty or burst > 0) and BURST_THROTTLE or WATCHDOG_THROTTLE
+    if now < nextUpdate then return end
+    nextUpdate = now + throttle
 
-        -- 快速路径：watchdog 阶段（非 dirty 且 burst=0）只比对子级数 + 池活动数
-        if not dirty and burst == 0 and StyleLayout and StyleLayout.PoolActiveCount then
-            local cc = select('#', viewer:GetChildren())
-            local pn = StyleLayout.PoolActiveCount(viewer.itemFramePool)
-            if cc == cachedChildCount and pn == cachedPoolCount then
-                Profiler.stop(_pt)
-                return
-            end
-        end
-
-        local visible = handlers.collectVisible and handlers.collectVisible(viewer, dirty) or {}
-        cachedChildCount = select('#', viewer:GetChildren())
-        cachedPoolCount = (StyleLayout and StyleLayout.PoolActiveCount)
-            and StyleLayout.PoolActiveCount(viewer.itemFramePool) or 0
-
-        local changed = dirty or hasVisibleChanged(visible)
-        if changed then
-            if handlers.refresh then
-                handlers.refresh(viewer, cfg)
-            end
-            cacheVisible(visible)
-            dirty = false
-            burst = BURST_TICKS
-            Profiler.stop(_pt)
+    if not dirty and burst == 0 and StyleLayout and StyleLayout.PoolActiveCount then
+        local cc = select('#', viewer:GetChildren())
+        local pn = StyleLayout.PoolActiveCount(viewer.itemFramePool)
+        if cc == cachedChildCount and pn == cachedPoolCount then
             return
         end
+    end
 
-        if burst > 0 then
-            burst = burst - 1
+    local visible = handlers.collectVisible and handlers.collectVisible(viewer, dirty) or {}
+    cachedChildCount = select('#', viewer:GetChildren())
+    cachedPoolCount = (StyleLayout and StyleLayout.PoolActiveCount)
+        and StyleLayout.PoolActiveCount(viewer.itemFramePool) or 0
+
+    local changed = dirty or hasVisibleChanged(visible)
+    if changed then
+        if handlers.refresh then
+            handlers.refresh(viewer, cfg)
         end
-        Profiler.stop(_pt)
+        cacheVisible(visible)
+        dirty = false
+        burst = BURST_TICKS
+        return
+    end
+
+    if burst > 0 then
+        burst = burst - 1
+    end
+end
+
+if Profiler and Profiler.registerScope then
+    Profiler.registerScope("BuffRT:OnUpdate", function()
+        return RuntimeOnUpdate
+    end, function(fn)
+        RuntimeOnUpdate = fn
+        if enabled then
+            frame:SetScript("OnUpdate", fn)
+        end
     end)
 end

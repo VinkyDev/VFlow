@@ -240,11 +240,9 @@ end
 -- =========================================================
 
 local function ScanItems()
-    local _pt = Profiler.start("TPM:ScanItems")
     InitContainer()
     local db = getBuffsDB()
     if not db or not db.trinketPotion then
-        Profiler.stop(_pt)
         return 0
     end
     local config = db.trinketPotion
@@ -352,8 +350,6 @@ local function ScanItems()
 
     -- 刷新布局
     RefreshLayout()
-
-    Profiler.stop(_pt)
     return unloadedCount
 end
 
@@ -394,11 +390,8 @@ end
 function RefreshLayout()
     InitContainer()
     if not _container then return end
-
-    local _pt = Profiler.start("TPM:RefreshLayout")
     local db = getBuffsDB()
     if not db or not db.trinketPotion then
-        Profiler.stop(_pt)
         return
     end
     local config = db.trinketPotion
@@ -441,7 +434,6 @@ function RefreshLayout()
         else
             _container:SetSize(1, 1)
         end
-        Profiler.stop(_pt)
         return
     end
 
@@ -555,7 +547,6 @@ function RefreshLayout()
             end
         end
     end
-    Profiler.stop(_pt)
 end
 
 -- =========================================================
@@ -641,3 +632,17 @@ VFlow.ItemBuffMonitor = {
 
     refresh = RefreshLayout,
 }
+
+if Profiler and Profiler.registerScope then
+    Profiler.registerScope("TPM:ScanItems", function()
+        return ScanItems
+    end, function(fn)
+        ScanItems = fn
+    end)
+    Profiler.registerScope("TPM:RefreshLayout", function()
+        return RefreshLayout
+    end, function(fn)
+        RefreshLayout = fn
+        VFlow.ItemBuffMonitor.refresh = fn
+    end)
+end

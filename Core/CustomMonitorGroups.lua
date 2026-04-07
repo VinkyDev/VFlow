@@ -250,8 +250,6 @@ end
 -- 同步单个 storeKey（skills 或 buffs）的容器
 local function syncStore(storeKey, store)
     if not store then return end
-
-    local _pt = Profiler.start("CMG:syncStore:" .. storeKey)
     -- 销毁不再启用的容器，或者虽启用但已失效（如切天赋导致不可用）的容器
     local toDestroy = {}
     for spellID in pairs(_containers[storeKey]) do
@@ -282,7 +280,6 @@ local function syncStore(storeKey, store)
             end
         end
     end
-    Profiler.stop(_pt)
 end
 
 -- 全量同步（skills + buffs）
@@ -290,11 +287,24 @@ local function syncAll()
     if not VFlow.hasModule(MODULE_KEY) then return end
     local db = VFlow.getDB(MODULE_KEY)
     if not db then return end
-    local _pt = Profiler.start("CMG:syncAll")
     for _, storeKey in ipairs({ "skills", "buffs" }) do
         syncStore(storeKey, db[storeKey] or {})
     end
-    Profiler.stop(_pt)
+end
+
+if Profiler and Profiler.registerScope then
+    Profiler.registerScope(function(storeKey)
+        return "CMG:syncStore:" .. tostring(storeKey)
+    end, function()
+        return syncStore
+    end, function(fn)
+        syncStore = fn
+    end)
+    Profiler.registerScope("CMG:syncAll", function()
+        return syncAll
+    end, function(fn)
+        syncAll = fn
+    end)
 end
 
 -- =========================================================

@@ -19,27 +19,6 @@ local E_PT = _G.Enum and Enum.PowerType
 
 local rb = {}
 
-local function ProfStart(name)
-    if not Profiler or not Profiler.start then
-        return nil
-    end
-    return Profiler.start(name)
-end
-
-local function ProfStop(token)
-    if not token or not Profiler or not Profiler.stop then
-        return
-    end
-    Profiler.stop(token)
-end
-
-local function ProfCount(name)
-    if not Profiler or not Profiler.count then
-        return
-    end
-    Profiler.count(name)
-end
-
 -- =========================================================
 -- SECTION 2: 运行时状态与资源解析
 -- =========================================================
@@ -604,18 +583,15 @@ end
 
 --- @param skipLayout boolean|nil
 local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, style, skipLayout)
-    local _ps = ProfStart("RB:UpdateDiscreteSegments")
     local sb = host._vf_sb
     local borderFrame = host._vf_borderFrame
     if not host or not cfg or not db or not sb or not borderFrame or not BFK or not PP then
-        ProfStop(_ps)
         return false
     end
 
     local wantSeg = UsesDiscreteSegments(resource) and type(max) == "number" and max >= 2 and not CurTooOpaqueForDiscretePips(cur)
     if not wantSeg then
         ClearSegmentUI(host)
-        ProfStop(_ps)
         return false
     end
 
@@ -628,7 +604,6 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
     host._vf_segLastResource = resource
 
     if fullLayout then
-        local _pl = ProfStart("RB:DiscreteSegmentsFullLayout")
         sb:Hide()
         PP.HideBorder(borderFrame)
 
@@ -640,8 +615,6 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
         local totalH = host:GetHeight()
         if totalW <= 0 or totalH <= 0 then
             SetDiscreteRechargeTicker(host, false)
-            ProfStop(_pl)
-            ProfStop(_ps)
             return true
         end
 
@@ -711,17 +684,13 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
         end
 
         SetDiscreteRechargeTicker(host, NeedsDiscreteRechargeTicker(resource, cur, max), host._vf_slotIsSecondary == true)
-        ProfStop(_pl)
-        ProfStop(_ps)
         return true
     end
 
     if not host._vf_segmentMode then
-        ProfStop(_ps)
         return false
     end
 
-    local _pv = ProfStart("RB:DiscreteSegmentsValuesOnly")
     local curInt = (not IsSecretNumber(cur)) and math.floor(tonumber(cur) or 0) or nil
     local maxInt = (not IsSecretNumber(max)) and math.floor(tonumber(max) or 0) or nil
     if RS.RuntimeUsesEssenceRechargeTicker(resource) and curInt and maxInt then
@@ -760,8 +729,6 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
         end
     end
     SetDiscreteRechargeTicker(host, NeedsDiscreteRechargeTicker(resource, cur, max), host._vf_slotIsSecondary == true)
-    ProfStop(_pv)
-    ProfStop(_ps)
     return true
 end
 
@@ -955,10 +922,8 @@ end
 
 ---@param skipLayout boolean|nil OnUpdate 轮询时跳过尺寸/锚点/字体，仅刷新数值与条
 local function UpdateOneSlot(context, isSecondary, skipLayout)
-    local _ps = ProfStart(isSecondary and "RB:UpdateSecondarySlot" or "RB:UpdatePrimarySlot")
     local db = context and context.db or GetDb()
     if not db then
-        ProfStop(_ps)
         return
     end
     local cfg, host, sb, fs
@@ -974,7 +939,6 @@ local function UpdateOneSlot(context, isSecondary, skipLayout)
         fs = primaryText
     end
     if not host or not cfg or not sb then
-        ProfStop(_ps)
         return
     end
 
@@ -997,14 +961,12 @@ local function UpdateOneSlot(context, isSecondary, skipLayout)
     if C_PetBattles and C_PetBattles.IsInBattle and C_PetBattles.IsInBattle() then
         ClearSegmentUI(host)
         host:Hide()
-        ProfStop(_ps)
         return
     end
 
     if cfg.enabled == false then
         ClearSegmentUI(host)
         host:Hide()
-        ProfStop(_ps)
         return
     end
 
@@ -1012,7 +974,6 @@ local function UpdateOneSlot(context, isSecondary, skipLayout)
     if CR and CR.IsBarEnabledForSpec and not CR.IsBarEnabledForSpec(cfg, specID) then
         ClearSegmentUI(host)
         host:Hide()
-        ProfStop(_ps)
         return
     end
 
@@ -1038,7 +999,6 @@ local function UpdateOneSlot(context, isSecondary, skipLayout)
             ClearSegmentUI(host)
             host:Hide()
         end
-        ProfStop(_ps)
         return
     end
 
@@ -1064,7 +1024,6 @@ local function UpdateOneSlot(context, isSecondary, skipLayout)
             ClearSegmentUI(host)
             host:Hide()
         end
-        ProfStop(_ps)
         return
     end
 
@@ -1078,11 +1037,9 @@ local function UpdateOneSlot(context, isSecondary, skipLayout)
     end
     fs:SetText(FormatText(style, max, cur, resource))
     fs:SetShown(style.showText ~= false)
-    ProfStop(_ps)
 end
 
 SetDiscreteRechargeTicker = function(host, want, isSecondary)
-    ProfCount("RB:SetDiscreteRechargeTicker")
     if not host then
         return
     end
@@ -1097,19 +1054,15 @@ SetDiscreteRechargeTicker = function(host, want, isSecondary)
 end
 
 local function RefreshAll()
-    local _ps = ProfStart("RB:RefreshAll")
     local context = BuildRuntimeContext()
     UpdateOneSlot(context, false, false)
     UpdateOneSlot(context, true, false)
-    ProfStop(_ps)
 end
 
 local function RefreshValuesOnly()
-    local _ps = ProfStart("RB:RefreshValuesOnly")
     local context = BuildRuntimeContext()
     UpdateOneSlot(context, false, true)
     UpdateOneSlot(context, true, true)
-    ProfStop(_ps)
 end
 
 -- =========================================================
@@ -1135,7 +1088,6 @@ function rb.OnSkillViewerLayoutChanged()
 end
 
 local function TickResourceBars(frame, elapsed)
-    ProfCount("RB:TickResourceBars")
     local d = GetDb()
     if not d or not primaryHost then
         return
@@ -1158,7 +1110,6 @@ local function TickResourceBars(frame, elapsed)
 end
 
 local function HandleRuntimeEvent(event)
-    ProfCount("RB:HandleRuntimeEvent")
     if event == "UNIT_MAXPOWER" or event == "UNIT_POWER_UPDATE"
         or event == "UNIT_AURA" or event == "RUNE_POWER_UPDATE" then
         RefreshValuesOnly()
@@ -1172,17 +1123,20 @@ local function RegisterRuntimeEvents()
         return
     end
     runtimeEventsRegistered = true
-    VFlow.on("PLAYER_SPECIALIZATION_CHANGED", EVENT_OWNER, HandleRuntimeEvent, "player")
-    VFlow.on("PLAYER_REGEN_ENABLED", EVENT_OWNER, HandleRuntimeEvent)
-    VFlow.on("PLAYER_REGEN_DISABLED", EVENT_OWNER, HandleRuntimeEvent)
-    VFlow.on("UNIT_MAXPOWER", EVENT_OWNER, HandleRuntimeEvent, "player")
-    VFlow.on("UNIT_POWER_UPDATE", EVENT_OWNER, HandleRuntimeEvent, "player")
-    VFlow.on("UNIT_AURA", EVENT_OWNER, HandleRuntimeEvent, "player")
+    local registerEvent = (Profiler and Profiler.registerEvent) or function(event, owner, callback, units)
+        VFlow.on(event, owner, callback, units)
+    end
+    registerEvent("PLAYER_SPECIALIZATION_CHANGED", EVENT_OWNER, HandleRuntimeEvent, "player", "RB:HandleRuntimeEvent", "count")
+    registerEvent("PLAYER_REGEN_ENABLED", EVENT_OWNER, HandleRuntimeEvent, nil, "RB:HandleRuntimeEvent", "count")
+    registerEvent("PLAYER_REGEN_DISABLED", EVENT_OWNER, HandleRuntimeEvent, nil, "RB:HandleRuntimeEvent", "count")
+    registerEvent("UNIT_MAXPOWER", EVENT_OWNER, HandleRuntimeEvent, "player", "RB:HandleRuntimeEvent", "count")
+    registerEvent("UNIT_POWER_UPDATE", EVENT_OWNER, HandleRuntimeEvent, "player", "RB:HandleRuntimeEvent", "count")
+    registerEvent("UNIT_AURA", EVENT_OWNER, HandleRuntimeEvent, "player", "RB:HandleRuntimeEvent", "count")
     if E_PT and E_PT.Runes then
-        VFlow.on("RUNE_POWER_UPDATE", EVENT_OWNER, HandleRuntimeEvent)
+        registerEvent("RUNE_POWER_UPDATE", EVENT_OWNER, HandleRuntimeEvent, nil, "RB:HandleRuntimeEvent", "count")
     end
     if select(2, UnitClass("player")) == "DRUID" then
-        VFlow.on("UPDATE_SHAPESHIFT_FORM", EVENT_OWNER, HandleRuntimeEvent)
+        registerEvent("UPDATE_SHAPESHIFT_FORM", EVENT_OWNER, HandleRuntimeEvent, nil, "RB:HandleRuntimeEvent", "count")
     end
 end
 
@@ -1213,9 +1167,7 @@ local function EnsureBarLabel(host, existingFs)
 end
 
 local function EnsureFrames()
-    local _ps = ProfStart("RB:EnsureFrames")
     if primaryHost and secondaryHost and tickFrame then
-        ProfStop(_ps)
         return
     end
 
@@ -1260,7 +1212,6 @@ local function EnsureFrames()
         tickFrame._vf_tickAcc = 0
         tickFrame:SetScript("OnUpdate", TickResourceBars)
     end
-    ProfStop(_ps)
 end
 
 -- =========================================================
@@ -1331,17 +1282,14 @@ end
 local MODULE_DB_DEFAULT_BG = { r = 0.2, g = 0.2, b = 0.2, a = 0.5 }
 
 function rb.OnModuleReady()
-    local _ps = ProfStart("RB:OnModuleReady")
     if initialized then
         if RS and RS.WipeRuntimeCaches then
             RS.WipeRuntimeCaches(GetDb())
         end
         RefreshAll()
-        ProfStop(_ps)
         return
     end
     if not VFlow.getDBIfReady(MODULE_KEY) then
-        ProfStop(_ps)
         return
     end
     local d0 = GetDb()
@@ -1372,10 +1320,57 @@ function rb.OnModuleReady()
     end
 
     initialized = true
-    ProfStop(_ps)
 end
 
 VFlow.ResourceBars = rb
+
+if Profiler and Profiler.registerCount then
+    Profiler.registerCount("RB:SetDiscreteRechargeTicker", function()
+        return SetDiscreteRechargeTicker
+    end, function(fn)
+        SetDiscreteRechargeTicker = fn
+    end)
+    Profiler.registerCount("RB:TickResourceBars", function()
+        return TickResourceBars
+    end, function(fn)
+        TickResourceBars = fn
+        if tickFrame then
+            tickFrame:SetScript("OnUpdate", fn)
+        end
+    end)
+end
+
+if Profiler and Profiler.registerScope then
+    Profiler.registerScope("RB:UpdateDiscreteSegments", function()
+        return UpdateDiscreteSegmentDisplay
+    end, function(fn)
+        UpdateDiscreteSegmentDisplay = fn
+    end)
+    Profiler.registerScope(function(_, isSecondary)
+        return isSecondary and "RB:UpdateSecondarySlot" or "RB:UpdatePrimarySlot"
+    end, function()
+        return UpdateOneSlot
+    end, function(fn)
+        UpdateOneSlot = fn
+    end)
+    Profiler.registerScope("RB:RefreshAll", function()
+        return RefreshAll
+    end, function(fn)
+        RefreshAll = fn
+        rb.RefreshAll = fn
+    end)
+    Profiler.registerScope("RB:RefreshValuesOnly", function()
+        return RefreshValuesOnly
+    end, function(fn)
+        RefreshValuesOnly = fn
+    end)
+    Profiler.registerScope("RB:EnsureFrames", function()
+        return EnsureFrames
+    end, function(fn)
+        EnsureFrames = fn
+    end)
+    Profiler.registerTableScope(rb, "OnModuleReady", "RB:OnModuleReady")
+end
 
 VFlow.on("PLAYER_ENTERING_WORLD", "ResourceBars.Boot", function()
     if VFlow.ResourceBars and VFlow.ResourceBars.OnModuleReady then

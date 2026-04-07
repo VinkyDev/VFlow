@@ -20,6 +20,7 @@ local Profiler = VFlow.Profiler
 local RequestBuffRefresh
 local RequestBuffBarRefresh
 local IsViewerReady
+local customHLFlushOnUpdate
 local MAX_BUFF_READY_RETRIES = 20
 local MAX_BUFFBAR_READY_RETRIES = 20
 
@@ -48,14 +49,12 @@ local function InvalidateDBCache()
 end
 
 local function GetBuffViewerAndConfig()
-    Profiler.count("CDS:GetBuffViewerAndConfig")
     local viewer = _G.BuffIconCooldownViewer
     local cfg = _cachedBuffsDB and _cachedBuffsDB.buffMonitor
     return viewer, cfg
 end
 
 local function GetBuffBarViewerAndConfig()
-    Profiler.count("CDS:GetBuffBarViewerAndConfig")
     local viewer = _G.BuffBarCooldownViewer
     return viewer, _cachedBuffBarDB
 end
@@ -86,7 +85,6 @@ local function ResolveBuffBarWidth(cfg)
 end
 
 local function CollectBuffBarFrames(viewer)
-    Profiler.count("CDS:CollectBuffBarFrames")
     if not viewer then
         return {}
     end
@@ -278,10 +276,8 @@ end
 local pendingCustomHLFrames = {}
 local customHLFlushFrame = CreateFrame("Frame")
 customHLFlushFrame:Hide()
-customHLFlushFrame:SetScript("OnUpdate", function(self)
+customHLFlushOnUpdate = function(self)
     self:Hide()
-    local _pt = Profiler.start("CDS:customHLFlush_OnUpdate")
-    -- 单次刷新可能再次触发 CD hook 入队，同帧内多轮消化直到稳定（有上限防死循环）
     for _ = 1, 12 do
         local batch = pendingCustomHLFrames
         if not next(batch) then break end
@@ -292,8 +288,8 @@ customHLFlushFrame:SetScript("OnUpdate", function(self)
             end
         end
     end
-    Profiler.stop(_pt)
-end)
+end
+customHLFlushFrame:SetScript("OnUpdate", customHLFlushOnUpdate)
 
 local function RequestCustomHighlightUpdate(frame)
     if not frame then return end
@@ -372,7 +368,6 @@ local function ScanBuffGroupCustomHighlights()
 end
 
 local function RefreshAllOtherFeatureHighlights()
-    local _pt = Profiler.start("CDS:RefreshAllOtherFeatureHighlights")
     ScanCooldownViewerIcons(_G.EssentialCooldownViewer)
     ScanCooldownViewerIcons(_G.UtilityCooldownViewer)
     ScanCooldownViewerIcons(_G.BuffIconCooldownViewer)
@@ -387,7 +382,6 @@ local function RefreshAllOtherFeatureHighlights()
             TouchCustomHighlight(f)
         end
     end
-    Profiler.stop(_pt)
 end
 
 VFlow.on("PLAYER_REGEN_ENABLED", "VFlow.CustomHL.OutOfCombat", function()
@@ -694,15 +688,13 @@ end
 
 --- 收集→排序→样式→定位
 local function RefreshBuffBarViewer(viewer, cfg)
-    local _pt = Profiler.start("CDS:RefreshBuffBarViewer")
-    if not viewer or not cfg then Profiler.stop(_pt) return false end
+    if not viewer or not cfg then return false end
     if viewer._vf_refreshing then
         -- 标记需要再次刷新，避免丢失刷新请求
         viewer._vf_needsReRefresh = true
-        Profiler.stop(_pt)
         return false
     end
-    if not IsViewerReady(viewer) then Profiler.stop(_pt) return false end
+    if not IsViewerReady(viewer) then return false end
     viewer._vf_refreshing = true
     viewer._vf_needsReRefresh = false
 
@@ -718,7 +710,6 @@ local function RefreshBuffBarViewer(viewer, cfg)
     if count == 0 then
         viewer:SetSize(math.max(1, width), math.max(1, height))
         viewer._vf_refreshing = false
-        Profiler.stop(_pt)
         StyleLayout.InvalidateCollectIconsCache(viewer)
         return true
     end
@@ -756,7 +747,6 @@ local function RefreshBuffBarViewer(viewer, cfg)
         end)
     end
 
-    Profiler.stop(_pt)
     StyleLayout.InvalidateCollectIconsCache(viewer)
     return true
 end
@@ -795,9 +785,8 @@ local function NotifySkillViewerLayoutDependents(force)
 end
 
 local function RefreshSkillViewer(viewer, cfg)
-    local _pt = Profiler.start("CDS:RefreshSkillViewer")
-    if not viewer or not cfg then Profiler.stop(_pt) return end
-    if viewer._vf_refreshing then Profiler.stop(_pt) return end
+    if not viewer or not cfg then return end
+    if viewer._vf_refreshing then return end
     viewer._vf_refreshing = true
 
     local allIcons = StyleLayout.CollectIcons(viewer)
@@ -839,7 +828,6 @@ local function RefreshSkillViewer(viewer, cfg)
         ScanCooldownViewerIcons(viewer, allIcons)
         ScanSkillGroupCustomHighlights()
         viewer._vf_refreshing = false
-        Profiler.stop(_pt)
         -- 纯布局/样式刷新不改图标集合，CollectIcons 仅在结构变化时失效，避免下次刷新重复枚举
         NotifySkillViewerLayoutDependents()
         return
@@ -1105,7 +1093,6 @@ local function RefreshSkillViewer(viewer, cfg)
     ScanSkillGroupCustomHighlights()
 
     viewer._vf_refreshing = false
-    Profiler.stop(_pt)
     -- 纯布局/样式刷新不改图标集合，CollectIcons 仅在结构变化时失效，避免下次刷新重复枚举
     NotifySkillViewerLayoutDependents()
 end
@@ -1161,7 +1148,6 @@ local function ComputeSlotOffset(slot, totalSlots, isH, w, h, spacingX, spacingY
 end
 
 local function ProvisionalPlaceBuffFrame(frame, viewer, cfg)
-    Profiler.count("CDS:ProvisionalPlaceBuffFrame")
     if not frame or not viewer or not cfg then return end
     if not frame:IsShown() then return end
     if not (frame.Icon and frame.Icon:GetTexture()) then return end
@@ -1258,10 +1244,9 @@ local function HideBuffIconsDetachedFromViewer(viewer)
 end
 
 local function RefreshBuffViewer(viewer, cfg)
-    local _pt = Profiler.start("CDS:RefreshBuffViewer")
-    if not viewer or not cfg then Profiler.stop(_pt) return false end
-    if viewer._vf_refreshing then Profiler.stop(_pt) return false end
-    if not IsViewerReady(viewer) then Profiler.stop(_pt) return false end
+    if not viewer or not cfg then return false end
+    if viewer._vf_refreshing then return false end
+    if not IsViewerReady(viewer) then return false end
     viewer._vf_refreshing = true
 
     local allIcons = StyleLayout.CollectIcons(viewer)
@@ -1407,7 +1392,6 @@ local function RefreshBuffViewer(viewer, cfg)
         end)
     end
 
-    Profiler.stop(_pt)
     return true
 end
 
@@ -1472,7 +1456,6 @@ local function SetupBuffBarRuntimeHandlers()
 end
 
 DoBuffRefresh = function(attempt)
-    Profiler.count("CDS:DoBuffRefresh")
     local viewer, cfg = GetBuffViewerAndConfig()
     if not viewer or not cfg then
         if BuffRuntime then BuffRuntime.disable() end
@@ -1503,7 +1486,6 @@ DoBuffRefresh = function(attempt)
 end
 
 RequestBuffRefresh = function()
-    Profiler.count("CDS:RequestBuffRefresh")
     if buffRefreshPending then return end
     buffRefreshPending = true
     C_Timer.After(0, function()
@@ -1514,7 +1496,6 @@ RequestBuffRefresh = function()
 end
 
 DoBuffBarRefresh = function(attempt)
-    Profiler.count("CDS:DoBuffBarRefresh")
     local viewer, cfg = GetBuffBarViewerAndConfig()
     if not viewer or not cfg then
         if BuffBarRuntime then BuffBarRuntime.disable() end
@@ -1553,13 +1534,84 @@ DoBuffBarRefresh = function(attempt)
 end
 
 RequestBuffBarRefresh = function()
-    Profiler.count("CDS:RequestBuffBarRefresh")
     if buffBarRefreshPending then return end
     buffBarRefreshPending = true
     -- 延迟到帧末尾执行，与Release合并，避免同一帧内重复刷新
     C_Timer.After(0, function()
         buffBarRefreshPending = false
         DoBuffBarRefresh(0)
+    end)
+end
+
+if Profiler and Profiler.registerCount then
+    Profiler.registerCount("CDS:GetBuffViewerAndConfig", function()
+        return GetBuffViewerAndConfig
+    end, function(fn)
+        GetBuffViewerAndConfig = fn
+    end)
+    Profiler.registerCount("CDS:GetBuffBarViewerAndConfig", function()
+        return GetBuffBarViewerAndConfig
+    end, function(fn)
+        GetBuffBarViewerAndConfig = fn
+    end)
+    Profiler.registerCount("CDS:CollectBuffBarFrames", function()
+        return CollectBuffBarFrames
+    end, function(fn)
+        CollectBuffBarFrames = fn
+    end)
+    Profiler.registerCount("CDS:ProvisionalPlaceBuffFrame", function()
+        return ProvisionalPlaceBuffFrame
+    end, function(fn)
+        ProvisionalPlaceBuffFrame = fn
+    end)
+    Profiler.registerCount("CDS:DoBuffRefresh", function()
+        return DoBuffRefresh
+    end, function(fn)
+        DoBuffRefresh = fn
+    end)
+    Profiler.registerCount("CDS:RequestBuffRefresh", function()
+        return RequestBuffRefresh
+    end, function(fn)
+        RequestBuffRefresh = fn
+    end)
+    Profiler.registerCount("CDS:DoBuffBarRefresh", function()
+        return DoBuffBarRefresh
+    end, function(fn)
+        DoBuffBarRefresh = fn
+    end)
+    Profiler.registerCount("CDS:RequestBuffBarRefresh", function()
+        return RequestBuffBarRefresh
+    end, function(fn)
+        RequestBuffBarRefresh = fn
+    end)
+end
+
+if Profiler and Profiler.registerScope then
+    Profiler.registerScope("CDS:customHLFlush_OnUpdate", function()
+        return customHLFlushOnUpdate
+    end, function(fn)
+        customHLFlushOnUpdate = fn
+        customHLFlushFrame:SetScript("OnUpdate", fn)
+    end)
+    Profiler.registerScope("CDS:RefreshAllOtherFeatureHighlights", function()
+        return RefreshAllOtherFeatureHighlights
+    end, function(fn)
+        RefreshAllOtherFeatureHighlights = fn
+    end)
+    Profiler.registerScope("CDS:RefreshBuffBarViewer", function()
+        return RefreshBuffBarViewer
+    end, function(fn)
+        RefreshBuffBarViewer = fn
+    end)
+    Profiler.registerScope("CDS:RefreshSkillViewer", function()
+        return RefreshSkillViewer
+    end, function(fn)
+        RefreshSkillViewer = fn
+    end)
+    Profiler.registerScope("CDS:RefreshBuffViewer", function()
+        return RefreshBuffViewer
+    end, function(fn)
+        RefreshBuffViewer = fn
     end)
 end
 
@@ -1628,14 +1680,14 @@ SetupHooks = function()
     -- Release 时帧可能尚未完全隐藏，延迟到帧末尾确保状态一致
     local _pendingBarSyncRefresh = false
     local _barSyncRefreshFrame = CreateFrame("Frame")
+    local barSyncOnUpdate
     _barSyncRefreshFrame:Hide()
-    _barSyncRefreshFrame:SetScript("OnUpdate", function(self)
+    barSyncOnUpdate = function(self)
         self:Hide()
         _pendingBarSyncRefresh = false
-        local _pt = Profiler.start("CDS:barSync_OnUpdate")
         DoBuffBarRefresh(0)
-        Profiler.stop(_pt)
-    end)
+    end
+    _barSyncRefreshFrame:SetScript("OnUpdate", barSyncOnUpdate)
 
     local buffBarReleaseHandler = function()
         if BuffBarCooldownViewer then
@@ -1651,14 +1703,15 @@ SetupHooks = function()
     -- 帧末尾合并刷新：同一帧内多次 provisionalPlaceAndQueue 只做一次 DoBuffRefresh
     local _pendingSyncRefresh = false
     local _syncRefreshFrame = CreateFrame("Frame")
+    local buffSyncOnUpdate
+    local provisionalPlaceAndQueue
     _syncRefreshFrame:Hide()
-    _syncRefreshFrame:SetScript("OnUpdate", function(self)
+    buffSyncOnUpdate = function(self)
         self:Hide()
         _pendingSyncRefresh = false
-        local _pt = Profiler.start("CDS:buffSync_OnUpdate")
         DoBuffRefresh(0)
-        Profiler.stop(_pt)
-    end)
+    end
+    _syncRefreshFrame:SetScript("OnUpdate", buffSyncOnUpdate)
 
     local function QueueBuffSyncRefresh()
         if not _pendingSyncRefresh then
@@ -1669,8 +1722,7 @@ SetupHooks = function()
 
     -- OnCooldownIDSet时：先ApplyStyle建立缓存，再ProvisionalPlace定位
     -- 确保样式初始化在定位之前完成，首次触发不会因样式操作触发重渲染
-    local provisionalPlaceAndQueue = function(frame)
-        Profiler.count("CDS:provisionalPlaceAndQueue")
+    provisionalPlaceAndQueue = function(frame)
         if not frame then return end
         frame._vf_cdmKind = "buff"
         local viewer, cfg = GetBuffViewerAndConfig()
@@ -1689,6 +1741,28 @@ SetupHooks = function()
         TouchCustomHighlight(frame)
         -- 合并同一帧内的多次刷新：OnUpdate 在当前帧末尾触发一次 DoBuffRefresh
         QueueBuffSyncRefresh()
+    end
+
+    if Profiler and Profiler.registerScope then
+        Profiler.registerScope("CDS:barSync_OnUpdate", function()
+            return barSyncOnUpdate
+        end, function(fn)
+            barSyncOnUpdate = fn
+            _barSyncRefreshFrame:SetScript("OnUpdate", fn)
+        end)
+        Profiler.registerScope("CDS:buffSync_OnUpdate", function()
+            return buffSyncOnUpdate
+        end, function(fn)
+            buffSyncOnUpdate = fn
+            _syncRefreshFrame:SetScript("OnUpdate", fn)
+        end)
+    end
+    if Profiler and Profiler.registerCount then
+        Profiler.registerCount("CDS:provisionalPlaceAndQueue", function()
+            return provisionalPlaceAndQueue
+        end, function(fn)
+            provisionalPlaceAndQueue = fn
+        end)
     end
 
     local function enforceScaleOnViewer(viewer)

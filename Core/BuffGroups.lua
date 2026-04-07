@@ -23,15 +23,13 @@ local _spellMapDirty = true
 -- =========================================================
 
 local function RebuildSpellMap()
-    local _pt = Profiler.start("BG:RebuildSpellMap")
-    if not _spellMapDirty then Profiler.stop(_pt) return _groupSpellMap end
+    if not _spellMapDirty then return _groupSpellMap end
     _spellMapDirty = false
 
     wipe(_groupSpellMap)
 
     local db = VFlow.getDB(MODULE_KEY)
     if not db or not db.customGroups then
-        Profiler.stop(_pt)
         return _groupSpellMap
     end
 
@@ -69,7 +67,6 @@ local function RebuildSpellMap()
         end
     end
 
-    Profiler.stop(_pt)
     return _groupSpellMap
 end
 
@@ -126,7 +123,6 @@ local function GetGroupIdxForIcon(icon, spellMap)
 end
 
 local function ClassifyIcons(allIcons)
-    local _pt = Profiler.start("BG:ClassifyIcons")
     local spellMap = RebuildSpellMap()
 
     if not next(spellMap) then
@@ -135,7 +131,6 @@ local function ClassifyIcons(allIcons)
         for i = 1, n do
             mainVisible[i] = allIcons[i]
         end
-        Profiler.stop(_pt)
         return mainVisible, {}
     end
 
@@ -165,7 +160,6 @@ local function ClassifyIcons(allIcons)
         end
     end
 
-    Profiler.stop(_pt)
     return mainVisible, groupBuckets
 end
 
@@ -174,7 +168,6 @@ end
 -- =========================================================
 
 local function InitGroupContainers()
-    local _pt = Profiler.start("BG:InitGroupContainers")
     local db = VFlow.getDB(MODULE_KEY)
     local groups = db and db.customGroups
 
@@ -189,7 +182,6 @@ local function InitGroupContainers()
     end
 
     if not groups then
-        Profiler.stop(_pt)
         return
     end
 
@@ -263,7 +255,6 @@ local function InitGroupContainers()
     if VFlow.VisibilityControl and VFlow.VisibilityControl.EvaluateAll then
         VFlow.VisibilityControl.EvaluateAll()
     end
-    Profiler.stop(_pt)
 end
 
 -- =========================================================
@@ -271,10 +262,8 @@ end
 -- =========================================================
 
 local function LayoutBuffGroups(groupBuckets)
-    local _pt = Profiler.start("BG:LayoutBuffGroups")
     local db = VFlow.getDB(MODULE_KEY)
     if not db or not db.customGroups then
-        Profiler.stop(_pt)
         return
     end
 
@@ -479,7 +468,6 @@ local function LayoutBuffGroups(groupBuckets)
             end
         end
     end
-    Profiler.stop(_pt)
 end
 
 -- =========================================================
@@ -509,6 +497,24 @@ VFlow.BuffGroups = {
         return idx ~= nil and idx ~= -1
     end,
 }
+
+if Profiler and Profiler.registerScope then
+    Profiler.registerScope("BG:RebuildSpellMap", function()
+        return RebuildSpellMap
+    end, function(fn)
+        RebuildSpellMap = fn
+    end)
+    Profiler.registerScope("BG:InitGroupContainers", function()
+        return InitGroupContainers
+    end, function(fn)
+        InitGroupContainers = fn
+    end)
+end
+
+if Profiler and Profiler.registerTableScope then
+    Profiler.registerTableScope(VFlow.BuffGroups, "classifyIcons", "BG:ClassifyIcons")
+    Profiler.registerTableScope(VFlow.BuffGroups, "layoutBuffGroups", "BG:LayoutBuffGroups")
+end
 
 -- =========================================================
 -- SECTION 8: 初始化与 Store 监听

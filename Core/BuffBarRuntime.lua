@@ -38,6 +38,7 @@ local styleVersion = 0
 local BURST_TICKS = 8
 local BURST_THROTTLE = 0.033
 local WATCHDOG_THROTTLE = 0.25
+local RuntimeOnUpdate
 
 -- =========================================================
 -- SECTION 3: 可见条快照
@@ -115,65 +116,70 @@ function BuffBarRuntime.enable()
     enabled = true
     needRefetchRefs = true
 
-    frame:SetScript("OnUpdate", function()
-        if not handlers then
-            BuffBarRuntime.disable()
-            return
-        end
+    frame:SetScript("OnUpdate", RuntimeOnUpdate)
+end
 
-        -- 只在 dirty 或首次时重新获取 viewer/cfg 引用
-        if needRefetchRefs then
-            cachedViewer = handlers.getViewer and handlers.getViewer() or nil
-            cachedCfg = handlers.getConfig and handlers.getConfig() or nil
-            needRefetchRefs = false
-        end
+RuntimeOnUpdate = function()
+    if not handlers then
+        BuffBarRuntime.disable()
+        return
+    end
 
-        local viewer = cachedViewer
-        local cfg = cachedCfg
-        if not viewer or not cfg then
-            BuffBarRuntime.disable()
-            return
-        end
+    if needRefetchRefs then
+        cachedViewer = handlers.getViewer and handlers.getViewer() or nil
+        cachedCfg = handlers.getConfig and handlers.getConfig() or nil
+        needRefetchRefs = false
+    end
 
-        local now = GetTime()
-        if not viewer:IsShown() then
-            if now < nextUpdate then return end
-            nextUpdate = now + WATCHDOG_THROTTLE
-            return
-        end
-        if viewer._vf_refreshing then
-            if now < nextUpdate then return end
-            nextUpdate = now + BURST_THROTTLE
-            return
-        end
+    local viewer = cachedViewer
+    local cfg = cachedCfg
+    if not viewer or not cfg then
+        BuffBarRuntime.disable()
+        return
+    end
 
-        local throttle = (dirty or burst > 0) and BURST_THROTTLE or WATCHDOG_THROTTLE
+    local now = GetTime()
+    if not viewer:IsShown() then
         if now < nextUpdate then return end
-        nextUpdate = now + throttle
+        nextUpdate = now + WATCHDOG_THROTTLE
+        return
+    end
+    if viewer._vf_refreshing then
+        if now < nextUpdate then return end
+        nextUpdate = now + BURST_THROTTLE
+        return
+    end
 
-        local _pt = Profiler.start("BuffBarRT:OnUpdate")
+    local throttle = (dirty or burst > 0) and BURST_THROTTLE or WATCHDOG_THROTTLE
+    if now < nextUpdate then return end
+    nextUpdate = now + throttle
 
+    local visible = handlers.collectVisible and handlers.collectVisible(viewer, dirty) or {}
+    local changed = dirty or HasVisibleChanged(visible)
 
-        -- 收集可见帧并检测变化
-        local visible = handlers.collectVisible and handlers.collectVisible(viewer, dirty) or {}
-        local changed = dirty or HasVisibleChanged(visible)
-
-        if changed then
-            if handlers.refresh then
-                handlers.refresh(viewer, cfg)
-            end
-            -- refresh 后重新收集可见帧来更新快照（refresh可能改变了可见状态）
-            local refreshedVisible = handlers.collectVisible and handlers.collectVisible(viewer, false) or visible
-            SnapshotVisible(refreshedVisible)
-            dirty = false
-            burst = BURST_TICKS
-            Profiler.stop(_pt)
-            return
+    if changed then
+        if handlers.refresh then
+            handlers.refresh(viewer, cfg)
         end
+        local refreshedVisible = handlers.collectVisible and handlers.collectVisible(viewer, false) or visible
+        SnapshotVisible(refreshedVisible)
+        dirty = false
+        burst = BURST_TICKS
+        return
+    end
 
-        if burst > 0 then
-            burst = burst - 1
+    if burst > 0 then
+        burst = burst - 1
+    end
+end
+
+if Profiler and Profiler.registerScope then
+    Profiler.registerScope("BuffBarRT:OnUpdate", function()
+        return RuntimeOnUpdate
+    end, function(fn)
+        RuntimeOnUpdate = fn
+        if enabled then
+            frame:SetScript("OnUpdate", fn)
         end
-        Profiler.stop(_pt)
     end)
 end

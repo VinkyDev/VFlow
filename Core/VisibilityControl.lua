@@ -168,7 +168,6 @@ end
 
 --- 应用显示条件到所有UI元素
 function VisibilityControl.EvaluateAll()
-    local _pt = Profiler.start("VC:EvaluateAll")
     -- 1. 处理暴雪内置Viewer
     for _, viewerInfo in ipairs(VIEWERS) do
         local viewer = _G[viewerInfo.name]
@@ -204,8 +203,6 @@ function VisibilityControl.EvaluateAll()
     if RB and RB.RefreshAll then
         RB.RefreshAll()
     end
-
-    Profiler.stop(_pt)
 end
 
 -- =========================================================
@@ -226,14 +223,23 @@ end
 local function UpdateConfigCache()
     local db = VFlow.getDB(MODULE_KEY)
     if not db then return end
-
-    local _pt = Profiler.start("VC:UpdateConfigCache")
     for key, value in pairs(db) do
         configCache[key] = value
     end
-    Profiler.stop(_pt)
 
     VisibilityControl.EvaluateAll()
+end
+
+if Profiler and Profiler.registerTableScope then
+    Profiler.registerTableScope(VisibilityControl, "EvaluateAll", "VC:EvaluateAll")
+end
+
+if Profiler and Profiler.registerScope then
+    Profiler.registerScope("VC:UpdateConfigCache", function()
+        return UpdateConfigCache
+    end, function(fn)
+        UpdateConfigCache = fn
+    end)
 end
 
 -- =========================================================
@@ -279,4 +285,3 @@ end
 C_Timer.After(0.1, function()
     VisibilityControl.Initialize()
 end)
-

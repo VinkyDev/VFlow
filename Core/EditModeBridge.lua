@@ -189,7 +189,6 @@ local function HideNonCheckboxSettings(dialog, systemFrame)
     if not TARGET_FRAME_NAMES[frameName] then return end
     local container = dialog.Settings
     if not container then return end
-    local _pt = Profiler.start("EMB:HideNonCheckboxSettings")
     for _, child in ipairs({ container:GetChildren() }) do
         if child:IsShown() and not IsCheckboxSetting(child) then
             child:Hide()
@@ -197,7 +196,14 @@ local function HideNonCheckboxSettings(dialog, systemFrame)
     end
     if container.Layout then container:Layout() end
     if dialog.Layout then dialog:Layout() end
-    Profiler.stop(_pt)
+end
+
+if Profiler and Profiler.registerScope then
+    Profiler.registerScope("EMB:HideNonCheckboxSettings", function()
+        return HideNonCheckboxSettings
+    end, function(fn)
+        HideNonCheckboxSettings = fn
+    end)
 end
 
 local function HookEditModeDialog()

@@ -34,10 +34,10 @@ end
 -- SECTION 3: 扫描调度
 -- =========================================================
 
-local function ScanBuffViewers()
-    if InCombatLockdown() then return end
+local ScanBuffViewers
 
-    local _pt = Profiler.start("BS:ScanBuffViewers")
+ScanBuffViewers = function()
+    if InCombatLockdown() then return end
     local buffs = {}
 
     -- 扫描BUFF查看器
@@ -70,8 +70,6 @@ local function ScanBuffViewers()
 
     -- 更新全局状态
     VFlow.State.update("trackedBuffs", buffs)
-
-    Profiler.stop(_pt)
 end
 
 local function ScheduleScan()
@@ -94,3 +92,12 @@ VFlow.on("TRAIT_CONFIG_UPDATED", "BuffScanner", ScheduleScan)
 VFlow.BuffScanner = {
     scan = ScanBuffViewers,
 }
+
+if Profiler and Profiler.registerScope then
+    Profiler.registerScope("BS:ScanBuffViewers", function()
+        return ScanBuffViewers
+    end, function(fn)
+        ScanBuffViewers = fn
+        VFlow.BuffScanner.scan = fn
+    end)
+end

@@ -23,15 +23,13 @@ local _spellMapDirty = true -- 脏标志：只在配置变更时重建
 -- =========================================================
 
 local function RebuildSpellMap()
-    local _pt = Profiler.start("SG:RebuildSpellMap")
-    if not _spellMapDirty then Profiler.stop(_pt) return _groupSpellMap end
+    if not _spellMapDirty then return _groupSpellMap end
     _spellMapDirty = false
 
     wipe(_groupSpellMap)
 
     local db = VFlow.getDB(MODULE_KEY)
     if not db or not db.customGroups then
-        Profiler.stop(_pt)
         return _groupSpellMap
     end
 
@@ -69,7 +67,6 @@ local function RebuildSpellMap()
         end
     end
 
-    Profiler.stop(_pt)
     return _groupSpellMap
 end
 
@@ -139,7 +136,6 @@ local function GetGroupIdxForIcon(icon, spellMap)
 end
 
 local function ClassifyIcons(allIcons)
-    local _pt = Profiler.start("SG:ClassifyIcons")
     local spellMap = RebuildSpellMap()
 
     if not next(spellMap) then
@@ -148,7 +144,6 @@ local function ClassifyIcons(allIcons)
         for i = 1, n do
             mainVisible[i] = allIcons[i]
         end
-        Profiler.stop(_pt)
         return mainVisible, {}
     end
 
@@ -184,7 +179,6 @@ local function ClassifyIcons(allIcons)
         end
     end
 
-    Profiler.stop(_pt)
     return mainVisible, groupBuckets
 end
 
@@ -245,7 +239,6 @@ end
 
 -- 初始化所有容器（用于配置变更时）
 local function InitGroupContainers()
-    local _pt = Profiler.start("SG:InitGroupContainers")
     local db = VFlow.getDB(MODULE_KEY)
     local groups = db and db.customGroups
 
@@ -254,7 +247,6 @@ local function InitGroupContainers()
     end
 
     if not groups then
-        Profiler.stop(_pt)
         return
     end
 
@@ -263,7 +255,6 @@ local function InitGroupContainers()
             EnsureGroupContainer(i)
         end
     end
-    Profiler.stop(_pt)
 end
 
 -- =========================================================
@@ -271,10 +262,8 @@ end
 -- =========================================================
 
 local function LayoutSkillGroups(groupBuckets)
-    local _pt = Profiler.start("SG:LayoutSkillGroups")
     local db = VFlow.getDB(MODULE_KEY)
     if not db or not db.customGroups then
-        Profiler.stop(_pt)
         return
     end
 
@@ -453,7 +442,6 @@ local function LayoutSkillGroups(groupBuckets)
             end
         end
     end
-    Profiler.stop(_pt)
 end
 
 -- =========================================================
@@ -478,6 +466,24 @@ VFlow.SkillGroups = {
     layoutSkillGroups = LayoutSkillGroups,
     forEachGroupIcon = ForEachGroupIcon,
 }
+
+if Profiler and Profiler.registerScope then
+    Profiler.registerScope("SG:RebuildSpellMap", function()
+        return RebuildSpellMap
+    end, function(fn)
+        RebuildSpellMap = fn
+    end)
+    Profiler.registerScope("SG:InitGroupContainers", function()
+        return InitGroupContainers
+    end, function(fn)
+        InitGroupContainers = fn
+    end)
+end
+
+if Profiler and Profiler.registerTableScope then
+    Profiler.registerTableScope(VFlow.SkillGroups, "classifyIcons", "SG:ClassifyIcons")
+    Profiler.registerTableScope(VFlow.SkillGroups, "layoutSkillGroups", "SG:LayoutSkillGroups")
+end
 
 -- =========================================================
 -- SECTION 8: 初始化与 Store 监听
