@@ -470,11 +470,11 @@ L["Sound path example: Interface\\AddOns\\VFlow\\Sounds\\alert.ogg"] = true
 L["Spell \\\"%s\\\" is not available on this character, cannot add"] = true
 
 -- Resource bar module / ClassResourceMap
-L["Primary resource bar"] = true
-L["Secondary resource bar"] = true
+L["Primary resource bar"] = "Primary resource"
+L["Secondary resource bar"] = "Secondary resource"
 L["Use primary bar position when primary hidden"] = true
 L["Resource module description"] = "Primary and secondary bar layout, plus per-resource colors and number/percent display."
-L["General resource appearance"] = true
+L["General resource appearance"] = "General"
 L["Resource bar background section"] = true
 L["Expand settings"] = true
 L["Collapse settings"] = true
