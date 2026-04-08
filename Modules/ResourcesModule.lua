@@ -514,6 +514,15 @@ local function appendResourceStyleDetailRows(layout, token)
             },
         }
     end
+    if RS.StyleKeyHasOverchargedColorOption(token) then
+        layout[#layout + 1] = {
+            type = "colorPicker",
+            key = base .. ".overchargedBarColor",
+            label = L["Overcharged combo point color"],
+            hasAlpha = true,
+            cols = 12,
+        }
+    end
     layout[#layout + 1] = {
         type = "checkbox",
         key = base .. ".thresholdColorsEnabled",

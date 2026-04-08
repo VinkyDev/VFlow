@@ -119,6 +119,9 @@ local function cloneStyleEntry(entry)
     if entry.rechargeBarColor then
         out.rechargeBarColor = copyColor(entry.rechargeBarColor)
     end
+    if entry.overchargedBarColor then
+        out.overchargedBarColor = copyColor(entry.overchargedBarColor)
+    end
     applyThresholdFields(out, entry, false)
     return out
 end
@@ -133,6 +136,9 @@ local function baseEntry(barColor, opts)
     }
     if opts.rechargeBarColor then
         out.rechargeBarColor = copyColor(opts.rechargeBarColor)
+    end
+    if opts.overchargedBarColor then
+        out.overchargedBarColor = copyColor(opts.overchargedBarColor)
     end
     applyThresholdFields(out, opts, false)
     return out
@@ -150,7 +156,10 @@ local DEFAULT_ENTRY = {
     INSANITY = baseEntry({ r = 0.68, g = 0.37, b = 0.92, a = 1 }),
     LUNAR_POWER = baseEntry({ r = 0.50, g = 0.66, b = 1.00, a = 1 }),
     MAELSTROM = baseEntry({ r = 0.18, g = 0.65, b = 1.00, a = 1 }),
-    COMBO_POINTS = baseEntry({ r = 0.96, g = 0.79, b = 0.31, a = 1 }, { showText = false }),
+    COMBO_POINTS = baseEntry({ r = 0.96, g = 0.79, b = 0.31, a = 1 }, {
+        showText = false,
+        overchargedBarColor = { r = 0.24, g = 0.60, b = 1.00, a = 1 },
+    }),
     RUNES = baseEntry({ r = 0.57, g = 0.75, b = 0.96, a = 1 }, {
         showText = false,
         rechargeBarColor = { r = 0.25, g = 0.34, b = 0.46, a = 1 },
@@ -205,6 +214,10 @@ local function buildResolvedStyle(defaults, entry)
     local rechargeBarColor = entry and entry.rechargeBarColor or defaults.rechargeBarColor
     if rechargeBarColor then
         out.rechargeBarColor = copyColor(rechargeBarColor)
+    end
+    local overchargedBarColor = entry and entry.overchargedBarColor or defaults.overchargedBarColor
+    if overchargedBarColor then
+        out.overchargedBarColor = copyColor(overchargedBarColor)
     end
     applyThresholdFields(out, defaults, false)
     applyThresholdFields(out, entry, true)
@@ -454,6 +467,10 @@ function RS.StyleKeyHasRechargeColorOption(styleKey)
     return styleKey == "ESSENCE" or styleKey == "RUNES" or styleKey == "SOUL_SHARDS"
 end
 
+function RS.StyleKeyHasOverchargedColorOption(styleKey)
+    return styleKey == "COMBO_POINTS"
+end
+
 function RS.ResolveRechargeBarColor(entry, barColor)
     local custom = entry and entry.rechargeColorCustom == true
     local rc = entry and entry.rechargeBarColor
@@ -466,6 +483,10 @@ function RS.ResolveRechargeBarColor(entry, barColor)
         }
     end
     return RS.DimBarColor(barColor, 0.5)
+end
+
+function RS.ResolveOverchargedComboPointColor(style, baseColor)
+    return copyColor(style and style.overchargedBarColor, baseColor or (style and style.barColor) or nil)
 end
 
 -- =========================================================

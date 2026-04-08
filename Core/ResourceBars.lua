@@ -415,6 +415,23 @@ local function PipCellFillAmount(cur, pipIndex)
     return math.min(1, math.max(0, c - (pipIndex - 1)))
 end
 
+local function RuntimeUsesOverchargedComboPointColor(resource)
+    return type(resource) == "number"
+        and E_PT
+        and resource == E_PT.ComboPoints
+end
+
+local function BuildChargedComboPointLookup(resource)
+    if not RuntimeUsesOverchargedComboPointColor(resource) or not GetUnitChargedPowerPoints then
+        return nil
+    end
+    local lookup = {}
+    for _, pointIndex in ipairs(GetUnitChargedPowerPoints("player") or {}) do
+        lookup[pointIndex] = true
+    end
+    return next(lookup) and lookup or nil
+end
+
 local function ComputeDiscretePipFill(resource, host, gameSlot, cur, max, runeOrder, runeFill)
     if RS.RuntimeUsesEssenceRechargeTicker(resource) then
         local curInt = math.floor(tonumber(cur) or 0)
@@ -641,10 +658,13 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
         local readyCol = fillCol
         local useSmoothSeg = cfg and (cfg.smoothProgress == nil or cfg.smoothProgress == true)
         local useDual = RuntimeUsesSegmentRechargeColors(resource)
+        local useOverchargedCombo = RuntimeUsesOverchargedComboPointColor(resource)
+        local chargedLookup = BuildChargedComboPointLookup(resource)
+        local chargedColor = chargedLookup and RS.ResolveOverchargedComboPointColor(style, fillCol) or nil
+        local comboCurrent = useOverchargedCombo and UnitPower("player", resource) or cur
+        local dimFillCol = useOverchargedCombo and RS.DimBarColor(fillCol, 0.5) or nil
 
         local function StyleAndShowSegment(segFrame, pos)
-            segFrame._bg:SetColorTexture(0, 0, 0, 0)
-
             local segSb = segFrame._sb
             segSb:SetStatusBarTexture(texPath)
             segSb._vf_fillColorSig = nil
@@ -655,14 +675,55 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
 
             local gameSlot = reverse and (max - pos + 1) or pos
             local fill = ComputeDiscretePipFill(resource, host, gameSlot, cur, max, runeOrder, runeFill)
+            local isCharged = chargedLookup and chargedLookup[gameSlot] and chargedColor
+            segFrame._bg:SetColorTexture(0, 0, 0, 0)
             local didDual = false
-            if useDual then
+            if useOverchargedCombo then
+                segSb:SetMinMaxValues(0, 1)
+                if isCharged then
+                    segSb:SetValue(1)
+                    if gameSlot <= comboCurrent then
+                        segSb:SetStatusBarColor(
+                            chargedColor.r or 1,
+                            chargedColor.g or 1,
+                            chargedColor.b or 1,
+                            chargedColor.a ~= nil and chargedColor.a or 1
+                        )
+                    else
+                        local dimChargedColor = RS.DimBarColor(chargedColor, 0.5)
+                        segSb:SetStatusBarColor(
+                            dimChargedColor.r or 1,
+                            dimChargedColor.g or 1,
+                            dimChargedColor.b or 1,
+                            dimChargedColor.a ~= nil and dimChargedColor.a or 1
+                        )
+                    end
+                elseif gameSlot <= comboCurrent then
+                    segSb:SetValue(1)
+                    segSb:SetStatusBarColor(
+                        fillCol.r or 1,
+                        fillCol.g or 1,
+                        fillCol.b or 1,
+                        fillCol.a ~= nil and fillCol.a or 1
+                    )
+                else
+                    segSb:SetValue(0)
+                    segSb:SetStatusBarColor(
+                        dimFillCol.r or 1,
+                        dimFillCol.g or 1,
+                        dimFillCol.b or 1,
+                        dimFillCol.a ~= nil and dimFillCol.a or 1
+                    )
+                end
+            elseif useDual then
                 didDual = SetDualColorForDiscreteSeg(segSb, resource, fill, gameSlot, cur, curInt, rechargeCol, readyCol)
             end
             if not didDual then
-                segSb:SetMinMaxValues(0, 1)
-                segSb:SetValue(fill)
-                ApplyMainBarFillColor(segSb, resource, style, cur, max)
+                if not isCharged and not useOverchargedCombo then
+                    segSb:SetMinMaxValues(0, 1)
+                    segSb:SetValue(fill)
+                    ApplyMainBarFillColor(segSb, resource, style, cur, max)
+                end
             elseif BFK.ApplyBarProgress then
                 BFK.ApplyBarProgress(segSb, 1, fill, useSmoothSeg)
             else
@@ -705,6 +766,11 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
     local readyCol = fillCol
     local useSmoothSeg = cfg and (cfg.smoothProgress == nil or cfg.smoothProgress == true)
     local useDual = RuntimeUsesSegmentRechargeColors(resource)
+    local useOverchargedCombo = RuntimeUsesOverchargedComboPointColor(resource)
+    local chargedLookup = BuildChargedComboPointLookup(resource)
+    local chargedColor = chargedLookup and RS.ResolveOverchargedComboPointColor(style, fillCol) or nil
+    local comboCurrent = useOverchargedCombo and UnitPower("player", resource) or cur
+    local dimFillCol = useOverchargedCombo and RS.DimBarColor(fillCol, 0.5) or nil
 
     local reverse = cfg.barReverse == true
     for pos = 1, max do
@@ -712,14 +778,55 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
         if segFrame and segFrame._sb then
             local gameSlot = reverse and (max - pos + 1) or pos
             local fill = ComputeDiscretePipFill(resource, host, gameSlot, cur, max, runeOrder, runeFill)
+            local isCharged = chargedLookup and chargedLookup[gameSlot] and chargedColor
+            segFrame._bg:SetColorTexture(0, 0, 0, 0)
             local didDual = false
-            if useDual then
+            if useOverchargedCombo then
+                segFrame._sb:SetMinMaxValues(0, 1)
+                if isCharged then
+                    segFrame._sb:SetValue(1)
+                    if gameSlot <= comboCurrent then
+                        segFrame._sb:SetStatusBarColor(
+                            chargedColor.r or 1,
+                            chargedColor.g or 1,
+                            chargedColor.b or 1,
+                            chargedColor.a ~= nil and chargedColor.a or 1
+                        )
+                    else
+                        local dimChargedColor = RS.DimBarColor(chargedColor, 0.5)
+                        segFrame._sb:SetStatusBarColor(
+                            dimChargedColor.r or 1,
+                            dimChargedColor.g or 1,
+                            dimChargedColor.b or 1,
+                            dimChargedColor.a ~= nil and dimChargedColor.a or 1
+                        )
+                    end
+                elseif gameSlot <= comboCurrent then
+                    segFrame._sb:SetValue(1)
+                    segFrame._sb:SetStatusBarColor(
+                        fillCol.r or 1,
+                        fillCol.g or 1,
+                        fillCol.b or 1,
+                        fillCol.a ~= nil and fillCol.a or 1
+                    )
+                else
+                    segFrame._sb:SetValue(0)
+                    segFrame._sb:SetStatusBarColor(
+                        dimFillCol.r or 1,
+                        dimFillCol.g or 1,
+                        dimFillCol.b or 1,
+                        dimFillCol.a ~= nil and dimFillCol.a or 1
+                    )
+                end
+            elseif useDual then
                 didDual = SetDualColorForDiscreteSeg(segFrame._sb, resource, fill, gameSlot, cur, curInt, rechargeCol, readyCol)
             end
             if not didDual then
-                segFrame._sb:SetMinMaxValues(0, 1)
-                segFrame._sb:SetValue(fill)
-                ApplyMainBarFillColor(segFrame._sb, resource, style, cur, max)
+                if not isCharged and not useOverchargedCombo then
+                    segFrame._sb:SetMinMaxValues(0, 1)
+                    segFrame._sb:SetValue(fill)
+                    ApplyMainBarFillColor(segFrame._sb, resource, style, cur, max)
+                end
             elseif BFK.ApplyBarProgress then
                 BFK.ApplyBarProgress(segFrame._sb, 1, fill, useSmoothSeg)
             else

@@ -480,6 +480,7 @@ L["Expand settings"] = true
 L["Collapse settings"] = true
 L["Custom recharging color"] = true
 L["Recharging state color"] = true
+L["Overcharged combo point color"] = true
 L["This class resources"] = "This class"
 L["Other resource types"] = "All other types"
 L["Smooth bar fill"] = true
