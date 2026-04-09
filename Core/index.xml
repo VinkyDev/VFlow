@@ -23,4 +23,5 @@
     <Script file="Core\VisibilityControl.lua"/>
     <Script file="Core\Minimap.lua"/>
     <Script file="Core\CustomTTS.lua"/>
+    <Script file="Core\SpecBinding.lua"/>
 </Ui>
