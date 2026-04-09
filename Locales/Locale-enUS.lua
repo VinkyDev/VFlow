@@ -534,3 +534,6 @@ L["ResType_MAELSTROM_WEAPON"] = "Maelstrom Weapon"
 L["ResType_SOUL_FRAGMENTS_VENGEANCE"] = "Soul Fragments (Vengeance)"
 L["ResType_DEVOURER_SOUL"] = "Soul Fragments (Devourer)"
 L["ResType_TIP_OF_THE_SPEAR"] = "Tip of the Spear"
+L["Spec Binding"] = true
+L["Not bound"] = true
+L["Spec binding profile not found: %s"] = true
