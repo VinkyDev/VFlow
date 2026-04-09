@@ -67,7 +67,7 @@ function SpecBinding.getAll()
     if not bindings then return {} end
     local result = {}
     for k, v in pairs(bindings) do
-        result[k] = v
+        result[k] = v  -- 浅拷贝：v 为 string，防止调用方修改内部表
     end
     return result
 end
