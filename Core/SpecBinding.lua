@@ -28,6 +28,9 @@ end
 
 local function getBindingsTable(createIfMissing)
     if type(VFlowDB) ~= "table" then return nil end
+    if createIfMissing and type(VFlowDB["__meta"]) ~= "table" then
+        VFlow.Store.getCurrentProfile()  -- 触发 ensureProfileRoot，确保 __meta 存在
+    end
     local meta = VFlowDB["__meta"]
     if type(meta) ~= "table" then return nil end
     if type(meta.specBindings) ~= "table" then
@@ -97,10 +100,12 @@ VFlow.on("PLAYER_SPECIALIZATION_CHANGED", "VFlow.SpecBinding", function()
         return
     end
 
-    local ok, err = VFlow.Store.setCurrentProfile(profileName)
-    if ok then
-        print("|cff00ff00VFlow:|r " .. string.format(L["Switched to config: %s"], profileName))
-    else
-        print("|cffff0000VFlow:|r " .. string.format(L["Switch config failed: %s"], tostring(err)))
-    end
+    C_Timer.After(0, function()
+        local ok, err = VFlow.Store.setCurrentProfile(profileName)
+        if ok then
+            print("|cff00ff00VFlow:|r " .. string.format(L["Switched to config: %s"], profileName))
+        else
+            print("|cffff0000VFlow:|r " .. string.format(L["Switch config failed: %s"], tostring(err)))
+        end
+    end)
 end)
