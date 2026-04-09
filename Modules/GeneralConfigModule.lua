@@ -51,6 +51,13 @@ local function syncPageState()
     if not pageState.copySourceProfile or pageState.copySourceProfile == "" then
         pageState.copySourceProfile = current
     end
+    if VFlow.SpecBinding then
+        local numSpecs = GetNumSpecializations and GetNumSpecializations() or 0
+        for i = 1, numSpecs do
+            local bound = VFlow.SpecBinding.get(i)
+            pageState["specBinding_" .. i] = bound or ""
+        end
+    end
 end
 
 local function getProfileDropdownItems()
@@ -391,6 +398,33 @@ local function renderContent(container, _menuKey)
             text = L["LibSerialize or LibDeflate not loaded, import/export unavailable."],
             cols = 24
         })
+    end
+
+    -- 专精绑定区块
+    if VFlow.SpecBinding then
+        table.insert(layout, { type = "separator", cols = 24 })
+        table.insert(layout, { type = "subtitle", text = L["Spec Binding"], cols = 24 })
+        local specProfileItems = { { L["Not bound"], "" } }
+        for _, name in ipairs(VFlow.Store.listProfiles()) do
+            table.insert(specProfileItems, { name, name })
+        end
+        local numSpecs = GetNumSpecializations and GetNumSpecializations() or 0
+        for i = 1, numSpecs do
+            local _, specName = GetSpecializationInfo(i)
+            local specIndex = i
+            table.insert(layout, {
+                type = "dropdown",
+                key = "specBinding_" .. specIndex,
+                label = specName or ("专精 " .. specIndex),
+                cols = 24,
+                labelOnLeft = true,
+                items = specProfileItems,
+                onChange = function(cfg, value)
+                    local profileName = (value ~= "") and value or nil
+                    VFlow.SpecBinding.set(specIndex, profileName)
+                end,
+            })
+        end
     end
 
     table.insert(layout, {
