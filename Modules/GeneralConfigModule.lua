@@ -415,7 +415,7 @@ local function renderContent(container, _menuKey)
             table.insert(layout, {
                 type = "dropdown",
                 key = "specBinding_" .. specIndex,
-                label = specName or ("专精 " .. specIndex),
+                label = specName or string.format(L["Spec %d"], specIndex),
                 cols = 24,
                 labelOnLeft = true,
                 items = specProfileItems,

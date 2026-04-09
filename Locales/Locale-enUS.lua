@@ -537,3 +537,4 @@ L["ResType_TIP_OF_THE_SPEAR"] = "Tip of the Spear"
 L["Spec Binding"] = true
 L["Not bound"] = true
 L["Spec binding profile not found: %s"] = true
+L["Spec %d"] = true
