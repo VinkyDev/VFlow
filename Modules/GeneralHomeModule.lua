@@ -31,6 +31,7 @@ local CHANGELOG = {
 		content = {
 			"回滚 v0.5.1 业务模块重构（恢复此前核心架构，缓解长时间战斗卡顿）",
 			"保留：专精绑定（SpecBinding）、TTS 调用方式、Buff 条 UIParent 布局宿主与 layoutPos 同步",
+			"图形监控：aura 清空时层数条立即同步（ClearAuraInstanceInfo）",
 		},
 	},
 	{

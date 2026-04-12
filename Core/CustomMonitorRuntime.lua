@@ -463,6 +463,27 @@ end
 local UpdateStackBar   -- 前向声明
 local UpdateDurationBar
 
+-- CDM 清空槽位时立刻同步层数条
+local function OnCDMClearAuraInstanceInfo(cdmFrame)
+    if not cdmFrame then return end
+    local barKeys = _frameToBarKeys[cdmFrame]
+    if not barKeys then return end
+    for _, barKey in ipairs(barKeys) do
+        local spellID = tonumber(barKey:match("^buffs/(%d+)$"))
+        local barFrame = spellID and _activeBuffBars[spellID]
+        if barFrame and barFrame._monitorType == "stacks" then
+            barFrame._nilCount = 0
+            barFrame._lastKnownActive = false
+            barFrame._lastKnownStacks = 0
+            barFrame._trackedAuraInstanceID = nil
+            barFrame._trackedUnit = nil
+            UnlinkBarFromAura(barKey)
+            UpdateStackBar(barFrame, spellID, barKey)
+            barFrame._buffBarDirty = false
+        end
+    end
+end
+
 local function FlushCDMFrameChanges()
     local batch = {}
     for fr in pairs(_cdmFlushPending) do
@@ -581,6 +602,7 @@ local function HookCDMFrame(cdmFrame, barKey)
         if cdmFrame.RefreshData         then hooksecurefunc(cdmFrame, "RefreshData",         DeferCDMFrameChanged) end
         if cdmFrame.RefreshApplications then hooksecurefunc(cdmFrame, "RefreshApplications", DeferCDMFrameChanged) end
         if cdmFrame.SetAuraInstanceInfo then hooksecurefunc(cdmFrame, "SetAuraInstanceInfo",  DeferCDMFrameChanged) end
+        if cdmFrame.ClearAuraInstanceInfo then hooksecurefunc(cdmFrame, "ClearAuraInstanceInfo", OnCDMClearAuraInstanceInfo) end
         _everHookedFrames[cdmFrame] = true
     end
     if not _hookedFrames[cdmFrame].barIDs[barKey] then
@@ -1593,17 +1615,28 @@ UpdateStackBar = function(barFrame, spellID, barKey)
 
     if not auraActive then
         if barFrame._lastKnownActive then
-            barFrame._nilCount = (barFrame._nilCount or 0) + 1
-            if barFrame._nilCount > 5 then
-                barFrame._nilCount             = 0
-                barFrame._lastKnownActive       = false
-                barFrame._lastKnownStacks       = 0
+            local cdmInstanceGone = not (cdmFrame and HasAuraInstanceID(cdmFrame.auraInstanceID))
+            if cdmInstanceGone then
+                barFrame._nilCount = 0
+                barFrame._lastKnownActive = false
+                barFrame._lastKnownStacks = 0
                 barFrame._trackedAuraInstanceID = nil
-                barFrame._trackedUnit           = nil
+                barFrame._trackedUnit = nil
                 UnlinkBarFromAura(barKey)
                 stacks = 0
             else
-                return  -- 冻结显示，等待 CDM 确认
+                barFrame._nilCount = (barFrame._nilCount or 0) + 1
+                if barFrame._nilCount > 5 then
+                    barFrame._nilCount             = 0
+                    barFrame._lastKnownActive       = false
+                    barFrame._lastKnownStacks       = 0
+                    barFrame._trackedAuraInstanceID = nil
+                    barFrame._trackedUnit           = nil
+                    UnlinkBarFromAura(barKey)
+                    stacks = 0
+                else
+                    return
+                end
             end
         end
     else
