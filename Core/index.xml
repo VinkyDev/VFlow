@@ -6,8 +6,7 @@
     <Script file="Core\Keybind.lua"/>
     <Script file="Core\StyleApply.lua"/>
     <Script file="Core\StyleLayout.lua"/>
-    <Script file="Core\BuffRuntime.lua"/>
-    <Script file="Core\BuffBarRuntime.lua"/>
+    <Script file="Core\ViewerRefreshQueue.lua"/>
     <Script file="Core\BuffScanner.lua"/>
     <Script file="Core\SkillScanner.lua"/>
     <Script file="Core\BuffGroups.lua"/>

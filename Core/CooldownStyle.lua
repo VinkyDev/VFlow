@@ -10,21 +10,22 @@ local Utils = VFlow.Utils
 
 local StyleApply = VFlow.StyleApply
 local StyleLayout = VFlow.StyleLayout
-local BuffRuntime = VFlow.BuffRuntime
-local BuffBarRuntime = VFlow.BuffBarRuntime
 local MasqueSupport = VFlow.MasqueSupport
 local PP = VFlow.PixelPerfect
 local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
 local abs = math.abs
-local GetTime = GetTime
 local Profiler = VFlow.Profiler
+local ViewerRefreshQueue = VFlow.ViewerRefreshQueue
+local QK_ESSENTIAL = ViewerRefreshQueue and ViewerRefreshQueue.KEY_ESSENTIAL or "EssentialCooldownViewer"
+local QK_UTILITY = ViewerRefreshQueue and ViewerRefreshQueue.KEY_UTILITY or "UtilityCooldownViewer"
+local QK_BUFF_ICONS = ViewerRefreshQueue and ViewerRefreshQueue.KEY_BUFF_ICONS or "BuffIconCooldownViewer"
+local QK_BUFF_BAR = ViewerRefreshQueue and ViewerRefreshQueue.KEY_BUFF_BAR or "BuffBarCooldownViewer"
 local RequestBuffRefresh
 local RequestBuffBarRefresh
 local IsViewerReady
 local customHLFlushOnUpdate
 local MAX_BUFF_READY_RETRIES = 20
 local MAX_BUFFBAR_READY_RETRIES = 20
-local BUFF_BAR_LAYOUT_MIN_INTERVAL = 0.05
 
 -- =========================================================
 -- SECTION 2: 样式版本与 DB 缓存
@@ -35,6 +36,12 @@ VFlow._buttonStyleVersion = _buttonStyleVersion
 local function BumpButtonStyleVersion()
     _buttonStyleVersion = _buttonStyleVersion + 1
     VFlow._buttonStyleVersion = _buttonStyleVersion
+end
+
+local _buffBarStyleVersion = 0
+
+local function BumpBuffBarStyleVersion()
+    _buffBarStyleVersion = _buffBarStyleVersion + 1
 end
 
 -- =========================================================
@@ -580,7 +587,7 @@ local function ApplyBuffBarFrameStyle(frame, cfg, frameWidth, frameHeight)
     -- 行帧不走路径 ApplyButtonStyle；需同步图标样式的 Debuff 红框 / 播疫 / CD 动画等隐藏（见 StyleApply.ApplyViewerItemVisualHides）
     StyleApply.ApplyViewerItemVisualHides(frame)
 
-    local barStyleVer = BuffBarRuntime and BuffBarRuntime.getStyleVersion() or 0
+    local barStyleVer = _buffBarStyleVersion
     local iconPosition = cfg.iconPosition or "LEFT"
 
     -- 脏检查：版本+尺寸+图标位置均未变则跳过
@@ -849,9 +856,13 @@ local function RefreshBuffBarViewer(viewer, cfg)
         viewer._vf_refreshing = false
         if viewer._vf_needsReRefresh then
             viewer._vf_needsReRefresh = false
-            C_Timer.After(0, function()
-                RefreshBuffBarViewer(viewer, cfg)
-            end)
+            if ViewerRefreshQueue then
+                ViewerRefreshQueue.request(QK_BUFF_BAR, false)
+            else
+                C_Timer.After(0, function()
+                    RefreshBuffBarViewer(viewer, cfg)
+                end)
+            end
         end
         StyleLayout.InvalidateCollectIconsCache(viewer)
         return true
@@ -889,9 +900,13 @@ local function RefreshBuffBarViewer(viewer, cfg)
 
     if viewer._vf_needsReRefresh then
         viewer._vf_needsReRefresh = false
-        C_Timer.After(0, function()
-            RefreshBuffBarViewer(viewer, cfg)
-        end)
+        if ViewerRefreshQueue then
+            ViewerRefreshQueue.request(QK_BUFF_BAR, false)
+        else
+            C_Timer.After(0, function()
+                RefreshBuffBarViewer(viewer, cfg)
+            end)
+        end
     end
 
     StyleLayout.InvalidateCollectIconsCache(viewer)
@@ -931,7 +946,36 @@ local function NotifySkillViewerLayoutDependents(force)
     end
 end
 
-local function RefreshSkillViewer(viewer, cfg)
+local RefreshSkillViewer
+
+local function FinishSkillViewerRefresh(viewer)
+    if not viewer then return end
+    viewer._vf_refreshing = false
+    NotifySkillViewerLayoutDependents()
+    if not viewer._vf_needsReRefresh then return end
+    viewer._vf_needsReRefresh = nil
+    if ViewerRefreshQueue then
+        local qk
+        if viewer == EssentialCooldownViewer then
+            qk = QK_ESSENTIAL
+        elseif viewer == UtilityCooldownViewer then
+            qk = QK_UTILITY
+        end
+        if qk then
+            ViewerRefreshQueue.request(qk, false)
+        end
+    else
+        local get = VFlow.Store and VFlow.Store.getModuleRef
+        local skillsDB = get and get("VFlow.Skills")
+        if viewer == EssentialCooldownViewer and skillsDB and skillsDB.importantSkills then
+            RefreshSkillViewer(viewer, skillsDB.importantSkills)
+        elseif viewer == UtilityCooldownViewer and skillsDB and skillsDB.efficiencySkills then
+            RefreshSkillViewer(viewer, skillsDB.efficiencySkills)
+        end
+    end
+end
+
+RefreshSkillViewer = function(viewer, cfg)
     if not viewer or not cfg then return end
     if viewer._vf_refreshing then return end
     viewer._vf_refreshing = true
@@ -974,9 +1018,7 @@ local function RefreshSkillViewer(viewer, cfg)
         end
         ScanCooldownViewerIcons(viewer, allIcons)
         ScanSkillGroupCustomHighlights()
-        viewer._vf_refreshing = false
-        -- 纯布局/样式刷新不改图标集合，CollectIcons 仅在结构变化时失效，避免下次刷新重复枚举
-        NotifySkillViewerLayoutDependents()
+        FinishSkillViewerRefresh(viewer)
         return
     end
 
@@ -1239,9 +1281,7 @@ local function RefreshSkillViewer(viewer, cfg)
     ScanCooldownViewerIcons(viewer, allIcons)
     ScanSkillGroupCustomHighlights()
 
-    viewer._vf_refreshing = false
-    -- 纯布局/样式刷新不改图标集合，CollectIcons 仅在结构变化时失效，避免下次刷新重复枚举
-    NotifySkillViewerLayoutDependents()
+    FinishSkillViewerRefresh(viewer)
 end
 
 -- =========================================================
@@ -1294,116 +1334,21 @@ local function ComputeSlotOffset(slot, totalSlots, isH, w, h, spacingX, spacingY
     return 0, (2 * slot - totalSlots + 1) * step / 2 * iconDir
 end
 
-local function ProvisionalPlaceBuffFrame(frame, viewer, cfg)
-    if not frame or not viewer or not cfg then return end
-    if not frame:IsShown() then return end
-    if not (frame.Icon and frame.Icon:GetTexture()) then return end
-
-    local w = cfg.width or 40
-    local h = cfg.height or 40
-    local spacingX = cfg.spacingX or 2
-    local spacingY = cfg.spacingY or 2
-    local iconLimit = viewer.iconLimit or 20
-    if iconLimit < 1 then iconLimit = 20 end
-
-    local isH = (viewer.isHorizontal ~= false)
-    local iconDir = (viewer.iconDirection == 1) and 1 or -1
-
-    local visible = StyleLayout.FilterVisible(StyleLayout.CollectIcons(viewer))
-    local idx = nil
-    for i = 1, #visible do
-        if visible[i] == frame then idx = i break end
-    end
-    if not idx then
-        visible[#visible + 1] = frame
-        Utils.sortByLayoutIndex(visible)
-        for i = 1, #visible do
-            if visible[i] == frame then idx = i break end
-        end
-    end
-    if not idx then return end
-
-    local totalSlots = ComputeReserveSlots(viewer, isH, w, h, spacingX, spacingY, iconLimit)
-    local slot
-    if cfg.dynamicLayout then
-        local count = #visible
-        if count > totalSlots then totalSlots = count end
-        local startSlot = 0
-        local growDir = cfg.growDirection or "center"
-        if growDir == "center" then
-            startSlot = (totalSlots - count) / 2
-        elseif growDir == "end" then
-            startSlot = totalSlots - count
-        end
-        slot = startSlot + (idx - 1)
-    else
-        local rawSlot = (frame.layoutIndex or idx) - 1
-        if rawSlot < 0 then rawSlot = 0 end
-        local maxSlot = rawSlot
-        for i = 1, #visible do
-            local s = (visible[i].layoutIndex or i) - 1
-            if s > maxSlot then maxSlot = s end
-        end
-        local usedSlots = math.max(maxSlot + 1, #visible)
-        if usedSlots > totalSlots then totalSlots = usedSlots end
-        local slotOffset = (totalSlots - usedSlots) / 2
-        slot = rawSlot + slotOffset
-    end
-
-    local x, y = ComputeSlotOffset(slot, totalSlots, isH, w, h, spacingX, spacingY, iconDir)
-
-    -- 1. 先应用样式（帧还在原parent下）
-    StyleApply.ApplyIconSize(frame, w, h)
-    StyleApply.ApplyButtonStyleIfStale(frame, cfg)
-    frame._vf_slot = slot
-
-    -- 2. 再改父级
-    if frame:GetParent() ~= UIParent then
-        frame:SetParent(UIParent)
-    end
-
-    -- 3. 最后定位
-    StyleLayout.SetPointCached(frame, "CENTER", viewer, "CENTER", x, y)
-
-    -- 主组图标挂在 UIParent 上，viewer:Hide() 不会级联隐藏，需单独跟踪
-    viewer._vf_detachedBuffIcons = viewer._vf_detachedBuffIcons or {}
-    local list = viewer._vf_detachedBuffIcons
-    local dup
-    for i = 1, #list do
-        if list[i] == frame then dup = true break end
-    end
-    if not dup then
-        list[#list + 1] = frame
-    end
-    if not viewer:IsShown() then
-        frame:Hide()
-    end
-end
-
---- BUFF 图标为布局需要 parent 到 UIParent，需与 BuffIconCooldownViewer 显隐同步（VisibilityControl）
-local function HideBuffIconsDetachedFromViewer(viewer)
-    if not viewer or not viewer._vf_detachedBuffIcons then return end
-    for _, icon in ipairs(viewer._vf_detachedBuffIcons) do
-        if icon and icon.Hide and icon.GetParent and icon:GetParent() == UIParent then
-            icon:Hide()
-        end
-    end
-end
-
 local function RefreshBuffViewer(viewer, cfg)
     if not viewer or not cfg then return false end
-    if viewer._vf_refreshing then return false end
+    if viewer._vf_refreshing then
+        viewer._vf_needsReRefresh = true
+        return false
+    end
     if not IsViewerReady(viewer) then return false end
     viewer._vf_refreshing = true
 
     local allIcons = StyleLayout.CollectIcons(viewer)
 
-    -- 三路分类：主组可见、自定义组、隐藏
     local mainVisible, groupBuckets = {}, {}
     if VFlow.BuffGroups and VFlow.BuffGroups.classifyIcons then
         mainVisible, groupBuckets = VFlow.BuffGroups.classifyIcons(allIcons)
     else
-        -- 降级：如果BuffGroups未加载，所有图标归主组
         mainVisible = allIcons
     end
 
@@ -1417,14 +1362,6 @@ local function RefreshBuffViewer(viewer, cfg)
     local isH = (viewer.isHorizontal ~= false)
     local iconDir = (viewer.iconDirection == 1) and 1 or -1
     local minSize = 400
-
-    local detached = viewer._vf_detachedBuffIcons
-    if detached then
-        wipe(detached)
-    else
-        detached = {}
-        viewer._vf_detachedBuffIcons = detached
-    end
 
     if isH then
         local blockW = iconLimit * (w + spacingX) - spacingX
@@ -1442,7 +1379,6 @@ local function RefreshBuffViewer(viewer, cfg)
         end
     end
 
-    -- 过滤主组可见图标
     local visible = {}
     local hasNilTex = false
     local maxLayoutSlot = 0
@@ -1488,7 +1424,6 @@ local function RefreshBuffViewer(viewer, cfg)
         end
     end
 
-    -- 应用样式到主组图标（先样式，后SetParent，最后定位）
     for i = 1, count do
         local button = visible[i]
 
@@ -1498,7 +1433,6 @@ local function RefreshBuffViewer(viewer, cfg)
 
         local x, y = ComputeSlotOffset(slot, totalSlots, isH, w, h, spacingX, spacingY, iconDir)
 
-        -- 1. 先应用样式（帧还在原parent下，避免样式操作触发UIParent下的重渲染）
         StyleApply.ApplyIconSize(button, w, h)
         StyleApply.ApplyButtonStyleIfStale(button, cfg)
 
@@ -1508,24 +1442,16 @@ local function RefreshBuffViewer(viewer, cfg)
 
         button._vf_cdmKind = "buff"
 
-        -- 2. 再改父级（样式已稳定，不会再触发重渲染）
-        if button:GetParent() ~= UIParent then
-            button:SetParent(UIParent)
+        if button:GetParent() ~= viewer then
+            button:SetParent(viewer)
         end
 
-        -- 3. 最后定位并显示
         StyleLayout.SetPointCached(button, "CENTER", viewer, "CENTER", x, y)
         button:SetAlpha(1)
-        detached[#detached + 1] = button
     end
 
-    -- 布局自定义组（样式应用在LayoutBuffGroups内部完成）
     if VFlow.BuffGroups and VFlow.BuffGroups.layoutBuffGroups then
         VFlow.BuffGroups.layoutBuffGroups(groupBuckets)
-    end
-
-    if not viewer:IsShown() then
-        HideBuffIconsDetachedFromViewer(viewer)
     end
 
     ScanCooldownViewerIcons(viewer, allIcons)
@@ -1533,9 +1459,22 @@ local function RefreshBuffViewer(viewer, cfg)
 
     viewer._vf_refreshing = false
 
-    if hasNilTex and RequestBuffRefresh then
-        C_Timer.After(0.05, function()
+    if viewer._vf_needsReRefresh then
+        viewer._vf_needsReRefresh = false
+        if ViewerRefreshQueue then
+            ViewerRefreshQueue.request(QK_BUFF_ICONS, false)
+        elseif RequestBuffRefresh then
             RequestBuffRefresh()
+        end
+    end
+
+    if hasNilTex then
+        C_Timer.After(0.05, function()
+            if ViewerRefreshQueue then
+                ViewerRefreshQueue.request(QK_BUFF_ICONS, false)
+            elseif RequestBuffRefresh then
+                RequestBuffRefresh()
+            end
         end)
     end
 
@@ -1543,69 +1482,18 @@ local function RefreshBuffViewer(viewer, cfg)
 end
 
 -- =========================================================
--- SECTION 8: Hook 与 BuffRuntime 桥接
+-- SECTION 8: Hooks & ViewerRefreshQueue
 -- =========================================================
 
 local hooked = false
 local refreshPending = false
 local SetupHooks
-local buffRefreshPending = false
-local buffBarRefreshPending = false
 local DoBuffRefresh
 local DoBuffBarRefresh
-
-local function SetupBuffRuntimeHandlers()
-    if not BuffRuntime then return end
-
-    BuffRuntime.setHandlers({
-        getViewer = function()
-            local viewer = GetBuffViewerAndConfig()
-            return viewer
-        end,
-        getConfig = function()
-            local _, cfg = GetBuffViewerAndConfig()
-            return cfg
-        end,
-        collectVisible = function(viewer, isDirty)
-            if isDirty then
-                StyleLayout.InvalidateCollectIconsCache(viewer)
-            end
-            return StyleLayout.FilterVisible(StyleLayout.CollectIcons(viewer))
-        end,
-        refresh = function(viewer, cfg)
-            RefreshBuffViewer(viewer, cfg)
-        end,
-    })
-end
-
-local function SetupBuffBarRuntimeHandlers()
-    if not BuffBarRuntime then return end
-
-    BuffBarRuntime.setHandlers({
-        getViewer = function()
-            local viewer = GetBuffBarViewerAndConfig()
-            return viewer
-        end,
-        getConfig = function()
-            local _, cfg = GetBuffBarViewerAndConfig()
-            return cfg
-        end,
-        collectVisible = function(viewer, isDirty)
-            if isDirty then
-                StyleLayout.InvalidateCollectIconsCache(viewer)
-            end
-            return CollectBuffBarFrames(viewer)
-        end,
-        refresh = function(viewer, cfg)
-            RefreshBuffBarViewer(viewer, cfg)
-        end,
-    })
-end
 
 DoBuffRefresh = function(attempt)
     local viewer, cfg = GetBuffViewerAndConfig()
     if not viewer or not cfg then
-        if BuffRuntime then BuffRuntime.disable() end
         return
     end
     if not IsViewerReady(viewer) then
@@ -1619,33 +1507,30 @@ DoBuffRefresh = function(attempt)
 
     local ok = RefreshBuffViewer(viewer, cfg)
     if not ok then
-        if (attempt or 0) < MAX_BUFF_READY_RETRIES then
+        if viewer and viewer._vf_needsReRefresh then
+            -- 重入已由 RefreshBuffViewer 标记，由当前刷新末尾再次入队
+        elseif (attempt or 0) < MAX_BUFF_READY_RETRIES then
             C_Timer.After(0.05, function()
                 DoBuffRefresh((attempt or 0) + 1)
             end)
         end
         return
     end
-
-    if not BuffRuntime then return end
-    BuffRuntime.markDirty()
-    BuffRuntime.enable()
 end
 
-RequestBuffRefresh = function()
-    if buffRefreshPending then return end
-    buffRefreshPending = true
-    C_Timer.After(0, function()
-        buffRefreshPending = false
+--- @param opt table|nil opt.immediate 为 true 时本帧立即刷新 Buff 图标（含自定义 Buff 组布局）
+RequestBuffRefresh = function(opt)
+    opt = opt or {}
+    if ViewerRefreshQueue then
+        ViewerRefreshQueue.request(QK_BUFF_ICONS, opt.immediate == true)
+    else
         DoBuffRefresh(0)
-    end)
-    -- followup 由 BuffRuntime.enable() 的 watchdog 机制保证，不再双重调度
+    end
 end
 
 DoBuffBarRefresh = function(attempt)
     local viewer, cfg = GetBuffBarViewerAndConfig()
     if not viewer or not cfg then
-        if BuffBarRuntime then BuffBarRuntime.disable() end
         return
     end
     if not IsViewerReady(viewer) then
@@ -1666,67 +1551,26 @@ DoBuffBarRefresh = function(attempt)
             TouchCustomHighlight(f)
         end
     end
-    if not ok and (attempt or 0) < MAX_BUFFBAR_READY_RETRIES then
-        C_Timer.After(0.05, function()
-            DoBuffBarRefresh((attempt or 0) + 1)
-        end)
+    if not ok then
+        if viewer and viewer._vf_needsReRefresh then
+            -- 重入已由 RefreshBuffBarViewer 标记，由当前刷新末尾再次入队
+        elseif (attempt or 0) < MAX_BUFFBAR_READY_RETRIES then
+            C_Timer.After(0.05, function()
+                DoBuffBarRefresh((attempt or 0) + 1)
+            end)
+        end
         return
-    end
-
-    if not BuffBarRuntime then return end
-
-    -- 始终启用runtime监控
-    BuffBarRuntime.markDirty()
-    BuffBarRuntime.enable()
-end
-
-local _lastBuffBarLayoutAt = 0
-local _buffBarLayoutHookTimer = nil
-
-local function CancelBuffBarLayoutHookThrottle()
-    if _buffBarLayoutHookTimer then
-        _buffBarLayoutHookTimer:Cancel()
-        _buffBarLayoutHookTimer = nil
     end
 end
 
-local function RunBuffBarLayoutThrottled(forceImmediate)
-    if forceImmediate then
-        CancelBuffBarLayoutHookThrottle()
-        _lastBuffBarLayoutAt = GetTime()
-        DoBuffBarRefresh(0)
-        return
-    end
-    local now = GetTime()
-    if now - _lastBuffBarLayoutAt >= BUFF_BAR_LAYOUT_MIN_INTERVAL then
-        _lastBuffBarLayoutAt = now
-        DoBuffBarRefresh(0)
-        return
-    end
-    if _buffBarLayoutHookTimer then
-        return
-    end
-    local wait = BUFF_BAR_LAYOUT_MIN_INTERVAL - (now - _lastBuffBarLayoutAt)
-    _buffBarLayoutHookTimer = C_Timer.After(wait, function()
-        _buffBarLayoutHookTimer = nil
-        _lastBuffBarLayoutAt = GetTime()
-        DoBuffBarRefresh(0)
-    end)
-end
-
---- @param opt table|nil 当 opt.immediate 为 true 时同步刷新 Buff 条布局
+--- @param opt table|nil opt.immediate 为 true 时同帧刷新（RefreshData / Layout /池 Release）
 RequestBuffBarRefresh = function(opt)
     opt = opt or {}
-    if opt.immediate then
-        RunBuffBarLayoutThrottled(true)
-        return
+    if ViewerRefreshQueue then
+        ViewerRefreshQueue.request(QK_BUFF_BAR, opt.immediate == true)
+    else
+        DoBuffBarRefresh(0)
     end
-    if buffBarRefreshPending then return end
-    buffBarRefreshPending = true
-    C_Timer.After(0, function()
-        buffBarRefreshPending = false
-        RunBuffBarLayoutThrottled(false)
-    end)
 end
 
 if Profiler and Profiler.registerCount then
@@ -1744,11 +1588,6 @@ if Profiler and Profiler.registerCount then
         return CollectBuffBarFrames
     end, function(fn)
         CollectBuffBarFrames = fn
-    end)
-    Profiler.registerCount("CDS:ProvisionalPlaceBuffFrame", function()
-        return ProvisionalPlaceBuffFrame
-    end, function(fn)
-        ProvisionalPlaceBuffFrame = fn
     end)
     Profiler.registerCount("CDS:DoBuffRefresh", function()
         return DoBuffRefresh
@@ -1802,16 +1641,22 @@ if Profiler and Profiler.registerScope then
 end
 
 local function DoRefresh()
-    local skillsDB = VFlow and VFlow.Store and VFlow.Store.getModuleRef and VFlow.Store.getModuleRef("VFlow.Skills")
-    local buffsDB = VFlow and VFlow.Store and VFlow.Store.getModuleRef and VFlow.Store.getModuleRef("VFlow.Buffs")
-    local buffBarDB = VFlow and VFlow.Store and VFlow.Store.getModuleRef and VFlow.Store.getModuleRef("VFlow.BuffBar")
+    local get = VFlow and VFlow.Store and VFlow.Store.getModuleRef
+    local buffsDB = get and get("VFlow.Buffs")
+    local buffBarDB = get and get("VFlow.BuffBar")
 
-    if skillsDB then
-        if EssentialCooldownViewer and skillsDB.importantSkills then
-            RefreshSkillViewer(EssentialCooldownViewer, skillsDB.importantSkills)
-        end
-        if UtilityCooldownViewer and skillsDB.efficiencySkills then
-            RefreshSkillViewer(UtilityCooldownViewer, skillsDB.efficiencySkills)
+    if ViewerRefreshQueue then
+        ViewerRefreshQueue.request(QK_ESSENTIAL, false)
+        ViewerRefreshQueue.request(QK_UTILITY, false)
+    else
+        local skillsDB = get and get("VFlow.Skills")
+        if skillsDB then
+            if EssentialCooldownViewer and skillsDB.importantSkills then
+                RefreshSkillViewer(EssentialCooldownViewer, skillsDB.importantSkills)
+            end
+            if UtilityCooldownViewer and skillsDB.efficiencySkills then
+                RefreshSkillViewer(UtilityCooldownViewer, skillsDB.efficiencySkills)
+            end
         end
     end
 
@@ -1849,8 +1694,30 @@ VFlow.RequestKeybindStyleRefresh = RequestKeybindStyleRefresh
 
 SetupHooks = function()
     if hooked then return end
-    SetupBuffRuntimeHandlers()
-    SetupBuffBarRuntimeHandlers()
+
+    if ViewerRefreshQueue then
+        local function getSkillsDB()
+            return VFlow.Store and VFlow.Store.getModuleRef and VFlow.Store.getModuleRef("VFlow.Skills")
+        end
+        ViewerRefreshQueue.register(QK_ESSENTIAL, function()
+            local db = getSkillsDB()
+            if db and db.importantSkills and EssentialCooldownViewer then
+                RefreshSkillViewer(EssentialCooldownViewer, db.importantSkills)
+            end
+        end)
+        ViewerRefreshQueue.register(QK_UTILITY, function()
+            local db = getSkillsDB()
+            if db and db.efficiencySkills and UtilityCooldownViewer then
+                RefreshSkillViewer(UtilityCooldownViewer, db.efficiencySkills)
+            end
+        end)
+        ViewerRefreshQueue.register(QK_BUFF_ICONS, function()
+            DoBuffRefresh(0)
+        end)
+        ViewerRefreshQueue.register(QK_BUFF_BAR, function()
+            DoBuffBarRefresh(0)
+        end)
+    end
 
     local function SafeHook(obj, method, handler)
         if obj and obj[method] then
@@ -1858,106 +1725,81 @@ SetupHooks = function()
         end
     end
 
-    local skillHandler = function() RequestRefresh(0) end
-    local buffHandler = function() RequestBuffRefresh() end
-    local buffBarHandlerImmediate = function() RequestBuffBarRefresh({ immediate = true }) end
-
-    -- 帧末尾合并刷新：同一帧内多次 BuffBar Release 只做一次 DoBuffBarRefresh
-    -- Release 时帧可能尚未完全隐藏，延迟到帧末尾确保状态一致
-    local _pendingBarSyncRefresh = false
-    local _barSyncRefreshFrame = CreateFrame("Frame")
-    local barSyncOnUpdate
-    _barSyncRefreshFrame:Hide()
-    barSyncOnUpdate = function(self)
-        self:Hide()
-        _pendingBarSyncRefresh = false
-        DoBuffBarRefresh(0)
+    local function queueViewerRefresh(viewerName, immediate)
+        local viewer = _G[viewerName]
+        if viewer and viewer._vf_refreshing then
+            viewer._vf_needsReRefresh = true
+            return
+        end
+        if ViewerRefreshQueue then
+            ViewerRefreshQueue.request(viewerName, immediate == true)
+            return
+        end
+        local get = VFlow.Store and VFlow.Store.getModuleRef
+        local skillsDB = get and get("VFlow.Skills")
+        if viewerName == QK_BUFF_BAR then
+            DoBuffBarRefresh(0)
+        elseif viewerName == QK_BUFF_ICONS then
+            DoBuffRefresh(0)
+        elseif viewerName == QK_ESSENTIAL and skillsDB and skillsDB.importantSkills and EssentialCooldownViewer then
+            RefreshSkillViewer(EssentialCooldownViewer, skillsDB.importantSkills)
+        elseif viewerName == QK_UTILITY and skillsDB and skillsDB.efficiencySkills and UtilityCooldownViewer then
+            RefreshSkillViewer(UtilityCooldownViewer, skillsDB.efficiencySkills)
+        end
     end
-    _barSyncRefreshFrame:SetScript("OnUpdate", barSyncOnUpdate)
+
+    local function hookViewerLayoutDataAndShow(viewer, queueKey)
+        if not viewer then return end
+        SafeHook(viewer, "RefreshLayout", function()
+            queueViewerRefresh(queueKey, false)
+        end)
+        SafeHook(viewer, "RefreshData", function()
+            queueViewerRefresh(queueKey, false)
+        end)
+        viewer:HookScript("OnShow", function()
+            queueViewerRefresh(queueKey, false)
+        end)
+        if viewer.UpdateLayout then
+            SafeHook(viewer, "UpdateLayout", function()
+                queueViewerRefresh(queueKey, false)
+            end)
+        elseif viewer.Layout then
+            SafeHook(viewer, "Layout", function()
+                queueViewerRefresh(queueKey, false)
+            end)
+        end
+    end
 
     local buffBarReleaseHandler = function()
         if BuffBarCooldownViewer then
             StyleLayout.InvalidateCollectIconsCache(BuffBarCooldownViewer)
         end
-        if BuffBarRuntime then BuffBarRuntime.markDirty() end
-        if not _pendingBarSyncRefresh then
-            _pendingBarSyncRefresh = true
-            _barSyncRefreshFrame:Show()
-        end
+        queueViewerRefresh(QK_BUFF_BAR, false)
     end
 
-    -- 帧末尾合并刷新：同一帧内多次 provisionalPlaceAndQueue 只做一次 DoBuffRefresh
-    local _pendingSyncRefresh = false
-    local _syncRefreshFrame = CreateFrame("Frame")
-    local buffSyncOnUpdate
-    local provisionalPlaceAndQueue
-    _syncRefreshFrame:Hide()
-    buffSyncOnUpdate = function(self)
-        self:Hide()
-        _pendingSyncRefresh = false
-        DoBuffRefresh(0)
-    end
-    _syncRefreshFrame:SetScript("OnUpdate", buffSyncOnUpdate)
-
-    local function QueueBuffSyncRefresh()
-        if not _pendingSyncRefresh then
-            _pendingSyncRefresh = true
-            _syncRefreshFrame:Show()
-        end
-    end
-
-    -- OnCooldownIDSet时：先ApplyStyle建立缓存，再ProvisionalPlace定位
-    -- 确保样式初始化在定位之前完成，首次触发不会因样式操作触发重渲染
-    provisionalPlaceAndQueue = function(frame)
+    local queueBuffIconAfterHighlight
+    queueBuffIconAfterHighlight = function(frame)
         if not frame then return end
         frame._vf_cdmKind = "buff"
         local viewer, cfg = GetBuffViewerAndConfig()
         if not viewer or not cfg then return end
-        -- 分组帧由BuffGroups自己管理，不走主组provisional逻辑
-        if VFlow.BuffGroups and VFlow.BuffGroups.isGroupFrame and VFlow.BuffGroups.isGroupFrame(frame) then
-            frame._vf_cdmKind = "buff"
-            TouchCustomHighlight(frame)
-            -- 与主组一致走帧末合并刷新
-            QueueBuffSyncRefresh()
-            return
-        end
-        StyleApply.ApplyIconSize(frame, cfg.width or 40, cfg.height or 40)
-        StyleApply.ApplyButtonStyleIfStale(frame, cfg)
-        ProvisionalPlaceBuffFrame(frame, viewer, cfg)
         TouchCustomHighlight(frame)
-        -- 合并同一帧内的多次刷新：OnUpdate 在当前帧末尾触发一次 DoBuffRefresh
-        QueueBuffSyncRefresh()
+        queueViewerRefresh(QK_BUFF_ICONS, false)
     end
 
-    if Profiler and Profiler.registerScope then
-        Profiler.registerScope("CDS:barSync_OnUpdate", function()
-            return barSyncOnUpdate
-        end, function(fn)
-            barSyncOnUpdate = fn
-            _barSyncRefreshFrame:SetScript("OnUpdate", fn)
-        end)
-        Profiler.registerScope("CDS:buffSync_OnUpdate", function()
-            return buffSyncOnUpdate
-        end, function(fn)
-            buffSyncOnUpdate = fn
-            _syncRefreshFrame:SetScript("OnUpdate", fn)
-        end)
-    end
     if Profiler and Profiler.registerCount then
-        Profiler.registerCount("CDS:provisionalPlaceAndQueue", function()
-            return provisionalPlaceAndQueue
+        Profiler.registerCount("CDS:queueBuffIconAfterHighlight", function()
+            return queueBuffIconAfterHighlight
         end, function(fn)
-            provisionalPlaceAndQueue = fn
+            queueBuffIconAfterHighlight = fn
         end)
     end
 
     local function enforceScaleOnViewer(viewer)
         if not viewer then return end
-        -- 强制viewer本身scale为1
         if viewer.SetScale and viewer:GetScale() ~= 1 then
             viewer:SetScale(1)
         end
-        -- 强制pool中所有帧scale为1
         if viewer.itemFramePool then
             for frame in viewer.itemFramePool:EnumerateActive() do
                 if frame and frame.SetScale and frame:GetScale() ~= 1 then
@@ -1965,46 +1807,6 @@ SetupHooks = function()
                 end
             end
         end
-    end
-
-    local function hookScaleForViewer(viewer)
-        if not viewer or viewer._vf_scaleHooked then return end
-        viewer._vf_scaleHooked = true
-        -- hook OnAcquireItemFrame，每个帧出池时强制scale为1
-        if viewer.OnAcquireItemFrame then
-            hooksecurefunc(viewer, "OnAcquireItemFrame", function(_, frame)
-                StyleLayout.InvalidateCollectIconsCache(viewer)
-                if frame and frame.SetScale and frame:GetScale() ~= 1 then
-                    frame:SetScale(1)
-                end
-            end)
-        end
-        -- hook UpdateSystemSettingIconSize，阻止系统scale设置生效
-        if viewer.UpdateSystemSettingIconSize then
-            hooksecurefunc(viewer, "UpdateSystemSettingIconSize", function()
-                enforceScaleOnViewer(viewer)
-                StyleLayout.InvalidateCollectIconsCache(viewer)
-            end)
-        end
-        if viewer.itemFramePool then
-            hooksecurefunc(viewer.itemFramePool, "Acquire", function()
-                StyleLayout.InvalidateCollectIconsCache(viewer)
-            end)
-            hooksecurefunc(viewer.itemFramePool, "Release", function()
-                StyleLayout.InvalidateCollectIconsCache(viewer)
-            end)
-        end
-    end
-
-    if EssentialCooldownViewer then
-        SafeHook(EssentialCooldownViewer, "RefreshLayout", skillHandler)
-        hookScaleForViewer(EssentialCooldownViewer)
-        enforceScaleOnViewer(EssentialCooldownViewer)
-    end
-    if UtilityCooldownViewer then
-        SafeHook(UtilityCooldownViewer, "RefreshLayout", skillHandler)
-        hookScaleForViewer(UtilityCooldownViewer)
-        enforceScaleOnViewer(UtilityCooldownViewer)
     end
 
     local function HookSkillFrameForCustomHighlight(viewer, frame)
@@ -2021,97 +1823,100 @@ SetupHooks = function()
         TouchCustomHighlight(frame)
     end
 
-    if EssentialCooldownViewer and EssentialCooldownViewer.OnAcquireItemFrame then
-        SafeHook(EssentialCooldownViewer, "OnAcquireItemFrame", HookSkillFrameForCustomHighlight)
-    end
-    if UtilityCooldownViewer and UtilityCooldownViewer.OnAcquireItemFrame then
-        SafeHook(UtilityCooldownViewer, "OnAcquireItemFrame", HookSkillFrameForCustomHighlight)
+    local function setupSkillCooldownViewer(viewer, queueKey, hookUtilityPoolRelease)
+        if not viewer then return end
+        enforceScaleOnViewer(viewer)
+        if viewer.RefreshLayout then
+            SafeHook(viewer, "RefreshLayout", function()
+                queueViewerRefresh(queueKey, false)
+            end)
+        end
+        viewer:HookScript("OnShow", function()
+            enforceScaleOnViewer(viewer)
+            queueViewerRefresh(queueKey, false)
+        end)
+        if viewer.UpdateSystemSettingIconSize then
+            hooksecurefunc(viewer, "UpdateSystemSettingIconSize", function()
+                enforceScaleOnViewer(viewer)
+            end)
+        end
+        if viewer.OnAcquireItemFrame then
+            SafeHook(viewer, "OnAcquireItemFrame", function(_, frame)
+                if not frame then return end
+                StyleLayout.InvalidateCollectIconsCache(viewer)
+                if frame.SetScale and frame:GetScale() ~= 1 then
+                    frame:SetScale(1)
+                end
+                HookSkillFrameForCustomHighlight(viewer, frame)
+                queueViewerRefresh(queueKey, false)
+            end)
+        end
+        if hookUtilityPoolRelease and viewer.itemFramePool and viewer.itemFramePool.Release then
+            hooksecurefunc(viewer.itemFramePool, "Release", function()
+                StyleLayout.InvalidateCollectIconsCache(viewer)
+                queueViewerRefresh(queueKey, false)
+            end)
+        end
     end
 
+    setupSkillCooldownViewer(EssentialCooldownViewer, QK_ESSENTIAL, false)
+    setupSkillCooldownViewer(UtilityCooldownViewer, QK_UTILITY, true)
+
     if BuffIconCooldownViewer then
-        SafeHook(BuffIconCooldownViewer, "RefreshLayout", buffHandler)
-        SafeHook(BuffIconCooldownViewer, "RefreshData", buffHandler)
-        SafeHook(BuffIconCooldownViewer, "UpdateLayout", buffHandler)
-        SafeHook(BuffIconCooldownViewer, "Layout", buffHandler)
-        SafeHook(BuffIconCooldownViewer, "SetPoint", buffHandler)
-        BuffIconCooldownViewer:HookScript("OnShow", buffHandler)
-        BuffIconCooldownViewer:HookScript("OnHide", function(self)
-            HideBuffIconsDetachedFromViewer(self)
-        end)
-        -- OnAcquireItemFrame：只做最少初始化，不做样式应用
+        hookViewerLayoutDataAndShow(BuffIconCooldownViewer, QK_BUFF_ICONS)
         SafeHook(BuffIconCooldownViewer, "OnAcquireItemFrame", function(_, frame)
             if not frame then return end
             StyleLayout.InvalidateCollectIconsCache(BuffIconCooldownViewer)
             if frame.SetScale and frame:GetScale() ~= 1 then
                 frame:SetScale(1)
             end
-            -- 直接hook帧本身的OnCooldownIDSet（帧用的Mixin与CooldownViewerBuffIconItemMixin不同）
             if frame.OnCooldownIDSet and not frame._vf_cdIDHooked then
                 frame._vf_cdIDHooked = true
                 hooksecurefunc(frame, "OnCooldownIDSet", function(self)
-                    provisionalPlaceAndQueue(self)
+                    queueBuffIconAfterHighlight(self)
                 end)
             end
             if frame.OnActiveStateChanged and not frame._vf_activeStateHooked then
                 frame._vf_activeStateHooked = true
                 hooksecurefunc(frame, "OnActiveStateChanged", function(self)
-                    provisionalPlaceAndQueue(self)
+                    if not self then return end
+                    self._vf_cdmKind = "buff"
+                    TouchCustomHighlight(self)
+                    queueViewerRefresh(QK_BUFF_ICONS, false)
                 end)
             end
             frame._vf_cdmKind = "buff"
             TouchCustomHighlight(frame)
-            QueueBuffSyncRefresh()
+            queueViewerRefresh(QK_BUFF_ICONS, false)
         end)
-
-        if BuffIconCooldownViewer.itemFramePool then
-            hooksecurefunc(BuffIconCooldownViewer.itemFramePool, "Acquire", function(pool, frame)
-                StyleLayout.InvalidateCollectIconsCache(BuffIconCooldownViewer)
-                -- 最早时机，修正Scale
-                if frame and frame.SetScale and frame:GetScale() ~= 1 then
-                    frame:SetScale(1)
-                end
-            end)
-            hooksecurefunc(BuffIconCooldownViewer.itemFramePool, "Release", function()
-                StyleLayout.InvalidateCollectIconsCache(BuffIconCooldownViewer)
-                buffHandler()
-            end)
-        end
     end
 
     if BuffBarCooldownViewer then
-        SafeHook(BuffBarCooldownViewer, "RefreshData", buffBarHandlerImmediate)
-        BuffBarCooldownViewer:HookScript("OnShow", buffBarHandlerImmediate)
-        SafeHook(BuffBarCooldownViewer, "RefreshLayout", function(viewer)
-            if not viewer then return end
-            if viewer._vf_refreshing then
-                viewer._vf_needsReRefresh = true
-                return
-            end
-            RunBuffBarLayoutThrottled(false)
-        end)
-
+        hookViewerLayoutDataAndShow(BuffBarCooldownViewer, QK_BUFF_BAR)
         SafeHook(BuffBarCooldownViewer, "OnAcquireItemFrame", function(_, frame)
             if not frame then return end
             StyleLayout.InvalidateCollectIconsCache(BuffBarCooldownViewer)
             local viewer, cfg = GetBuffBarViewerAndConfig()
             if not viewer or not cfg then return end
 
-            -- 强制scale为1
             if frame.SetScale then frame:SetScale(1) end
 
-            -- 立即应用样式（强制，因为帧可能是复用的）
+            if frame.OnActiveStateChanged and not frame._vf_buffBarActiveStateHooked then
+                frame._vf_buffBarActiveStateHooked = true
+                hooksecurefunc(frame, "OnActiveStateChanged", function()
+                    queueViewerRefresh(QK_BUFF_BAR, false)
+                end)
+            end
+
             frame._vf_barStyled = false
             local width = ResolveBuffBarWidth(cfg)
             local height = cfg.barHeight or 20
             ApplyBuffBarFrameStyle(frame, cfg, width, height)
 
-            RequestBuffBarRefresh({ immediate = true })
+            queueViewerRefresh(QK_BUFF_BAR, false)
         end)
 
         if BuffBarCooldownViewer.itemFramePool then
-            hooksecurefunc(BuffBarCooldownViewer.itemFramePool, "Acquire", function()
-                StyleLayout.InvalidateCollectIconsCache(BuffBarCooldownViewer)
-            end)
             hooksecurefunc(BuffBarCooldownViewer.itemFramePool, "Release", buffBarReleaseHandler)
         end
 
@@ -2119,66 +1924,15 @@ SetupHooks = function()
             BuffBarCooldownViewer._vf_buffBarSelectionDragHooked = true
             BuffBarCooldownViewer.Selection:HookScript("OnDragStop", function()
                 PersistBuffBarLayoutIfShown()
-                RequestBuffBarRefresh({ immediate = true })
+                queueViewerRefresh(QK_BUFF_BAR, false)
             end)
         end
     end
 
-    if CooldownViewerBuffIconItemMixin then
-        if CooldownViewerBuffIconItemMixin.OnCooldownIDSet then
-            hooksecurefunc(CooldownViewerBuffIconItemMixin, "OnCooldownIDSet", function(frame)
-                provisionalPlaceAndQueue(frame)
-            end)
-        end
-        if CooldownViewerBuffIconItemMixin.OnActiveStateChanged then
-            hooksecurefunc(CooldownViewerBuffIconItemMixin, "OnActiveStateChanged", function(frame)
-                provisionalPlaceAndQueue(frame)
-            end)
-        end
-    end
-
-    -- BuffBar 的 Mixin hook
-    if CooldownViewerBuffBarItemMixin then
-        if CooldownViewerBuffBarItemMixin.OnCooldownIDSet then
-            hooksecurefunc(CooldownViewerBuffBarItemMixin, "OnCooldownIDSet", function(frame)
-                if not frame then return end
-                local viewer, cfg = GetBuffBarViewerAndConfig()
-                if not viewer or not cfg then return end
-                -- 强制scale为1
-                if frame.SetScale then frame:SetScale(1) end
-                -- 立即对单帧应用样式
-                frame._vf_barStyled = false
-                local width = ResolveBuffBarWidth(cfg)
-                local height = cfg.barHeight or 20
-                ApplyBuffBarFrameStyle(frame, cfg, width, height)
-                -- 确保帧可见（OnAcquire时可能还没Show，现在有内容了）
-                frame:SetAlpha(1)
-                RequestBuffBarRefresh({ immediate = true })
-            end)
-        end
-        if CooldownViewerBuffBarItemMixin.OnActiveStateChanged then
-            hooksecurefunc(CooldownViewerBuffBarItemMixin, "OnActiveStateChanged", function(frame)
-                if not frame then return end
-                frame._vf_barStyled = false
-                RequestBuffBarRefresh({ immediate = true })
-            end)
-        end
-        if CooldownViewerBuffBarItemMixin.SetBarContent then
-            hooksecurefunc(CooldownViewerBuffBarItemMixin, "SetBarContent", function(frame)
-                if not frame then return end
-                frame._vf_barStyled = false
-                -- SetBarContent 更新了文本内容（层数等），立即重新样式化
-                local viewer, cfg = GetBuffBarViewerAndConfig()
-                if viewer and cfg then
-                    local width = ResolveBuffBarWidth(cfg)
-                    local height = cfg.barHeight or 20
-                    ApplyBuffBarFrameStyle(frame, cfg, width, height)
-                end
-                -- 确保帧可见
-                frame:SetAlpha(1)
-                RequestBuffBarRefresh({ immediate = true })
-            end)
-        end
+    if CooldownViewerBuffIconItemMixin and CooldownViewerBuffIconItemMixin.OnCooldownIDSet then
+        hooksecurefunc(CooldownViewerBuffIconItemMixin, "OnCooldownIDSet", function(frame)
+            queueBuffIconAfterHighlight(frame)
+        end)
     end
 
 
@@ -2194,7 +1948,7 @@ SetupHooks = function()
                         PersistBuffBarLayoutPosFromRegion(viewer, cfg, NormalizeBuffBarGrowDirection(cfg))
                     end
                 end
-                RequestBuffBarRefresh({ immediate = true })
+                queueViewerRefresh(QK_BUFF_BAR, false)
             end)
         end
         hooksecurefunc(EditModeManagerFrame, "EnterEditMode", syncBuffBarAfterSystemEditMode)
@@ -2211,7 +1965,7 @@ SetupHooks = function()
                     if viewer and cfg then
                         PersistBuffBarLayoutPosFromRegion(viewer, cfg, NormalizeBuffBarGrowDirection(cfg))
                     end
-                    RequestBuffBarRefresh({ immediate = true })
+                    queueViewerRefresh(QK_BUFF_BAR, false)
                 end)
             end)
         end)
@@ -2236,7 +1990,8 @@ end
 VFlow.on("PLAYER_ENTERING_WORLD", "VFlow.SkillStyle", function()
     InvalidateDBCache()
     BumpButtonStyleVersion()
-    if BuffBarRuntime then BuffBarRuntime.bumpStyleVersion() end
+    BumpBuffBarStyleVersion()
+    if ViewerRefreshQueue then ViewerRefreshQueue.bumpVersion() end
     SetupHooks()
     RequestRefresh(0.5)
 end)
@@ -2245,7 +2000,6 @@ end)
 -- SECTION 10: Store 监听
 -- =========================================================
 
--- 监听技能模块配置变更
 VFlow.Store.watch("VFlow.Skills", "CooldownStyle_Skills", function(key, value)
     if key:find("%.x$") or key:find("%.y$")
         or key:find("%.anchorFrame$") or key:find("%.relativePoint$") or key:find("%.playerAnchorPosition$") then
@@ -2255,34 +2009,31 @@ VFlow.Store.watch("VFlow.Skills", "CooldownStyle_Skills", function(key, value)
     RequestRefresh(0)
 end)
 
--- 监听BUFF模块配置变更
 VFlow.Store.watch("VFlow.Buffs", "CooldownStyle_Buffs", function(key, value)
     InvalidateDBCache()
-    -- 仅容器位置/依附变化：不触发样式引擎刷新
     if key:find("%.x$") or key:find("%.y$")
         or key:find("%.anchorFrame$") or key:find("%.relativePoint$") or key:find("%.playerAnchorPosition$") then
         return
     end
     BumpButtonStyleVersion()
+    if ViewerRefreshQueue then ViewerRefreshQueue.bumpVersion() end
     RequestRefresh(0)
 end)
 
 VFlow.Store.watch("VFlow.BuffBar", "CooldownStyle_BuffBar", function(key, value)
     InvalidateDBCache()
     BumpButtonStyleVersion()
-    if BuffBarRuntime then BuffBarRuntime.bumpStyleVersion() end
+    BumpBuffBarStyleVersion()
+    if ViewerRefreshQueue then ViewerRefreshQueue.bumpVersion() end
     RequestBuffBarRefresh()
 end)
 
--- 监听自定义监控模块配置变更（隐藏功能）
 VFlow.Store.watch("VFlow.CustomMonitor", "CooldownStyle_CustomMonitor", function(key, value)
-    -- 只有hideInCooldownManager变化时才刷新
     if key:find("%.hideInCooldownManager$") then
         RequestRefresh(0)
     end
 end)
 
--- 其他功能：自定义高亮
 VFlow.Store.watch("VFlow.OtherFeatures", "CooldownStyle_OtherHL", function(key, _)
     if not key then return end
     if key == "highlightRules" or key:find("^highlightRules%.")
@@ -2292,9 +2043,9 @@ VFlow.Store.watch("VFlow.OtherFeatures", "CooldownStyle_OtherHL", function(key, 
     end
 end)
 
--- 监听美化模块配置变更
 VFlow.Store.watch("VFlow.StyleIcon", "CooldownStyle_StyleIcon", function(key, value)
     BumpButtonStyleVersion()
+    BumpBuffBarStyleVersion()
     RequestRefresh(0)
     RequestBuffBarRefresh()
 end)

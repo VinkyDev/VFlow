@@ -9,7 +9,7 @@
 ```
 VFlow (全局命名空间)
 ├── Infra/          基建层（Core → State → Store → Pool → UI → Grid）
-├── Core/           业务核心（StyleApply → StyleLayout → BuffRuntime → CooldownStyle → BuffGroups → MainUI）
+├── Core/           业务核心（StyleApply → StyleLayout → ViewerRefreshQueue → CooldownStyle → BuffGroups → MainUI）
 ├── Modules/        功能模块（SkillsModule → BuffsModule）
 └── Libs/           第三方库
 ```

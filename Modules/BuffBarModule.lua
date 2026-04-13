@@ -1,6 +1,6 @@
 --[[ Core 依赖：
-  - Core/BuffBarRuntime.lua：BUFF 条 Viewer 运行时调度与刷新
-  - Core/CooldownStyle.lua：监听 BuffBar 配置并应用条样式
+  - Core/ViewerRefreshQueue.lua：BUFF 图标/条刷新合并调度
+  - Core/CooldownStyle.lua：BuffBar 配置、条样式与样式版本
 ]]
 
 -- =========================================================

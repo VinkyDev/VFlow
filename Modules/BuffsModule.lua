@@ -1,5 +1,6 @@
 --[[ Core 依赖：
   - Core/BuffGroups.lua：主 BUFF 组与自定义组布局
+  - Core/ViewerRefreshQueue.lua：BUFF 图标刷新合并调度（由 CooldownStyle 注册）
   - Core/CooldownStyle.lua：监听本模块并应用 BUFF 区样式
   - Core/BuffScanner.lua：维护 State.trackedBuffs（列表数据源，只读）
   - Core/ItemBuffMonitor.lua：物品BUFF监控、持续时间解析与列表数据
