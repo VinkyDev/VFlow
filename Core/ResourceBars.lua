@@ -8,9 +8,6 @@ if not VFlow then return end
 
 local MODULE_KEY = "VFlow.Resources"
 local EVENT_OWNER = "Core.ResourceBars.Runtime"
-local EVENT_OWNER_AURA = "Core.ResourceBars.Aura"
-local EVENT_OWNER_STAGGER_HEALTH = "Core.ResourceBars.StaggerHealth"
-local EVENT_OWNER_SPELLUSES = "Core.ResourceBars.SpellUses"
 local Utils = VFlow.Utils
 local CR = VFlow.ClassResourceMap
 local CA = VFlow.ContainerAnchor
@@ -28,44 +25,9 @@ local rb = {}
 
 local lastStaggerPercent = 60
 local runtimeEventsRegistered = false
-local POWER_TOKEN_TO_ENUM = {}
-local function BuildPowerTokenToEnum()
-    if not E_PT then return end
-    local function toToken(name)
-        return (name:gsub("(%l)(%u)", "%1_%2")):upper()
-    end
-    for name, value in pairs(E_PT) do
-        if type(value) == "number" then
-            POWER_TOKEN_TO_ENUM[name:upper()] = value
-            POWER_TOKEN_TO_ENUM[toToken(name)] = value
-        end
-    end
-end
-BuildPowerTokenToEnum()
 
-local runtimeEnumPrimary, runtimeEnumSecondary = nil, nil
-local lastPowerRefreshAt = {}
-local lastAuraDrivenRefreshAt = 0
-local auraRuntimeSubscribed = false
-local staggerHealthSubscribed = false
-local spellUsesSubscribed = false
-local staggerUpdateTicker = nil
-local runeBatchPending = false
-
-local function CacheRuntimeEnumsFromContext(ctx)
-    if not ctx then return end
-    runtimeEnumPrimary = type(ctx.primaryResource) == "number" and ctx.primaryResource or nil
-    runtimeEnumSecondary = type(ctx.secondaryResource) == "number" and ctx.secondaryResource or nil
-end
-
-local function RuntimeUsesPlayerAuraResource(resource)
-    if type(resource) ~= "string" then return false end
-    return resource == "MAELSTROM_WEAPON"
-        or resource == "TIP_OF_THE_SPEAR"
-        or resource == "ICICLES"
-        or resource == "SOUL_FRAGMENTS"
-        or resource == "DEVOURER_SOUL"
-end
+local RESOURCE_BAR_POLL_INTERVAL = 0.2
+local resourceBarPollDriver = nil
 
 local function IsSecretNumber(v)
     if v == nil or not issecretvalue then
@@ -148,8 +110,43 @@ local function BuildRuntimeContext(db)
     }
 end
 
+--- DK 符文
+local runeCooldownSnapshot = {}
+for _runeSnap = 1, 6 do
+    runeCooldownSnapshot[_runeSnap] = { start = 0, duration = 0, runeReady = false }
+end
+local runeCdInfoPool = {}
+for _runePool = 1, 6 do
+    runeCdInfoPool[_runePool] = { index = 0, remaining = 0, frac = 0 }
+end
+local runeReadyScratch = {}
+local runeCdScratch = {}
+local runeOrderScratch = {}
+local runeFillScratch = {}
+
+local function GetRuneMaxCurrentAndFillSnapshot()
+    if not E_PT then return nil, nil end
+    local max = UnitPowerMax("player", E_PT.Runes)
+    if max <= 0 then return nil, nil end
+    local current = 0
+    for i = 1, max do
+        local slot = runeCooldownSnapshot[i]
+        local start, duration, runeReady = GetRuneCooldown(i)
+        slot.start = start
+        slot.duration = duration
+        slot.runeReady = runeReady
+        if runeReady then
+            current = current + 1
+        end
+    end
+    return max, current
+end
+
 local function GetPrimaryResourceValue(resource)
     if not resource then return nil, nil end
+    if E_PT and resource == E_PT.Runes then
+        return GetRuneMaxCurrentAndFillSnapshot()
+    end
     local max = UnitPowerMax("player", resource)
     local cur = UnitPower("player", resource)
     if not IsSecretNumber(max) and type(max) == "number" and max <= 0 then
@@ -189,17 +186,8 @@ local function GetSecondaryResourceValue(resource)
         return max, current
     end
 
-    if resource == Enum.PowerType.Runes then
-        local max = UnitPowerMax("player", resource)
-        if max <= 0 then return nil, nil end
-        local current = 0
-        for i = 1, max do
-            local _, _, runeReady = GetRuneCooldown(i)
-            if runeReady then
-                current = current + 1
-            end
-        end
-        return max, current
+    if E_PT and resource == E_PT.Runes then
+        return GetRuneMaxCurrentAndFillSnapshot()
     end
 
     if resource == Enum.PowerType.SoulShards then
@@ -258,8 +246,6 @@ local primaryHost, secondaryHost
 local primarySB, secondarySB
 local primaryText, secondaryText
 local initialized = false
-
-local SetDiscreteRechargeTicker
 
 local function OutlineToken(outline)
     if outline == "THICKOUTLINE" then
@@ -396,37 +382,55 @@ local function GetEssencePipFill(host, gameSlot, curInt, maxInt)
     return 0
 end
 
---- 就绪符文优先，冷却中按剩余时间排序；返回每 UI 格对应符文槽及填充比例。
+--- 就绪符文优先，冷却中按剩余时间排序；只读 runeCooldownSnapshot（由 GetSecondaryResourceValue 填充）。
 local function BuildRuneSegmentState(maxRunes)
-    local readyList = {}
-    local cdList = {}
+    local readyList = runeReadyScratch
+    for ri = #readyList, 1, -1 do
+        readyList[ri] = nil
+    end
+    local cdList = runeCdScratch
+    for ci = #cdList, 1, -1 do
+        cdList[ci] = nil
+    end
     local now = GetTime()
+    local poolIdx = 1
     for i = 1, maxRunes do
-        local start, duration, runeReady = GetRuneCooldown(i)
+        local cached = runeCooldownSnapshot[i]
+        local start, duration, runeReady = cached.start, cached.duration, cached.runeReady
         if runeReady then
             readyList[#readyList + 1] = i
         else
-            local remaining = math.huge
-            local frac = 0
+            local info = runeCdInfoPool[poolIdx]
+            poolIdx = poolIdx + 1
+            info.index = i
             if start and duration and duration > 0 then
                 local elapsed = now - start
-                remaining = math.max(0, duration - elapsed)
-                frac = math.min(1, math.max(0, elapsed / duration))
+                info.remaining = math.max(0, duration - elapsed)
+                info.frac = math.min(1, math.max(0, elapsed / duration))
+            else
+                info.remaining = math.huge
+                info.frac = 0
             end
-            cdList[#cdList + 1] = { index = i, remaining = remaining, frac = frac }
+            cdList[#cdList + 1] = info
         end
     end
     table.sort(cdList, function(a, b)
         return a.remaining < b.remaining
     end)
-    local order = {}
-    local fillByIndex = {}
+    local order = runeOrderScratch
+    local fillByIndex = runeFillScratch
+    for fi = 1, maxRunes do
+        fillByIndex[fi] = nil
+    end
+    local orderLen = 0
     for _, idx in ipairs(readyList) do
-        order[#order + 1] = idx
+        orderLen = orderLen + 1
+        order[orderLen] = idx
         fillByIndex[idx] = 1
     end
     for _, info in ipairs(cdList) do
-        order[#order + 1] = info.index
+        orderLen = orderLen + 1
+        order[orderLen] = info.index
         fillByIndex[info.index] = info.frac
     end
     return order, fillByIndex
@@ -522,39 +526,6 @@ local function SetDualColorForDiscreteSeg(segSb, resource, fill, gameSlot, cur, 
     return false
 end
 
-local function NeedsDiscreteRechargeTicker(resource, cur, max)
-    if RS.RuntimeUsesEssenceRechargeTicker(resource) then
-        local c, m = tonumber(cur), tonumber(max)
-        if c and m and math.floor(c) < math.floor(m) then
-            return true
-        end
-        return false
-    end
-    if resource == E_PT.Runes then
-        local m = tonumber(max) or UnitPowerMax("player", resource) or 0
-        for i = 1, m do
-            local _, _, runeReady = GetRuneCooldown(i)
-            if not runeReady then
-                return true
-            end
-        end
-        return false
-    end
-    if resource == E_PT.SoulShards then
-        local spec = C_SpecializationInfo.GetSpecialization()
-        local specID = C_SpecializationInfo.GetSpecializationInfo(spec)
-        if specID ~= 267 then
-            return false
-        end
-        local raw = UnitPower("player", resource, true)
-        if IsSecretNumber(raw) then
-            return false
-        end
-        return (math.floor(tonumber(raw) or 0) % 10) ~= 0
-    end
-    return false
-end
-
 local DISCRETE_SEGMENT_RESOURCES = E_PT and {
     [E_PT.ArcaneCharges] = true,
     [E_PT.Chi] = true,
@@ -619,7 +590,10 @@ local function ClearSegmentUI(host)
     if not host then
         return
     end
-    SetDiscreteRechargeTicker(host, false)
+    if host._vf_rechargeTicker then
+        host._vf_rechargeTicker:Cancel()
+        host._vf_rechargeTicker = nil
+    end
     host._vf_segmentMode = false
     host._vf_segLastMax = nil
     host._vf_segLastResource = nil
@@ -674,7 +648,6 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
         local totalW = host:GetWidth()
         local totalH = host:GetHeight()
         if totalW <= 0 or totalH <= 0 then
-            SetDiscreteRechargeTicker(host, false)
             return true
         end
 
@@ -797,7 +770,6 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
             end
         end
 
-        SetDiscreteRechargeTicker(host, NeedsDiscreteRechargeTicker(resource, cur, max), host._vf_slotIsSecondary == true)
         return true
     end
 
@@ -898,7 +870,6 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
             end
         end
     end
-    SetDiscreteRechargeTicker(host, NeedsDiscreteRechargeTicker(resource, cur, max), host._vf_slotIsSecondary == true)
     return true
 end
 
@@ -1098,7 +1069,7 @@ local function SetResourceHostShown(host, wantShown)
     end
 end
 
----@param skipLayout boolean|nil OnUpdate 轮询时跳过尺寸/锚点/字体，仅刷新数值与条
+---@param skipLayout boolean|nil true 时跳过尺寸/锚点/字体，仅刷新数值与条（OnUpdate 轮询路径）
 local function UpdateOneSlot(context, isSecondary, skipLayout)
     local db = context and context.db or GetDb()
     if not db then
@@ -1217,150 +1188,54 @@ local function UpdateOneSlot(context, isSecondary, skipLayout)
     fs:SetShown(style.showText ~= false)
 end
 
-SetDiscreteRechargeTicker = function(host, want, isSecondary)
-    if not host then
-        return
-    end
-    if want and not host._vf_rechargeTicker then
-        host._vf_rechargeTicker = C_Timer.NewTicker(0.05, function()
-            UpdateOneSlot(BuildRuntimeContext(), isSecondary, true)
-        end)
-    elseif not want and host._vf_rechargeTicker then
-        host._vf_rechargeTicker:Cancel()
-        host._vf_rechargeTicker = nil
-    end
-end
-
 local RefreshValuesOnly
 
-local function StartStaggerTicker()
-    if staggerUpdateTicker then return end
-    staggerUpdateTicker = C_Timer.NewTicker(0.05, function()
-        RefreshValuesOnly()
-    end)
-end
-
-local function StopStaggerTicker()
-    if staggerUpdateTicker then
-        staggerUpdateTicker:Cancel()
-        staggerUpdateTicker = nil
-    end
-end
-
-local POWER_FREQUENT_MIN_INTERVAL = 0.05
-local lastSpellUsesRefreshAt = 0
-
-local function OnUnitPowerFrequent(_, unitTarget, powerToken)
-    if unitTarget ~= "player" or not powerToken then return end
-    local pt = POWER_TOKEN_TO_ENUM[powerToken]
-    if not pt then return end
-    if pt ~= runtimeEnumPrimary and pt ~= runtimeEnumSecondary then
+local function StartResourceBarValuePoll()
+    if resourceBarPollDriver then
         return
     end
-    local now = GetTime()
-    local last = lastPowerRefreshAt[pt]
-    if last and (now - last) < POWER_FREQUENT_MIN_INTERVAL then
-        return
-    end
-    lastPowerRefreshAt[pt] = now
-    RefreshValuesOnly()
-end
-
-local function OnUnitMaxPower()
-    RefreshValuesOnly()
-end
-
-local function OnSpellUpdateUses()
-    local now = GetTime()
-    if now - lastSpellUsesRefreshAt < 0.05 then return end
-    lastSpellUsesRefreshAt = now
-    RefreshValuesOnly()
-end
-
-local function OnStaggerMaxHealth()
-    RefreshValuesOnly()
-end
-
-local function FlushRunePowerCoalesced()
-    runeBatchPending = false
-    RefreshValuesOnly()
-end
-
-local function OnRunePowerUpdate()
-    if runeBatchPending then return end
-    runeBatchPending = true
-    C_Timer.After(0, FlushRunePowerCoalesced)
-end
-
---- 注册：光环读条、醉拳、复仇灵魂裂劈层数
-local function SyncDynamicSubscriptions(ctx)
-    if not ctx then
-        ctx = BuildRuntimeContext()
-        CacheRuntimeEnumsFromContext(ctx)
-    end
-
-    local needAura = RuntimeUsesPlayerAuraResource(ctx.primaryResource)
-        or RuntimeUsesPlayerAuraResource(ctx.secondaryResource)
-    if needAura and not auraRuntimeSubscribed then
-        VFlow.on("UNIT_AURA", EVENT_OWNER_AURA, function()
-            local now = GetTime()
-            if now - lastAuraDrivenRefreshAt < 0.05 then
-                return
-            end
-            lastAuraDrivenRefreshAt = now
+    local f = CreateFrame("Frame", "VFlow_ResourceBarPollDriver", UIParent)
+    f:SetSize(1, 1)
+    f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
+    f:EnableMouse(false)
+    f:SetAlpha(0)
+    f:Show()
+    f:SetScript("OnUpdate", function(self, dt)
+        self._vf_pollElapsed = (self._vf_pollElapsed or 0) + dt
+        if self._vf_pollElapsed >= RESOURCE_BAR_POLL_INTERVAL then
+            self._vf_pollElapsed = 0
             RefreshValuesOnly()
-        end, "player")
-        auraRuntimeSubscribed = true
-    elseif not needAura and auraRuntimeSubscribed then
-        VFlow.off(EVENT_OWNER_AURA)
-        auraRuntimeSubscribed = false
-    end
-
-    local needSpellUses = (ctx.specID == 581)
-        and (ctx.primaryResource == "SOUL_FRAGMENTS_VENGEANCE" or ctx.secondaryResource == "SOUL_FRAGMENTS_VENGEANCE")
-    if needSpellUses and not spellUsesSubscribed then
-        VFlow.on("SPELL_UPDATE_USES", EVENT_OWNER_SPELLUSES, OnSpellUpdateUses)
-        spellUsesSubscribed = true
-    elseif not needSpellUses and spellUsesSubscribed then
-        VFlow.off(EVENT_OWNER_SPELLUSES)
-        spellUsesSubscribed = false
-    end
-
-    local needStagger = ctx.primaryResource == "STAGGER" or ctx.secondaryResource == "STAGGER"
-    if needStagger then
-        if not staggerHealthSubscribed then
-            VFlow.on("UNIT_MAXHEALTH", EVENT_OWNER_STAGGER_HEALTH, OnStaggerMaxHealth, "player")
-            staggerHealthSubscribed = true
         end
-        local st = UnitStagger("player") or 0
-        if InCombatLockdown() or (type(st) == "number" and not IsSecretNumber(st) and st > 0) then
-            StartStaggerTicker()
-        else
-            StopStaggerTicker()
-        end
-    else
-        if staggerHealthSubscribed then
-            VFlow.off(EVENT_OWNER_STAGGER_HEALTH)
-            staggerHealthSubscribed = false
-        end
-        StopStaggerTicker()
-    end
+    end)
+    resourceBarPollDriver = f
 end
 
 local function RefreshAll()
     local context = BuildRuntimeContext()
-    CacheRuntimeEnumsFromContext(context)
     UpdateOneSlot(context, false, false)
     UpdateOneSlot(context, true, false)
-    SyncDynamicSubscriptions(context)
+end
+
+--- 双槽均隐藏且非编辑模式时跳过轮询
+local function ResourceBarsPollShouldSkip()
+    if EditModeActive() then
+        return false
+    end
+    local p = primaryHost
+    local s = secondaryHost
+    if (not p or not p:IsShown()) and (not s or not s:IsShown()) then
+        return true
+    end
+    return false
 end
 
 RefreshValuesOnly = function()
+    if ResourceBarsPollShouldSkip() then
+        return
+    end
     local context = BuildRuntimeContext()
-    CacheRuntimeEnumsFromContext(context)
     UpdateOneSlot(context, false, true)
     UpdateOneSlot(context, true, true)
-    SyncDynamicSubscriptions(context)
 end
 
 local function HandleLayoutRuntimeEvent()
@@ -1400,14 +1275,10 @@ local function RegisterRuntimeEvents()
     registerEvent("PLAYER_SPECIALIZATION_CHANGED", EVENT_OWNER, HandleLayoutRuntimeEvent, "player", "RB:HandleLayoutRuntimeEvent", "count")
     registerEvent("PLAYER_REGEN_ENABLED", EVENT_OWNER, HandleLayoutRuntimeEvent, nil, "RB:HandleLayoutRuntimeEvent", "count")
     registerEvent("PLAYER_REGEN_DISABLED", EVENT_OWNER, HandleLayoutRuntimeEvent, nil, "RB:HandleLayoutRuntimeEvent", "count")
-    registerEvent("UNIT_MAXPOWER", EVENT_OWNER, OnUnitMaxPower, "player", "RB:OnUnitMaxPower", "count")
-    registerEvent("UNIT_POWER_FREQUENT", EVENT_OWNER, OnUnitPowerFrequent, "player", "RB:OnUnitPowerFrequent", "count")
-    if E_PT and E_PT.Runes then
-        registerEvent("RUNE_POWER_UPDATE", EVENT_OWNER, OnRunePowerUpdate, nil, "RB:OnRunePowerUpdate", "count")
-    end
     if select(2, UnitClass("player")) == "DRUID" then
         registerEvent("UPDATE_SHAPESHIFT_FORM", EVENT_OWNER, HandleLayoutRuntimeEvent, nil, "RB:HandleLayoutRuntimeEvent", "count")
     end
+    StartResourceBarValuePoll()
 end
 
 -- =========================================================
@@ -1599,14 +1470,6 @@ function rb.OnModuleReady()
 end
 
 VFlow.ResourceBars = rb
-
-if Profiler and Profiler.registerCount then
-    Profiler.registerCount("RB:SetDiscreteRechargeTicker", function()
-        return SetDiscreteRechargeTicker
-    end, function(fn)
-        SetDiscreteRechargeTicker = fn
-    end)
-end
 
 if Profiler and Profiler.registerScope then
     Profiler.registerScope("RB:UpdateDiscreteSegments", function()
