@@ -26,10 +26,17 @@ VFlow.registerModule(MODULE_KEY, {
 
 local CHANGELOG = {
 	{
+		version = "0.5.4",
+		date = "2026-04-13",
+		content = {
+			"解决卡顿问题"
+		},
+	},
+	{
 		version = "0.5.3",
 		date = "2026-04-13",
 		content = {
-			"回调 v0.5.2 部分逻辑, 解决卡顿问题",
+			"回调 v0.5.2 部分逻辑",
 			"保留 v0.5.2 中对于Buff条, 自定义播报等BUG的修复, 保留配置专精绑定功能",
 		},
 	},

@@ -39,21 +39,18 @@ local function ProcessQueue()
         return
     end
 
+    -- 每帧清空当前队列
     local keys = sortedQueueKeys()
-    local pickKey = keys[1]
-    if not pickKey then
-        updaterActive = false
-        Updater:SetScript("OnUpdate", nil)
-        return
-    end
-
-    local ver = queue[pickKey]
-    queue[pickKey] = nil
-
-    if ver == queueVersion then
-        local fn = handlers[pickKey]
-        if fn then
-            fn()
+    for _, pickKey in ipairs(keys) do
+        local ver = queue[pickKey]
+        if ver ~= nil then
+            queue[pickKey] = nil
+            if ver == queueVersion then
+                local fn = handlers[pickKey]
+                if fn then
+                    fn()
+                end
+            end
         end
     end
 
