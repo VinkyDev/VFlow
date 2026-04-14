@@ -27,7 +27,6 @@ local Profiler = VFlow.Profiler
 
 local UPDATE_INTERVAL = 0.1
 local MAP_RETRY_INTERVAL = 1.5
-local INACTIVE_PROBE_INTERVAL = 0.4
 local BUFF_VIEWERS = {
     "BuffIconCooldownViewer",
     "BuffBarCooldownViewer",
@@ -118,8 +117,13 @@ end
 -- { [spellID] = barFrame }
 local _activeSkillBars    = {}
 local _activeBuffBars     = {}
--- duration 条子集，避免 UNIT_AURA 遍历所有 buff bars
-local _activeDurationBars = {}
+local _buffProbeBars      = {}
+local _buffWatchedBars    = {
+    player = {},
+    pet = {},
+}
+local _tickBars           = {}
+local _tickBarCount       = 0
 
 -- spellID → cooldownID 映射（buff 监控专用）
 local _spellToCooldownID = {}
@@ -138,6 +142,7 @@ local _spellMapRetryAt = {}
 -- CDM RefreshData 等钩子同帧可能触发多次：合并到帧末一次处理，减少 UpdateStackBar 重复
 local _cdmFlushPending  = setmetatable({}, { __mode = "k" })  -- [cdmFrame] = true
 local _cdmFlushLastAura = setmetatable({}, { __mode = "k" })  -- [cdmFrame] = { auraInstanceID?, auraUnit? }
+local _cdmFlushScratch  = {}
 local _cdmFlushFrame = CreateFrame("Frame")
 _cdmFlushFrame:Hide()
 
@@ -176,6 +181,11 @@ local function ApplyTimerDuration(seg, durObj, interpolation, direction)
     seg:SetTimerDuration(durObj, interpolation, direction)
     if seg.SetToTargetValue then seg:SetToTargetValue() end
     return true
+end
+
+local function SetBarTickState(barFrame, mode)
+    if not barFrame then return end
+    barFrame._tickMode = mode
 end
 
 -- =========================================================
@@ -462,6 +472,8 @@ end
 -- CDM 帧回调：当帧刷新时通知关联的 buff 监控条
 local UpdateStackBar   -- 前向声明
 local UpdateDurationBar
+local RefreshSkillBar
+local RefreshBuffBar
 
 -- CDM 清空槽位时立刻同步层数条
 local function OnCDMClearAuraInstanceInfo(cdmFrame)
@@ -471,25 +483,33 @@ local function OnCDMClearAuraInstanceInfo(cdmFrame)
     for _, barKey in ipairs(barKeys) do
         local spellID = tonumber(barKey:match("^buffs/(%d+)$"))
         local barFrame = spellID and _activeBuffBars[spellID]
-        if barFrame and barFrame._monitorType == "stacks" then
+        if barFrame then
             barFrame._nilCount = 0
             barFrame._lastKnownActive = false
             barFrame._lastKnownStacks = 0
             barFrame._trackedAuraInstanceID = nil
             barFrame._trackedUnit = nil
             UnlinkBarFromAura(barKey)
-            UpdateStackBar(barFrame, spellID, barKey)
-            barFrame._buffBarDirty = false
+            if RefreshBuffBar then
+                RefreshBuffBar(barFrame, "cdm_clear")
+            elseif barFrame._monitorType == "stacks" then
+                UpdateStackBar(barFrame, spellID, barKey)
+            else
+                UpdateDurationBar(barFrame, spellID, barKey)
+            end
         end
     end
 end
 
 local function FlushCDMFrameChanges()
-    local batch = {}
-    for fr in pairs(_cdmFlushPending) do
-        batch[#batch + 1] = fr
+    local batchCount = 0
+    for frame in pairs(_cdmFlushPending) do
+        batchCount = batchCount + 1
+        _cdmFlushScratch[batchCount] = frame
     end
-    for _, frame in ipairs(batch) do
+    for i = 1, batchCount do
+        local frame = _cdmFlushScratch[i]
+        _cdmFlushScratch[i] = nil
         _cdmFlushPending[frame] = nil
         local slot = _cdmFlushLastAura[frame]
         _cdmFlushLastAura[frame] = nil
@@ -510,14 +530,19 @@ local function FlushCDMFrameChanges()
             for _, barKey in ipairs(barKeys) do
                 local spellID  = tonumber(barKey:match("^buffs/(%d+)$"))
                 local barFrame = spellID and _activeBuffBars[spellID]
-                if barFrame and barFrame._monitorType == "stacks" then
+                if barFrame then
                     if auraInstanceID then
                         local trackedUnit = auraUnit or frame.auraDataUnit
                             or barFrame._trackedUnit or "player"
                         LinkBarToAura(barFrame, barKey, trackedUnit, auraInstanceID)
                     end
-                    UpdateStackBar(barFrame, spellID, barKey)
-                    barFrame._buffBarDirty = false
+                    if RefreshBuffBar then
+                        RefreshBuffBar(barFrame, "cdm_flush")
+                    elseif barFrame._monitorType == "stacks" then
+                        UpdateStackBar(barFrame, spellID, barKey)
+                    else
+                        UpdateDurationBar(barFrame, spellID, barKey)
+                    end
                 end
             end
         end
@@ -543,14 +568,6 @@ local function DeferCDMFrameChanged(frame, ...)
     end
     if HasAuraInstanceID(auraInstanceID) then slot[1] = auraInstanceID end
     if auraUnit and auraUnit ~= "" then slot[2] = auraUnit end
-
-    for _, barKey in ipairs(barKeysEarly) do
-        local spellID = tonumber(barKey:match("^buffs/(%d+)$"))
-        local barFrame = spellID and _activeBuffBars[spellID]
-        if barFrame then
-            barFrame._buffBarDirty = true
-        end
-    end
 
     _cdmFlushPending[frame] = true
     _cdmFlushFrame:Show()
@@ -645,6 +662,9 @@ local function ClearAllHooks()
     wipe(_spellToCooldownID)
     wipe(_cooldownIDToFrame)
     wipe(_spellMapRetryAt)
+    wipe(_buffProbeBars)
+    wipe(_buffWatchedBars.player)
+    wipe(_buffWatchedBars.pet)
     for _, barFrame in pairs(_activeBuffBars) do
         barFrame._hookedCDMFrame = nil
     end
@@ -1001,6 +1021,8 @@ local function UpdateRegularCooldownBar(barFrame, spellID)
     local cfg = barFrame._cfg
     local showGraphics = ShouldRenderGraphics(cfg)
     local showText = ShouldRenderText(cfg)
+    local tickDurObj = nil
+    local tickText = nil
     local cdInfo
     pcall(function()
         cdInfo = C_Spell.GetSpellCooldown(spellID)
@@ -1031,19 +1053,22 @@ local function UpdateRegularCooldownBar(barFrame, spellID)
     if showGraphics then
         isOnCooldown = shadowCD:IsShown()
     elseif durObj and spellCdActive then
-        pcall(function()
-            isOnCooldown = durObj:GetRemainingDuration() > 0
-        end)
+        -- 12.0 的 DurationObject 可能返回 secret value，只能直接渲染，不能比较。
+        -- 非图形模式下这里保守认定存在 durObj 即进入文本刷新，结束态由事件链收敛。
+        isOnCooldown = true
     end
 
     if not showGraphics then
         if barFrame._text then
             if isOnCooldown and not isOnGCD and durObj and spellCdActive and showText then
                 SetRemainingText(barFrame._text, durObj)
+                tickDurObj = durObj
+                tickText = barFrame._text
             else
                 barFrame._text:SetText("")
             end
         end
+        SetBarTickState(barFrame, tickDurObj and "spell_cd" or nil)
         return
     end
 
@@ -1051,7 +1076,10 @@ local function UpdateRegularCooldownBar(barFrame, spellID)
         CreateSegments(barFrame, 1, cfg)
     end
     local seg = barFrame._segments and barFrame._segments[1]
-    if not seg then return end
+    if not seg then
+        SetBarTickState(barFrame, nil)
+        return
+    end
 
     -- 根据冷却状态设置颜色
     if isOnCooldown and not isOnGCD and durObj and spellCdActive then
@@ -1063,7 +1091,13 @@ local function UpdateRegularCooldownBar(barFrame, spellID)
             seg:SetValue(0)
         end
         barFrame._lastFillMode = cfg.barFillMode
-        if barFrame._text then SetRemainingText(barFrame._text, durObj) end
+        if barFrame._text and showText then
+            SetRemainingText(barFrame._text, durObj)
+            tickDurObj = durObj
+            tickText = barFrame._text
+        elseif barFrame._text then
+            barFrame._text:SetText("")
+        end
     else
         -- 就绪时：使用barColor（就绪时颜色）
         seg:SetStatusBarColor(cfg.barColor.r, cfg.barColor.g, cfg.barColor.b, cfg.barColor.a)
@@ -1072,12 +1106,15 @@ local function UpdateRegularCooldownBar(barFrame, spellID)
         if barFrame._text then barFrame._text:SetText("") end
     end
     if BFK then BFK.SetReverseFill(seg, cfg.barReverse == true) end
+    SetBarTickState(barFrame, tickDurObj and "spell_cd" or nil)
 end
 
 local function UpdateChargeBar(barFrame, spellID)
     local cfg = barFrame._cfg
     local showGraphics = ShouldRenderGraphics(cfg)
     local showText = ShouldRenderText(cfg)
+    local tickDurObj = nil
+    local tickText = nil
 
     -- 使用配置中预先判断的技能类型
     if not cfg.isChargeSpell then
@@ -1091,7 +1128,10 @@ local function UpdateChargeBar(barFrame, spellID)
     end
 
     local chargeInfo = barFrame._cachedChargeInfo
-    if not chargeInfo then return end
+    if not chargeInfo then
+        SetBarTickState(barFrame, nil)
+        return
+    end
 
     local currentCharges = chargeInfo.currentCharges
     local maxCharges = chargeInfo.maxCharges
@@ -1108,8 +1148,14 @@ local function UpdateChargeBar(barFrame, spellID)
     end
 
     -- 如果maxCharges仍是secret或无效，无法设置条
-    if issecretvalue and issecretvalue(maxCharges) then return end
-    if not maxCharges or maxCharges < 1 then return end
+    if issecretvalue and issecretvalue(maxCharges) then
+        SetBarTickState(barFrame, nil)
+        return
+    end
+    if not maxCharges or maxCharges < 1 then
+        SetBarTickState(barFrame, nil)
+        return
+    end
 
     local chargeDurObj = nil
     pcall(function() chargeDurObj = C_Spell.GetSpellChargeDuration(spellID) end)
@@ -1129,6 +1175,8 @@ local function UpdateChargeBar(barFrame, spellID)
         if barFrame._text then
             if showText and shouldShowRecharge then
                 SetRemainingText(barFrame._text, activeChargeDurObj)
+                tickDurObj = activeChargeDurObj
+                tickText = barFrame._text
             else
                 barFrame._text:SetText("")
             end
@@ -1139,6 +1187,7 @@ local function UpdateChargeBar(barFrame, spellID)
         else
             barFrame._lastChargeWasFull = false
         end
+        SetBarTickState(barFrame, tickDurObj and "spell_charge" or nil)
         return
     end
 
@@ -1382,6 +1431,8 @@ local function UpdateChargeBar(barFrame, spellID)
     if barFrame._refreshChargeText then
         if shouldShowRecharge then
             SetRemainingText(barFrame._refreshChargeText, activeChargeDurObj)
+            tickDurObj = activeChargeDurObj
+            tickText = barFrame._refreshChargeText
         else
             barFrame._refreshChargeText:SetText("")
         end
@@ -1393,6 +1444,7 @@ local function UpdateChargeBar(barFrame, spellID)
     else
         barFrame._lastChargeWasFull = false
     end
+    SetBarTickState(barFrame, tickDurObj and "spell_charge" or nil)
 end
 
 -- =========================================================
@@ -1403,6 +1455,8 @@ UpdateDurationBar = function(barFrame, spellID, barKey)
     local cfg = barFrame._cfg
     local showGraphics = ShouldRenderGraphics(cfg)
     local showText = ShouldRenderText(cfg)
+    local tickDurObj = nil
+    local tickText = nil
 
     -- 若尚未有映射，尝试补建（找到后不再重复查，barKey 已缓存在 barFrame 上）
     if not _spellToCooldownID[spellID] then
@@ -1482,6 +1536,8 @@ UpdateDurationBar = function(barFrame, spellID, barKey)
                 local durObj = C_UnitAuras.GetAuraDuration(unit, auraInstanceID)
                 if showText and durObj then
                     SetRemainingText(barFrame._text, durObj)
+                    tickDurObj = durObj
+                    tickText = barFrame._text
                 else
                     barFrame._text:SetText("")
                 end
@@ -1494,6 +1550,7 @@ UpdateDurationBar = function(barFrame, spellID, barKey)
                 barFrame._text:SetText("")
             end
         end
+        SetBarTickState(barFrame, tickDurObj and "buff_duration" or nil)
         return
     end
 
@@ -1516,7 +1573,10 @@ UpdateDurationBar = function(barFrame, spellID, barKey)
         CreateSegments(barFrame, 1, cfg, false, isRing)
     end
     local seg = barFrame._segments and barFrame._segments[1]
-    if not seg then return end
+    if not seg then
+        SetBarTickState(barFrame, nil)
+        return
+    end
 
     if auraActive and auraInstanceID and unit then
         barFrame._lastKnownActive = true
@@ -1533,8 +1593,13 @@ UpdateDurationBar = function(barFrame, spellID, barKey)
                 seg._needsRefresh = false
             end
             if barFrame._text then
-                if durObj then SetRemainingText(barFrame._text, durObj)
-                else barFrame._text:SetText("") end
+                if showText and durObj then
+                    SetRemainingText(barFrame._text, durObj)
+                    tickDurObj = durObj
+                    tickText = barFrame._text
+                else
+                    barFrame._text:SetText("")
+                end
             end
         else
             -- 条形模式：使用StatusBar
@@ -1543,7 +1608,13 @@ UpdateDurationBar = function(barFrame, spellID, barKey)
                 if not durObj then return end
                 ApplyTimerDuration(seg, durObj, INTERP_EASE_OUT, FillDirection(cfg.barFillMode))
                 barFrame._lastFillMode = cfg.barFillMode
-                if barFrame._text then SetRemainingText(barFrame._text, durObj) end
+                if barFrame._text and showText then
+                    SetRemainingText(barFrame._text, durObj)
+                    tickDurObj = durObj
+                    tickText = barFrame._text
+                elseif barFrame._text then
+                    barFrame._text:SetText("")
+                end
             end)
             if not timerOK then
                 seg:SetMinMaxValues(0, 1); seg:SetValue(1)
@@ -1567,6 +1638,7 @@ UpdateDurationBar = function(barFrame, spellID, barKey)
         end
         if barFrame._text then barFrame._text:SetText("") end
     end
+    SetBarTickState(barFrame, tickDurObj and "buff_duration" or nil)
 end
 
 -- =========================================================
@@ -1579,6 +1651,7 @@ UpdateStackBar = function(barFrame, spellID, barKey)
     local showText = ShouldRenderText(cfg)
     local maxStacks = tonumber(cfg.maxStacks) or 5
     if maxStacks < 1 then maxStacks = 1 end
+    SetBarTickState(barFrame, nil)
 
     local stacks     = 0
     local auraActive = false
@@ -1801,7 +1874,9 @@ local function CreateBarFrame(spellID, cfg, container)
     -- 通用
     barFrame._segsDirty            = false
     barFrame._segsNeedCount        = nil
-    barFrame._buffBarDirty         = true
+    barFrame._tickMode             = nil
+    barFrame._isTicking            = false
+    barFrame._isVisible            = true
 
     return barFrame
 end
@@ -1810,16 +1885,236 @@ end
 -- SECTION 15: 生命周期管理
 -- =========================================================
 
+local _elapsed = 0
+local _tickScratch = {}
+local _refreshScratch = {}
+local _updateFrame = CreateFrame("Frame")
+
+--- 条件不满足时不 Hide：保持 Shown + Alpha=0，布局/API/充能等与「始终显示」同路径（避免因 Hide 跳过更新）
+local function ApplyMonitorContainerVisibility(container, shouldShow)
+    if not container then return end
+    container:Show()
+    container:SetAlpha(shouldShow and 1 or 0)
+end
+
+local function ApplyBgColor(barFrame)
+    local cfg = barFrame._cfg
+    if not ShouldRenderGraphics(cfg) then return end
+    local bgc = cfg.bgColor or { r = 0.1, g = 0.1, b = 0.1, a = 0.5 }
+    if barFrame._bg then
+        if cfg.shape == "ring" then
+            barFrame._bg:SetColorTexture(0, 0, 0, 0)
+        else
+            barFrame._bg:SetColorTexture(bgc.r, bgc.g, bgc.b, bgc.a)
+        end
+    end
+    if barFrame._chargeBG then
+        barFrame._chargeBG:SetColorTexture(bgc.r, bgc.g, bgc.b, bgc.a)
+    end
+    if barFrame._segBGs then
+        for _, bg in ipairs(barFrame._segBGs) do
+            if cfg.shape == "ring" then
+                bg:SetVertexColor(bgc.r, bgc.g, bgc.b, bgc.a)
+            else
+                bg:SetColorTexture(bgc.r, bgc.g, bgc.b, bgc.a)
+            end
+        end
+    end
+end
+
+local function RefreshUpdateFrameState()
+    if _tickBarCount > 0 then
+        _updateFrame:Show()
+    else
+        _updateFrame:Hide()
+    end
+end
+
+local function AddTickBar(barFrame)
+    if not barFrame or barFrame._isTicking then return end
+    _tickBars[barFrame] = true
+    barFrame._isTicking = true
+    _tickBarCount = _tickBarCount + 1
+    RefreshUpdateFrameState()
+end
+
+local function RemoveTickBar(barFrame)
+    if not barFrame or not barFrame._isTicking then return end
+    _tickBars[barFrame] = nil
+    barFrame._isTicking = false
+    if _tickBarCount > 0 then
+        _tickBarCount = _tickBarCount - 1
+    end
+    RefreshUpdateFrameState()
+end
+
+local function ReconcileBarTicker(barFrame)
+    if barFrame and barFrame._isVisible and barFrame._tickMode then
+        AddTickBar(barFrame)
+    else
+        RemoveTickBar(barFrame)
+    end
+end
+
+local function RemoveBuffFromDispatchIndex(barFrame)
+    if not barFrame then return end
+    local spellID = barFrame._spellID
+    if not spellID then return end
+    _buffProbeBars[spellID] = nil
+    _buffWatchedBars.player[spellID] = nil
+    _buffWatchedBars.pet[spellID] = nil
+end
+
+local function SyncBuffDispatchIndex(barFrame)
+    if not barFrame or barFrame._storeKey ~= "buffs" then return end
+    RemoveBuffFromDispatchIndex(barFrame)
+    local unit = barFrame._trackedUnit
+    if barFrame._lastKnownActive and (unit == "player" or unit == "pet") then
+        _buffWatchedBars[unit][barFrame._spellID] = barFrame
+    else
+        _buffProbeBars[barFrame._spellID] = barFrame
+    end
+end
+
+local function ResolveBarVisibility(barFrame)
+    if not barFrame then return false end
+    local isBuffActive = (barFrame._storeKey == "buffs") and (barFrame._lastKnownActive or false) or false
+    local shouldShow = ShouldShowBar(barFrame._cfg, isBuffActive)
+    if shouldShow and IsHiddenForSystemEditOnly(barFrame._cfg) then
+        shouldShow = false
+    end
+    return shouldShow
+end
+
+local function ApplyBarVisibility(barFrame, shouldShow)
+    if not barFrame then return end
+    barFrame._isVisible = shouldShow == true
+    ApplyMonitorContainerVisibility(barFrame._container, barFrame._isVisible)
+    ReconcileBarTicker(barFrame)
+end
+
+local function RefreshBarSegmentsIfNeeded(barFrame, count, isStack, isRing)
+    if not barFrame or not barFrame._segsDirty then return end
+    local cw = barFrame._segContainer and barFrame._segContainer:GetWidth()
+    if cw and cw > 0 then
+        CreateSegments(barFrame, count, barFrame._cfg, isStack, isRing)
+    end
+end
+
+local function TickBar(barFrame)
+    if not barFrame then return end
+    local mode = barFrame._tickMode
+    if not mode then
+        RemoveTickBar(barFrame)
+        return
+    end
+
+    -- 12.0 下 DurationObject 可能携带 secret value。
+    -- tick 阶段不读取/比较剩余时间，只重新走对应条目的安全刷新链路。
+    if mode == "buff_duration" then
+        RefreshBuffBar(barFrame, "tick")
+        return
+    end
+
+    RefreshSkillBar(barFrame, "tick")
+end
+
+local function UpdateFrameOnUpdate(_, dt)
+    _elapsed = _elapsed + dt
+    if _elapsed < UPDATE_INTERVAL then return end
+    _elapsed = 0
+
+    local count = 0
+    for barFrame in pairs(_tickBars) do
+        count = count + 1
+        _tickScratch[count] = barFrame
+    end
+    for i = 1, count do
+        local barFrame = _tickScratch[i]
+        _tickScratch[i] = nil
+        TickBar(barFrame)
+    end
+end
+_updateFrame:SetScript("OnUpdate", UpdateFrameOnUpdate)
+_updateFrame:Hide()
+
+RefreshSkillBar = function(barFrame)
+    if not barFrame then return end
+    ApplyBgColor(barFrame)
+    if barFrame._cfg.isChargeSpell then
+        UpdateChargeBar(barFrame, barFrame._spellID)
+    else
+        RefreshBarSegmentsIfNeeded(barFrame, barFrame._segsNeedCount or 1, false, false)
+        UpdateRegularCooldownBar(barFrame, barFrame._spellID)
+    end
+    ApplyBarVisibility(barFrame, ResolveBarVisibility(barFrame))
+end
+
+RefreshBuffBar = function(barFrame)
+    if not barFrame then return end
+    ApplyBgColor(barFrame)
+    local isStack = barFrame._monitorType == "stacks"
+    local isRing = (barFrame._cfg.shape == "ring") and not isStack
+    RefreshBarSegmentsIfNeeded(barFrame, barFrame._segsNeedCount or 1, isStack, isRing)
+    if isStack then
+        UpdateStackBar(barFrame, barFrame._spellID, barFrame._barKey)
+    else
+        UpdateDurationBar(barFrame, barFrame._spellID, barFrame._barKey)
+    end
+    SyncBuffDispatchIndex(barFrame)
+    ApplyBarVisibility(barFrame, ResolveBarVisibility(barFrame))
+end
+
+local function UpdateSkillBars()
+    for _, barFrame in pairs(_activeSkillBars) do
+        RefreshSkillBar(barFrame, "sweep")
+    end
+end
+
+local function UpdateBuffBars()
+    for _, barFrame in pairs(_activeBuffBars) do
+        RefreshBuffBar(barFrame, "sweep")
+    end
+end
+
+local function UpdateAllBars()
+    UpdateSkillBars()
+    UpdateBuffBars()
+end
+
+local function RefreshBuffBarsForUnit(unit)
+    local count = 0
+    local watched = _buffWatchedBars[unit]
+    if watched then
+        for _, barFrame in pairs(watched) do
+            count = count + 1
+            _refreshScratch[count] = barFrame
+        end
+    end
+    for _, barFrame in pairs(_buffProbeBars) do
+        count = count + 1
+        _refreshScratch[count] = barFrame
+    end
+    for i = 1, count do
+        local barFrame = _refreshScratch[i]
+        _refreshScratch[i] = nil
+        RefreshBuffBar(barFrame, "unit_aura")
+    end
+end
+
 local function DestroyBar(storeKey, spellID)
-    local tbl    = (storeKey == "skills") and _activeSkillBars or _activeBuffBars
+    local tbl = (storeKey == "skills") and _activeSkillBars or _activeBuffBars
     local barFrame = tbl[spellID]
     if not barFrame then return end
+
+    RemoveTickBar(barFrame)
+    SetBarTickState(barFrame, nil)
 
     if storeKey == "buffs" then
         local barKey = "buffs/" .. spellID
         BindBarToCDMFrame(barFrame, nil, barKey)
         UnlinkBarFromAura(barKey)
-        _activeDurationBars[spellID] = nil
+        RemoveBuffFromDispatchIndex(barFrame)
     end
 
     local container = barFrame:GetParent()
@@ -1827,7 +2122,6 @@ local function DestroyBar(storeKey, spellID)
 
     ClearSegments(barFrame)
 
-    -- 清理充能条相关帧
     if barFrame._chargeBG then
         barFrame._chargeBG:Hide()
         barFrame._chargeBG = nil
@@ -1870,168 +2164,40 @@ local function EnsureBar(storeKey, spellID, cfg, container)
     if tbl[spellID] then DestroyBar(storeKey, spellID) end
 
     local barFrame = CreateBarFrame(spellID, cfg, container)
-    barFrame._container = container  -- 存储容器引用，用于显示/隐藏
+    barFrame._container = container
     barFrame._storeKey = storeKey
     barFrame._innerSig = innerBarSignature(cfg)
+    barFrame._isVisible = true
     if storeKey == "buffs" then
         local monitorType = cfg.monitorType or "duration"
         barFrame._monitorType = monitorType
-        -- 缓存 barKey，避免每次 tick 拼字符串
         barFrame._barKey = "buffs/" .. spellID
-        if monitorType == "duration" then
-            _activeDurationBars[spellID] = barFrame
-        end
+        _buffProbeBars[spellID] = barFrame
     end
     tbl[spellID] = barFrame
 
-    barFrame._segsDirty     = true
+    barFrame._segsDirty = true
     barFrame._segsNeedCount = 1
     barFrame:Show()
+    return barFrame
 end
 
 -- =========================================================
--- SECTION 16: OnUpdate 主循环
+-- SECTION 16: 事件驱动调度
 -- =========================================================
 
-local _elapsed = 0
-
---- 条件不满足时不 Hide：保持 Shown + Alpha=0，布局/API/充能等与「始终显示」同路径（避免因 Hide 跳过更新）
-local function ApplyMonitorContainerVisibility(container, shouldShow)
-    if not container then return end
-    container:Show()
-    container:SetAlpha(shouldShow and 1 or 0)
-end
-
-local function ApplyBgColor(barFrame)
-    local cfg = barFrame._cfg
-    if not ShouldRenderGraphics(cfg) then return end
-    local bgc = cfg.bgColor or { r = 0.1, g = 0.1, b = 0.1, a = 0.5 }
-    if barFrame._bg then
-        if cfg.shape == "ring" then
-            barFrame._bg:SetColorTexture(0, 0, 0, 0)
-        else
-            barFrame._bg:SetColorTexture(bgc.r, bgc.g, bgc.b, bgc.a)
-        end
-    end
-    if barFrame._chargeBG then
-        barFrame._chargeBG:SetColorTexture(bgc.r, bgc.g, bgc.b, bgc.a)
-    end
-    if barFrame._segBGs then
-        for _, bg in ipairs(barFrame._segBGs) do
-            if cfg.shape == "ring" then
-                bg:SetVertexColor(bgc.r, bgc.g, bgc.b, bgc.a)
-            else
-                bg:SetColorTexture(bgc.r, bgc.g, bgc.b, bgc.a)
-            end
-        end
-    end
-end
-
-local function UpdateSkillBars()
-    for spellID, barFrame in pairs(_activeSkillBars) do
-        -- 检查显示条件
-        local shouldShow = ShouldShowBar(barFrame._cfg, false)
-        if shouldShow and IsHiddenForSystemEditOnly(barFrame._cfg) then
-            shouldShow = false
-        end
-        local container = barFrame._container
-
-        ApplyMonitorContainerVisibility(container, shouldShow)
-        ApplyBgColor(barFrame)
-        if not barFrame._cfg.isChargeSpell then
-            if barFrame._segsDirty then
-                local cw = barFrame._segContainer:GetWidth()
-                if cw and cw > 0 then
-                    CreateSegments(barFrame, barFrame._segsNeedCount or 1, barFrame._cfg)
-                end
-            end
-            UpdateRegularCooldownBar(barFrame, spellID)
-        else
-            UpdateChargeBar(barFrame, spellID)
-        end
-    end
-end
-
-local function UpdateBuffBars()
-    for spellID, barFrame in pairs(_activeBuffBars) do
-        local cfg = barFrame._cfg
-        local isBuffActive = barFrame._lastKnownActive or false
-        local doUpdate = true
-        if cfg.hideWhenInactive and not isBuffActive and not barFrame._segsDirty then
-            local now = GetTime and GetTime() or 0
-            local nextProbeAt = barFrame._nextInactiveProbeAt or 0
-            if now < nextProbeAt then
-                doUpdate = false
-            else
-                barFrame._nextInactiveProbeAt = now + INACTIVE_PROBE_INTERVAL
-            end
-        else
-            barFrame._nextInactiveProbeAt = nil
-        end
-        if doUpdate then
-            ApplyBgColor(barFrame)
-            if ShouldRenderGraphics(cfg) and barFrame._segsDirty then
-                local cw = barFrame._segContainer:GetWidth()
-                if cw and cw > 0 then
-                    local isRing = (cfg.shape == "ring") and barFrame._monitorType ~= "stacks"
-                    CreateSegments(barFrame, barFrame._segsNeedCount or 1, cfg,
-                        barFrame._monitorType == "stacks", isRing)
-                end
-            end
-            if barFrame._monitorType == "stacks" then
-                -- 层数条：CDM 钩子帧末已刷新时可跳过大部分 0.1s 轮询；约每 1s 兜底同步一次
-                barFrame._vf_stackPollCounter = (barFrame._vf_stackPollCounter or 0) + 1
-                local forceStackPoll = false
-                if barFrame._vf_stackPollCounter >= 10 then
-                    barFrame._vf_stackPollCounter = 0
-                    forceStackPoll = true
-                end
-                -- _nilCount>0：BUFF 刚消失、CDM 暂未同步时防抖计数；须每tick轮询否则仅靠 forceStackPoll 会拖成数秒
-                if barFrame._buffBarDirty or barFrame._segsDirty or not barFrame._lastKnownActive or forceStackPoll
-                    or (barFrame._nilCount or 0) > 0 then
-                    UpdateStackBar(barFrame, spellID, barFrame._barKey)
-                end
-                barFrame._buffBarDirty = false
-            else
-                UpdateDurationBar(barFrame, spellID, barFrame._barKey)
-                barFrame._buffBarDirty = false
-            end
-            isBuffActive = barFrame._lastKnownActive or false
-        end
-        local shouldShow = ShouldShowBar(cfg, isBuffActive)
-        if shouldShow and IsHiddenForSystemEditOnly(cfg) then
-            shouldShow = false
-        end
-        ApplyMonitorContainerVisibility(barFrame._container, shouldShow)
-    end
-end
-
-local function UpdateAllBars()
-    UpdateSkillBars()
-    UpdateBuffBars()
-end
-
-local _updateFrame = CreateFrame("Frame")
-local UpdateFrameOnUpdate = function(_, dt)
-    _elapsed = _elapsed + dt
-    if _elapsed < UPDATE_INTERVAL then return end
-    _elapsed = 0
+local function RefreshVisibilitySensitiveBars()
     UpdateAllBars()
 end
-_updateFrame:SetScript("OnUpdate", UpdateFrameOnUpdate)
-_updateFrame:Hide()
 
-VFlow.State.watch("systemEditMode", "CustomMonitorRuntime_Vis", function()
-    if next(_activeSkillBars) or next(_activeBuffBars) then
-        UpdateAllBars()
-    end
-end)
-
-VFlow.State.watch("internalEditMode", "CustomMonitorRuntime_Vis", function()
-    if next(_activeSkillBars) or next(_activeBuffBars) then
-        UpdateAllBars()
-    end
-end)
+VFlow.State.watch("systemEditMode", "CustomMonitorRuntime_Vis", RefreshVisibilitySensitiveBars)
+VFlow.State.watch("internalEditMode", "CustomMonitorRuntime_Vis", RefreshVisibilitySensitiveBars)
+VFlow.State.watch("inCombat", "CustomMonitorRuntime_Vis", RefreshVisibilitySensitiveBars)
+VFlow.State.watch("isMounted", "CustomMonitorRuntime_Vis", RefreshVisibilitySensitiveBars)
+VFlow.State.watch("isSkyriding", "CustomMonitorRuntime_Vis", RefreshVisibilitySensitiveBars)
+VFlow.State.watch("inVehicle", "CustomMonitorRuntime_Vis", RefreshVisibilitySensitiveBars)
+VFlow.State.watch("inPetBattle", "CustomMonitorRuntime_Vis", RefreshVisibilitySensitiveBars)
+VFlow.State.watch("hasTarget", "CustomMonitorRuntime_Vis", RefreshVisibilitySensitiveBars)
 
 -- =========================================================
 -- SECTION 17: 事件响应
@@ -2039,48 +2205,70 @@ end)
 
 VFlow.on("PLAYER_ENTERING_WORLD", "CustomMonitorRuntime", function()
     C_Timer.After(1.6, function()
-        if next(_activeSkillBars) or next(_activeBuffBars) then
-            _updateFrame:Show()
+        if not next(_activeSkillBars) and not next(_activeBuffBars) then
+            return
         end
+        ClearAllHooks()
+        ScanCDMViewers()
+        UpdateAllBars()
     end)
 end)
 
 local function HandleSpecOrTalentChange()
-    ScanCDMViewers()
     ClearAllHooks()
+    ScanCDMViewers()
     for _, barFrame in pairs(_activeSkillBars) do
         barFrame._needsChargeRefresh = true
-        barFrame._cachedMaxCharges   = 0
+        barFrame._cachedMaxCharges = 0
     end
     for _, barFrame in pairs(_activeBuffBars) do
         barFrame._trackedAuraInstanceID = nil
-        barFrame._trackedUnit           = nil
-        barFrame._lastKnownActive       = false
-        barFrame._lastKnownStacks       = 0
-        barFrame._buffBarDirty          = true
+        barFrame._trackedUnit = nil
+        barFrame._lastKnownActive = false
+        barFrame._lastKnownStacks = 0
+        SyncBuffDispatchIndex(barFrame)
     end
+    UpdateAllBars()
 end
 
 VFlow.on("PLAYER_SPECIALIZATION_CHANGED", "CustomMonitorRuntime", HandleSpecOrTalentChange)
 VFlow.on("TRAIT_CONFIG_UPDATED", "CustomMonitorRuntime", HandleSpecOrTalentChange)
 
 VFlow.on("PLAYER_REGEN_ENABLED", "CustomMonitorRuntime", function()
-    ScanCDMViewers()
     ClearAllHooks()
+    ScanCDMViewers()
     for _, barFrame in pairs(_activeSkillBars) do
         barFrame._needsChargeRefresh = true
+    end
+    for _, barFrame in pairs(_activeBuffBars) do
+        SyncBuffDispatchIndex(barFrame)
+    end
+    UpdateAllBars()
+end)
+
+VFlow.on("SPELL_UPDATE_COOLDOWN", "CustomMonitorRuntime", function()
+    for _, barFrame in pairs(_activeSkillBars) do
+        if not barFrame._cfg.isChargeSpell then
+            RefreshSkillBar(barFrame, "spell_cd_event")
+        end
     end
 end)
 
 VFlow.on("SPELL_UPDATE_CHARGES", "CustomMonitorRuntime", function()
     for _, barFrame in pairs(_activeSkillBars) do
-        barFrame._needsChargeRefresh = true
+        if barFrame._cfg.isChargeSpell then
+            barFrame._needsChargeRefresh = true
+            RefreshSkillBar(barFrame, "spell_charge_event")
+        end
     end
 end)
 
-
-
--- UNIT_AURA 事件：duration 条每次 OnUpdate 都会调用 SetTimerDuration，无需额外标志
+VFlow.on("UNIT_AURA", "CustomMonitorRuntime", function(_, unit)
+    if unit ~= "player" and unit ~= "pet" then
+        return
+    end
+    RefreshBuffBarsForUnit(unit)
+end, "player,pet")
 
 -- =========================================================
 -- SECTION 18: 公共接口（由 CustomMonitorGroups 调用）
@@ -2156,7 +2344,13 @@ local function SyncBarConfig(storeKey, spellID, cfg)
 
     local newInner = innerBarSignature(cfg)
     if newInner ~= barFrame._innerSig then
-        EnsureBar(storeKey, spellID, cfg, barFrame._container)
+        barFrame = EnsureBar(storeKey, spellID, cfg, barFrame._container)
+        if not barFrame then return end
+        if storeKey == "buffs" then
+            RefreshBuffBar(barFrame, "config_rebuild")
+        else
+            RefreshSkillBar(barFrame, "config_rebuild")
+        end
         return
     end
 
@@ -2166,14 +2360,9 @@ local function SyncBarConfig(storeKey, spellID, cfg)
         local monitorType = cfg.monitorType or "duration"
         if barFrame._monitorType ~= monitorType then
             barFrame._monitorType = monitorType
-            if monitorType == "duration" then
-                _activeDurationBars[spellID] = barFrame
-            else
-                _activeDurationBars[spellID] = nil
-            end
+            barFrame._segsDirty = true
         end
-        barFrame._buffBarDirty = true
-    elseif storeKey == "skills" and cfg.isChargeSpell then
+    elseif cfg.isChargeSpell then
         barFrame._needsChargeRefresh = true
     end
 
@@ -2184,31 +2373,42 @@ local function SyncBarConfig(storeKey, spellID, cfg)
             barFrame._segsNeedCount = 1
         end
     end
+
+    if storeKey == "buffs" then
+        RefreshBuffBar(barFrame, "config")
+    else
+        RefreshSkillBar(barFrame, "config")
+    end
 end
 
 VFlow.CustomMonitorRuntime = {
     onContainerReady = function(storeKey, spellID, cfg, container)
-        EnsureBar(storeKey, spellID, cfg, container)
-        _updateFrame:Show()
+        local barFrame = EnsureBar(storeKey, spellID, cfg, container)
+        if storeKey == "buffs" then
+            RefreshBuffBar(barFrame, "container_ready")
+        else
+            RefreshSkillBar(barFrame, "container_ready")
+        end
     end,
 
     onContainerDestroyed = function(storeKey, spellID)
         DestroyBar(storeKey, spellID)
-        if not next(_activeSkillBars) and not next(_activeBuffBars) then
-            _updateFrame:Hide()
-        end
     end,
 
     --- 容器像素尺寸变化（如同步技能条宽度）：段几何需重建
     notifyContainerGeometryChanged = function(storeKey, spellID)
         local tbl = storeKey == "skills" and _activeSkillBars or _activeBuffBars
         local barFrame = spellID and tbl[spellID]
-        if barFrame then
-            barFrame._segsDirty = true
-            barFrame._needsChargeRefresh = true
-            if barFrame._segsNeedCount == nil then
-                barFrame._segsNeedCount = 1
-            end
+        if not barFrame then return end
+        barFrame._segsDirty = true
+        barFrame._needsChargeRefresh = true
+        if barFrame._segsNeedCount == nil then
+            barFrame._segsNeedCount = 1
+        end
+        if storeKey == "buffs" then
+            RefreshBuffBar(barFrame, "geometry")
+        else
+            RefreshSkillBar(barFrame, "geometry")
         end
     end,
 
