@@ -9,6 +9,7 @@ if not VFlow then return end
 local MODULE_KEY = "VFlow.Buffs"
 local Profiler = VFlow.Profiler
 local MasqueSupport = VFlow.MasqueSupport
+local StyleLayout = VFlow.StyleLayout
 
 -- =========================================================
 -- SECTION 2: 模块状态
@@ -107,8 +108,8 @@ local function GetGroupIdxForIcon(icon, spellMap)
         end
     end
 
-    if icon.cooldownID then
-        local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(icon.cooldownID)
+    if icon.cooldownID and StyleLayout and StyleLayout.GetCachedCooldownViewerInfo then
+        local info = StyleLayout.GetCachedCooldownViewerInfo(icon)
         if info then
             local spellID = info.linkedSpellIDs and info.linkedSpellIDs[1]
             spellID = spellID or info.overrideSpellID or info.spellID

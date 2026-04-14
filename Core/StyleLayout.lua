@@ -44,6 +44,33 @@ function StyleLayout.InvalidateCollectIconsCache(viewer)
     viewer._vf_bb_frames_pn = nil
 end
 
+--- CooldownViewer 帧上 cooldownID → info 的轻量缓存（分类/高亮链路同一帧内会多次读）
+--- cooldownID 变化时须失效：CooldownStyle 在 OnCooldownIDSet 等路径调用 InvalidateCooldownViewerInfoCache
+function StyleLayout.InvalidateCooldownViewerInfoCache(icon)
+    if not icon then return end
+    icon._vf_cv_infoCacheId = nil
+    icon._vf_cv_infoCache = nil
+end
+
+function StyleLayout.GetCachedCooldownViewerInfo(icon)
+    if not icon or not icon.cooldownID then return nil end
+    local cid = icon.cooldownID
+    if icon._vf_cv_infoCacheId == cid and icon._vf_cv_infoCache ~= nil then
+        local cached = icon._vf_cv_infoCache
+        if cached == false then return nil end
+        return cached
+    end
+    if not (C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo) then
+        icon._vf_cv_infoCacheId = cid
+        icon._vf_cv_infoCache = false
+        return nil
+    end
+    local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cid)
+    icon._vf_cv_infoCacheId = cid
+    icon._vf_cv_infoCache = info or false
+    return info
+end
+
 -- =========================================================
 -- SECTION 2: 工具函数
 -- =========================================================

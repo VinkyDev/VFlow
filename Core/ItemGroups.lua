@@ -184,8 +184,8 @@ local function GetGroupIdForIcon(icon, spellMap)
         end
     end
 
-    if icon.cooldownID then
-        local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(icon.cooldownID)
+    if icon.cooldownID and VFlow.StyleLayout and VFlow.StyleLayout.GetCachedCooldownViewerInfo then
+        local info = VFlow.StyleLayout.GetCachedCooldownViewerInfo(icon)
         if info then
             local spellID = info.linkedSpellIDs and info.linkedSpellIDs[1]
             spellID = spellID or info.overrideSpellID or info.spellID
@@ -495,25 +495,24 @@ local function ShouldIncludeItemCellInLayout(entry, cfg)
     return ((cfg and cfg.itemZeroCountBehavior) or "gray") ~= "hide"
 end
 
-local function AppendVisibleEntryCount(cfg, viewer)
-    if not cfg or not ShouldAppendToViewer(cfg, viewer) then return 0 end
-    local n = 0
-    for _, e in ipairs(BuildAppendEntries(cfg)) do
-        if ShouldIncludeItemCellInLayout(e, cfg) then
-            n = n + 1
-        end
-    end
-    return n
-end
-
 local function ViewerHasAppendEntries(viewer)
     local db = VFlow.getDBIfReady(MODULE_KEY)
     if not db then return false end
-    if db.mainGroup and AppendVisibleEntryCount(db.mainGroup, viewer) > 0 then
+    local function appendHasVisibleCells(cfg)
+        if not cfg or not ShouldAppendToViewer(cfg, viewer) then return false end
+        if not ShouldShowItemGroup(cfg) then return false end
+        for _, e in ipairs(BuildTrackedEntries(cfg)) do
+            if ShouldIncludeItemCellInLayout(e, cfg) then
+                return true
+            end
+        end
+        return false
+    end
+    if db.mainGroup and appendHasVisibleCells(db.mainGroup) then
         return true
     end
     for _, g in ipairs(db.customGroups or {}) do
-        if g.config and AppendVisibleEntryCount(g.config, viewer) > 0 then
+        if g.config and appendHasVisibleCells(g.config) then
             return true
         end
     end

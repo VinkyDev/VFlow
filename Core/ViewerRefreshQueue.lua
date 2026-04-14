@@ -15,17 +15,10 @@ local handlers = {}
 local queue = {}
 local queueVersion = 0
 local updaterActive = false
+local queueKeyOrder = {}
+local queueKeyRegistered = {}
 
 local Updater = CreateFrame("Frame", "VFlow_ViewerRefreshQueueUpdater")
-
-local function sortedQueueKeys()
-    local keys = {}
-    for k in pairs(queue) do
-        keys[#keys + 1] = k
-    end
-    table.sort(keys)
-    return keys
-end
 
 local function ProcessQueue()
     for name, version in pairs(queue) do
@@ -39,9 +32,8 @@ local function ProcessQueue()
         return
     end
 
-    -- 每帧清空当前队列
-    local keys = sortedQueueKeys()
-    for _, pickKey in ipairs(keys) do
+    for i = 1, #queueKeyOrder do
+        local pickKey = queueKeyOrder[i]
         local ver = queue[pickKey]
         if ver ~= nil then
             queue[pickKey] = nil
@@ -64,12 +56,24 @@ function ViewerRefreshQueue.register(key, fn)
     if type(key) ~= "string" or key == "" then
         return
     end
+    if not queueKeyRegistered[key] then
+        queueKeyRegistered[key] = true
+        queueKeyOrder[#queueKeyOrder + 1] = key
+    end
     handlers[key] = fn
 end
 
 function ViewerRefreshQueue.unregister(key)
     handlers[key] = nil
     queue[key] = nil
+    if queueKeyRegistered[key] then
+        queueKeyRegistered[key] = nil
+        for idx = #queueKeyOrder, 1, -1 do
+            if queueKeyOrder[idx] == key then
+                table.remove(queueKeyOrder, idx)
+            end
+        end
+    end
 end
 
 function ViewerRefreshQueue.bumpVersion()

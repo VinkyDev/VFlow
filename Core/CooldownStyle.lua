@@ -105,7 +105,13 @@ local function CollectBuffBarFrames(viewer)
     if not viewer then
         return {}
     end
-    local frames = {}
+    local frames = viewer._vf_cdf_bar_collect_work
+    if not frames then
+        frames = {}
+        viewer._vf_cdf_bar_collect_work = frames
+    else
+        wipe(frames)
+    end
     if viewer.itemFramePool then
         for frame in viewer.itemFramePool:EnumerateActive() do
             if frame and frame.IsShown and frame:IsShown() then
@@ -296,9 +302,8 @@ local function ResolveHighlightSpellID(frame)
             return id
         end
     end
-    local cdID = frame.cooldownID
-    if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-        local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+    if frame.cooldownID and StyleLayout.GetCachedCooldownViewerInfo then
+        local info = StyleLayout.GetCachedCooldownViewerInfo(frame)
         if info then
             local spellID = info.linkedSpellIDs and info.linkedSpellIDs[1]
             spellID = spellID or info.overrideSpellID or info.spellID
@@ -400,7 +405,8 @@ end
 -- BUFF 激活瞬间会连续触发 CD 更新 / RefreshData / OnActiveStateChanged，合并到帧末只算一次，避免发光被反复打断。
 -- 技能图标也必须延迟：SetCooldown hook 若在暴雪 RefreshData/充能缓存链内同步调用 C_Spell.GetSpellCooldown，
 -- 会使 spellChargeInfo.maxCharges 等 secret 带上 VFlow 污染，触发 Blizzard_CooldownViewer CacheChargeValues 报错。
-local pendingCustomHLFrames = {}
+local pendingCustomHLBatch1, pendingCustomHLBatch2 = {}, {}
+local pendingCustomHLFrames = pendingCustomHLBatch1
 local customHLFlushFrame = CreateFrame("Frame")
 customHLFlushFrame:Hide()
 customHLFlushOnUpdate = function(self)
@@ -408,12 +414,13 @@ customHLFlushOnUpdate = function(self)
     for _ = 1, 12 do
         local batch = pendingCustomHLFrames
         if not next(batch) then break end
-        pendingCustomHLFrames = {}
+        pendingCustomHLFrames = (batch == pendingCustomHLBatch1) and pendingCustomHLBatch2 or pendingCustomHLBatch1
         for f in pairs(batch) do
             if f and f.Icon then
                 UpdateCustomHighlightForFrame(f)
             end
         end
+        wipe(batch)
     end
 end
 customHLFlushFrame:SetScript("OnUpdate", customHLFlushOnUpdate)
@@ -1780,6 +1787,7 @@ SetupHooks = function()
     local queueBuffIconAfterHighlight
     queueBuffIconAfterHighlight = function(frame)
         if not frame then return end
+        StyleLayout.InvalidateCooldownViewerInfoCache(frame)
         frame._vf_cdmKind = "buff"
         local viewer, cfg = GetBuffViewerAndConfig()
         if not viewer or not cfg then return end
@@ -1816,6 +1824,7 @@ SetupHooks = function()
         if frame.OnCooldownIDSet and not frame._vf_skillCDHooked then
             frame._vf_skillCDHooked = true
             hooksecurefunc(frame, "OnCooldownIDSet", function(self)
+                StyleLayout.InvalidateCooldownViewerInfoCache(self)
                 TouchCustomHighlight(self)
             end)
         end
@@ -1873,6 +1882,7 @@ SetupHooks = function()
             if frame.OnCooldownIDSet and not frame._vf_cdIDHooked then
                 frame._vf_cdIDHooked = true
                 hooksecurefunc(frame, "OnCooldownIDSet", function(self)
+                    StyleLayout.InvalidateCooldownViewerInfoCache(self)
                     queueBuffIconAfterHighlight(self)
                 end)
             end
@@ -1931,6 +1941,7 @@ SetupHooks = function()
 
     if CooldownViewerBuffIconItemMixin and CooldownViewerBuffIconItemMixin.OnCooldownIDSet then
         hooksecurefunc(CooldownViewerBuffIconItemMixin, "OnCooldownIDSet", function(frame)
+            if frame then StyleLayout.InvalidateCooldownViewerInfoCache(frame) end
             queueBuffIconAfterHighlight(frame)
         end)
     end

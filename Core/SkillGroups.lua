@@ -7,6 +7,7 @@ local VFlow = _G.VFlow
 if not VFlow then return end
 
 local MODULE_KEY = "VFlow.Skills"
+local StyleLayout = VFlow.StyleLayout
 local Profiler = VFlow.Profiler
 local MasqueSupport = VFlow.MasqueSupport
 
@@ -108,8 +109,8 @@ local function CollectSpellCandidatesForGroup(icon)
     if icon.GetAuraSpellID then
         AddSpellCandidate(c, icon:GetAuraSpellID())
     end
-    if icon.cooldownID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-        local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(icon.cooldownID)
+    if icon.cooldownID and StyleLayout and StyleLayout.GetCachedCooldownViewerInfo then
+        local info = StyleLayout.GetCachedCooldownViewerInfo(icon)
         if info then
             AddSpellCandidate(c, info.overrideSpellID)
             local baseID = info.spellID

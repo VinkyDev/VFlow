@@ -7,6 +7,11 @@ local VFlow = _G.VFlow
 if not VFlow then return end
 
 local Profiler = VFlow.Profiler
+local carriedItemResolveCache = {}
+
+local function InvalidateCarriedItemResolveCache()
+    wipe(carriedItemResolveCache)
+end
 
 -- =========================================================
 -- SECTION 2: 静态表与解析 API
@@ -128,18 +133,26 @@ end
 --- @return carriedItemID 身上能数到的实例（主 ID 或备选 ID）
 local function resolveManualCarriedItemID(configItemID)
     if not configItemID or configItemID <= 0 then return configItemID end
+    local hit = carriedItemResolveCache[configItemID]
+    if hit ~= nil then
+        return hit
+    end
     C_Item.RequestLoadItemDataByID(configItemID)
     if (C_Item.GetItemCount(configItemID, false, true) or 0) > 0 then
+        carriedItemResolveCache[configItemID] = configItemID
         return configItemID
     end
     local fromException = tryResolveFromItemGroup(configItemID, manualItemAlternateExceptionGroupById[configItemID])
     if fromException then
+        carriedItemResolveCache[configItemID] = fromException
         return fromException
     end
     local fromAdjacent = tryResolveAdjacentItemId(configItemID)
     if fromAdjacent then
+        carriedItemResolveCache[configItemID] = fromAdjacent
         return fromAdjacent
     end
+    carriedItemResolveCache[configItemID] = configItemID
     return configItemID
 end
 
@@ -177,3 +190,6 @@ if Profiler and Profiler.registerScope then
         VFlow.ItemAutoData.resolveManualCarriedItemID = fn
     end)
 end
+
+VFlow.on("UNIT_INVENTORY_CHANGED", "ItemAutoData.CarriedCacheInv", InvalidateCarriedItemResolveCache)
+VFlow.on("PLAYER_EQUIPMENT_CHANGED", "ItemAutoData.CarriedCacheEq", InvalidateCarriedItemResolveCache)
