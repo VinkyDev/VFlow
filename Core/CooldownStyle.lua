@@ -93,14 +93,6 @@ local function ResolveBuffBarWidth(cfg)
     return width
 end
 
-local function NormalizeBuffBarGrowDirection(cfg)
-    local g = cfg and cfg.growDirection
-    if type(g) == "string" and string.upper(g) == "UP" then
-        return "UP"
-    end
-    return "DOWN"
-end
-
 local function CollectBuffBarFrames(viewer)
     if not viewer then
         return {}
@@ -127,116 +119,6 @@ local function CollectBuffBarFrames(viewer)
     end
     Utils.sortByLayoutIndex(frames)
     return frames
-end
-
-local function IsBuffBarSystemEditModeActive()
-    return EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() == true
-end
-
---- Buff 条真实布局区域（挂到 UIParent，避免与 CDM viewer 尺寸互相牵制）
-local function GetOrCreateBuffBarLayoutHost(viewer)
-    if not viewer then return nil end
-    local host = viewer._vf_buffBarLayoutHost
-    if not host then
-        if viewer._vf_buffBarLayoutRoot and viewer._vf_buffBarLayoutRoot.Hide then
-            viewer._vf_buffBarLayoutRoot:Hide()
-        end
-        viewer._vf_buffBarLayoutRoot = nil
-        host = CreateFrame("Frame", "VFlow_BuffBarLayoutHost", UIParent)
-        host:SetClipsChildren(false)
-        viewer._vf_buffBarLayoutHost = host
-    end
-    return host
-end
-
---- 将帧当前屏幕角点写入 layoutPos
-local function PersistBuffBarLayoutPosFromRegion(region, cfg, growDir)
-    if not region or not cfg then return end
-    local lp = cfg.layoutPos
-    if type(lp) ~= "table" then
-        lp = {}
-        cfg.layoutPos = lp
-    end
-    local left = region.GetLeft and region:GetLeft()
-    local top = region.GetTop and region:GetTop()
-    local bottom = region.GetBottom and region:GetBottom()
-    if type(left) ~= "number" or type(top) ~= "number" or type(bottom) ~= "number" then
-        return
-    end
-    lp.mode = "corner"
-    lp.cornerLeft = left
-    if growDir == "UP" then
-        lp.cornerY = bottom
-    else
-        lp.cornerY = top
-    end
-end
-
-local function PersistBuffBarLayoutIfShown()
-    local viewer, cfg = GetBuffBarViewerAndConfig()
-    if not viewer or not cfg then return end
-    if viewer.IsShown and not viewer:IsShown() then return end
-    PersistBuffBarLayoutPosFromRegion(viewer, cfg, NormalizeBuffBarGrowDirection(cfg))
-end
-
-local function ApplyBuffBarHostUIParentLayoutFromCfg(host, cfg, growDir)
-    local lp = cfg.layoutPos
-    if type(lp) == "table" and lp.mode == "corner" and type(lp.cornerLeft) == "number" and type(lp.cornerY) == "number" then
-        if growDir == "UP" then
-            host:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", lp.cornerLeft, lp.cornerY)
-        else
-            host:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", lp.cornerLeft, lp.cornerY)
-        end
-    else
-        local relPoint = (lp and lp.relPoint) or "CENTER"
-        local x = (lp and lp.x) or 0
-        local y = (lp and lp.y) or -280
-        local hostPoint = (growDir == "UP") and "BOTTOM" or "TOP"
-        host:SetPoint(hostPoint, UIParent, relPoint, x, y)
-    end
-end
-
-local function ApplyBuffBarHostLayout(viewer, host, cfg, growDir, width, contentH)
-    if not viewer or not host or not cfg then return end
-    local w = math.max(1, width)
-    local h = math.max(1, contentH)
-    host:SetSize(w, h)
-    local strata = viewer.GetFrameStrata and viewer:GetFrameStrata() or "MEDIUM"
-    host:SetFrameStrata(strata)
-    local vl = viewer:GetFrameLevel() or 0
-    host:SetFrameLevel(vl + 2)
-
-    host:SetParent(UIParent)
-    host:ClearAllPoints()
-
-    if IsBuffBarSystemEditModeActive() then
-        local left = viewer.GetLeft and viewer:GetLeft()
-        local top = viewer.GetTop and viewer:GetTop()
-        local bottom = viewer.GetBottom and viewer:GetBottom()
-        if type(left) == "number" and type(top) == "number" and type(bottom) == "number" then
-            if growDir == "UP" then
-                host:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", left, bottom)
-            else
-                host:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
-            end
-        else
-            ApplyBuffBarHostUIParentLayoutFromCfg(host, cfg, growDir)
-        end
-    else
-        ApplyBuffBarHostUIParentLayoutFromCfg(host, cfg, growDir)
-    end
-
-    if viewer.IsShown and viewer:IsShown() then
-        host:Show()
-    else
-        host:Hide()
-    end
-end
-
-local function SyncBuffBarViewerToHostGeometry(viewer, host)
-    if not viewer or not host or not viewer.SetAllPoints then return end
-    if not host.IsShown or not host:IsShown() then return end
-    viewer:SetAllPoints(host)
 end
 
 -- =========================================================
@@ -835,7 +717,7 @@ local function RefreshBuffBarViewer(viewer, cfg)
     local width = ResolveBuffBarWidth(cfg)
     local height = cfg.barHeight or 20
     local spacing = cfg.barSpacing or 1
-    local growDir = NormalizeBuffBarGrowDirection(cfg)
+    local barLevel = (viewer.GetFrameLevel and viewer:GetFrameLevel() or 0) + 1
 
     if viewer.itemFramePool then
         for frame in viewer.itemFramePool:EnumerateActive() do
@@ -849,17 +731,8 @@ local function RefreshBuffBarViewer(viewer, cfg)
     local frames = CollectBuffBarFrames(viewer)
     local count = #frames
 
-    local host = GetOrCreateBuffBarLayoutHost(viewer)
-    if not host then
-        viewer._vf_refreshing = false
-        return false
-    end
-
-    local barLevel = (host:GetFrameLevel() or 0) + 1
-
     if count == 0 then
-        ApplyBuffBarHostLayout(viewer, host, cfg, growDir, width, height)
-        SyncBuffBarViewerToHostGeometry(viewer, host)
+        viewer:SetSize(math.max(1, width), math.max(1, height))
         viewer._vf_refreshing = false
         if viewer._vf_needsReRefresh then
             viewer._vf_needsReRefresh = false
@@ -876,14 +749,14 @@ local function RefreshBuffBarViewer(viewer, cfg)
     end
 
     local containerHeight = (count * height) + ((count - 1) * spacing)
-    ApplyBuffBarHostLayout(viewer, host, cfg, growDir, width, math.max(height, containerHeight))
+    viewer:SetSize(width, math.max(height, containerHeight))
 
     for i = 1, count do
         local frame = frames[i]
         local offset = (i - 1) * (height + spacing)
 
-        if frame:GetParent() ~= host then
-            frame:SetParent(host)
+        if frame:GetParent() ~= viewer then
+            frame:SetParent(viewer)
         end
         if frame.SetFrameLevel then
             frame:SetFrameLevel(barLevel)
@@ -892,16 +765,11 @@ local function RefreshBuffBarViewer(viewer, cfg)
         ApplyBuffBarFrameStyle(frame, cfg, width, height)
 
         frame:ClearAllPoints()
-        if growDir == "UP" then
-            frame:SetPoint("BOTTOMLEFT", host, "BOTTOMLEFT", 0, offset)
-        else
-            frame:SetPoint("TOPLEFT", host, "TOPLEFT", 0, -offset)
-        end
+        -- BuffBar 当前临时仅支持“居中锚点下的固定排布”。方向配置先不启用，避免与系统 EditMode 锚点策略冲突。
+        frame:SetPoint("TOPLEFT", viewer, "TOPLEFT", 0, -offset)
 
         frame:SetAlpha(1)
     end
-
-    SyncBuffBarViewerToHostGeometry(viewer, host)
 
     viewer._vf_refreshing = false
 
@@ -1902,7 +1770,12 @@ SetupHooks = function()
     end
 
     if BuffBarCooldownViewer then
-        hookViewerLayoutDataAndShow(BuffBarCooldownViewer, QK_BUFF_BAR)
+        SafeHook(BuffBarCooldownViewer, "RefreshData", function()
+            queueViewerRefresh(QK_BUFF_BAR, false)
+        end)
+        BuffBarCooldownViewer:HookScript("OnShow", function()
+            queueViewerRefresh(QK_BUFF_BAR, false)
+        end)
         SafeHook(BuffBarCooldownViewer, "OnAcquireItemFrame", function(_, frame)
             if not frame then return end
             StyleLayout.InvalidateCollectIconsCache(BuffBarCooldownViewer)
@@ -1929,14 +1802,6 @@ SetupHooks = function()
         if BuffBarCooldownViewer.itemFramePool then
             hooksecurefunc(BuffBarCooldownViewer.itemFramePool, "Release", buffBarReleaseHandler)
         end
-
-        if BuffBarCooldownViewer.Selection and not BuffBarCooldownViewer._vf_buffBarSelectionDragHooked then
-            BuffBarCooldownViewer._vf_buffBarSelectionDragHooked = true
-            BuffBarCooldownViewer.Selection:HookScript("OnDragStop", function()
-                PersistBuffBarLayoutIfShown()
-                queueViewerRefresh(QK_BUFF_BAR, false)
-            end)
-        end
     end
 
     if CooldownViewerBuffIconItemMixin and CooldownViewerBuffIconItemMixin.OnCooldownIDSet then
@@ -1945,46 +1810,6 @@ SetupHooks = function()
             queueBuffIconAfterHighlight(frame)
         end)
     end
-
-
-    if EditModeManagerFrame and not EditModeManagerFrame._vf_vflowBuffBarGeoSync then
-        EditModeManagerFrame._vf_vflowBuffBarGeoSync = true
-        local function syncBuffBarAfterSystemEditMode()
-            C_Timer.After(0.05, function()
-                local get = VFlow.Store and VFlow.Store.getModuleRef
-                if not (get and get("VFlow.BuffBar")) then return end
-                if not EditModeManagerFrame or not EditModeManagerFrame:IsEditModeActive() then
-                    local viewer, cfg = GetBuffBarViewerAndConfig()
-                    if viewer and cfg then
-                        PersistBuffBarLayoutPosFromRegion(viewer, cfg, NormalizeBuffBarGrowDirection(cfg))
-                    end
-                end
-                queueViewerRefresh(QK_BUFF_BAR, false)
-            end)
-        end
-        hooksecurefunc(EditModeManagerFrame, "EnterEditMode", syncBuffBarAfterSystemEditMode)
-        hooksecurefunc(EditModeManagerFrame, "ExitEditMode", syncBuffBarAfterSystemEditMode)
-    end
-
-    if C_EditMode and C_EditMode.SaveLayouts and not VFlow._buffBarEditSaveLayoutsHooked then
-        local ok = pcall(function()
-            hooksecurefunc(C_EditMode, "SaveLayouts", function()
-                C_Timer.After(0, function()
-                    local get = VFlow.Store and VFlow.Store.getModuleRef
-                    if not (get and get("VFlow.BuffBar")) then return end
-                    local viewer, cfg = GetBuffBarViewerAndConfig()
-                    if viewer and cfg then
-                        PersistBuffBarLayoutPosFromRegion(viewer, cfg, NormalizeBuffBarGrowDirection(cfg))
-                    end
-                    queueViewerRefresh(QK_BUFF_BAR, false)
-                end)
-            end)
-        end)
-        if ok then
-            VFlow._buffBarEditSaveLayoutsHooked = true
-        end
-    end
-
     if EventRegistry then
         EventRegistry:RegisterCallback("CooldownViewerSettings.OnDataChanged", function()
             RequestRefresh(0.2)

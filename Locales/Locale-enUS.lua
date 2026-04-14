@@ -243,6 +243,7 @@ L["Name text style"] = true
 L["Duration text style"] = true
 L["Stack text style"] = true
 L["BUFF bar displays status bar content tracked in {Cooldown Manager} Buff category. For custom bar monitors, use Graphic Monitor."] = true
+L["Temporary limitation: BuffBar currently grows from the center only. Upward and downward growth will return in a later update."] = true
 L["Standalone"] = true
 L["Append to Important Skills"] = "Append to Essential Skills"
 L["Append to Efficiency Skills"] = "Append to Utility Skills"

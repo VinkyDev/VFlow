@@ -29,15 +29,6 @@ local defaults = {
     barTexture = "Solid",
     barColor = { r = 0.4, g = 0.6, b = 0.9, a = 1 },
     barBackgroundColor = { r = 0.1, g = 0.1, b = 0.1, a = 0.8 },
-    growDirection = "DOWN",
-    layoutPos = {
-        mode = "offset",
-        relPoint = "CENTER",
-        x = 200,
-        y = -70,
-        cornerLeft = nil,
-        cornerY = nil,
-    },
     iconPosition = "LEFT",
     iconGap = 1,
     showName = true,
@@ -106,14 +97,9 @@ local function renderContent(container, _menuKey)
         { type = "subtitle", text = L["Layout"], cols = 24 },
         { type = "separator", cols = 24 },
         {
-            type = "dropdown",
-            key = "growDirection",
-            label = L["Grow direction"],
-            cols = 12,
-            items = {
-                { L["Grow down"], "DOWN" },
-                { L["Grow up"], "UP" },
-            }
+            type = "description",
+            cols = 24,
+            text = L["Temporary limitation: BuffBar currently grows from the center only. Upward and downward growth will return in a later update."],
         },
         { type = "spacer", height = 5, cols = 24 },
         {

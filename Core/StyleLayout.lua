@@ -39,9 +39,6 @@ function StyleLayout.InvalidateCollectIconsCache(viewer)
     viewer._vf_sl_icons = nil
     viewer._vf_sl_cn = nil
     viewer._vf_sl_pn = nil
-    viewer._vf_bb_frames_cached = nil
-    viewer._vf_bb_frames_cn = nil
-    viewer._vf_bb_frames_pn = nil
 end
 
 --- CooldownViewer 帧上 cooldownID → info 的轻量缓存（分类/高亮链路同一帧内会多次读）
