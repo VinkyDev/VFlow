@@ -99,7 +99,7 @@ local function renderContent(container, _menuKey)
         {
             type = "description",
             cols = 24,
-            text = L["Temporary limitation: BuffBar currently grows from the center only. Upward and downward growth will return in a later update."],
+            text = L["BuffBar growth direction depends on Edit Mode settings. If attachment to UI elements is disabled, it grows from the center. If attachment is enabled, growth direction follows the snap line used when anchoring the frame."],
         },
         { type = "spacer", height = 5, cols = 24 },
         {

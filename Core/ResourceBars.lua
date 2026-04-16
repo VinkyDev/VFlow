@@ -29,11 +29,19 @@ local runtimeEventsRegistered = false
 local RESOURCE_BAR_POLL_INTERVAL = 0.2
 local resourceBarPollDriver = nil
 
-local function IsSecretNumber(v)
+local function IsSecretValue(v)
     if v == nil or not issecretvalue then
         return false
     end
     return not not issecretvalue(v)
+end
+
+local function IsSecretNumber(v)
+    return IsSecretValue(v)
+end
+
+local function IsPositivePlainNumber(v)
+    return not IsSecretNumber(v) and type(v) == "number" and v > 0
 end
 
 local function BuildColorSignature(color, defaultR, defaultG, defaultB, defaultA)
@@ -54,6 +62,74 @@ local function BuildColorSignature(color, defaultR, defaultG, defaultB, defaultA
         tostring(b),
         tostring(a),
     }, "\031"), r, g, b, a
+end
+
+local function SetShownIfChanged(region, wantShown)
+    if not region then
+        return
+    end
+    if region:IsShown() ~= wantShown then
+        region:SetShown(wantShown)
+    end
+end
+
+local function SetTextIfChanged(fs, text)
+    if not fs then
+        return
+    end
+    if IsSecretValue(text) or IsSecretValue(fs._vf_textValue) then
+        fs:SetText(text)
+        fs._vf_textValue = nil
+        return
+    end
+    if fs._vf_textValue ~= text then
+        fs:SetText(text)
+        fs._vf_textValue = text
+    end
+end
+
+local function ApplyStatusBarColorCached(sb, color, defaultR, defaultG, defaultB, defaultA)
+    if not sb then
+        return
+    end
+    local colorSig, r, g, b, a = BuildColorSignature(color, defaultR or 1, defaultG or 1, defaultB or 1, defaultA or 1)
+    if colorSig and sb._vf_fillColorSig == colorSig then
+        return
+    end
+    sb:SetStatusBarColor(r, g, b, a)
+    sb._vf_fillColorSig = colorSig
+end
+
+local function ApplyBarProgressCached(sb, minValue, maxValue, value, useSmooth)
+    if not sb then
+        return
+    end
+    local canCache = not IsSecretNumber(minValue) and not IsSecretNumber(maxValue) and not IsSecretNumber(value)
+    local smoothFlag = useSmooth == true
+    if canCache
+        and sb._vf_progMin == minValue
+        and sb._vf_progMax == maxValue
+        and sb._vf_progValue == value
+        and sb._vf_progSmooth == smoothFlag then
+        return
+    end
+    if minValue == 0 and BFK and BFK.ApplyBarProgress then
+        BFK.ApplyBarProgress(sb, maxValue, value, useSmooth)
+    else
+        sb:SetMinMaxValues(minValue, maxValue)
+        sb:SetValue(value)
+    end
+    if canCache then
+        sb._vf_progMin = minValue
+        sb._vf_progMax = maxValue
+        sb._vf_progValue = value
+        sb._vf_progSmooth = smoothFlag
+    else
+        sb._vf_progMin = nil
+        sb._vf_progMax = nil
+        sb._vf_progValue = nil
+        sb._vf_progSmooth = nil
+    end
 end
 
 local function GetDb()
@@ -94,7 +170,12 @@ local function FindActiveResourceRow(specID, formID)
     return fallbackRow
 end
 
-local function BuildRuntimeContext(db)
+local function BuildRuntimeContext(db, forceRebuild)
+    local existing = rb._vf_runtimeContext
+    if existing and not forceRebuild and rb._vf_runtimeContextDirty ~= true then
+        existing.db = db or GetDb()
+        return existing
+    end
     local specID = CurrentSpecId()
     local row = FindActiveResourceRow(specID, GetShapeshiftFormID())
     local primaryResource = ResolveRuntimeResourceToken(row and row.primary)
@@ -102,12 +183,18 @@ local function BuildRuntimeContext(db)
     if primaryResource ~= nil and primaryResource == secondaryResource then
         secondaryResource = nil
     end
-    return {
-        db = db or GetDb(),
-        specID = specID,
-        primaryResource = primaryResource,
-        secondaryResource = secondaryResource,
-    }
+    rb._vf_runtimeContext = rb._vf_runtimeContext or {}
+    local context = rb._vf_runtimeContext
+    context.db = db or GetDb()
+    context.specID = specID
+    context.primaryResource = primaryResource
+    context.secondaryResource = secondaryResource
+    rb._vf_runtimeContextDirty = false
+    return context
+end
+
+local function MarkRuntimeContextDirty()
+    rb._vf_runtimeContextDirty = true
 end
 
 --- DK 符文
@@ -127,7 +214,7 @@ local runeFillScratch = {}
 local function GetRuneMaxCurrentAndFillSnapshot()
     if not E_PT then return nil, nil end
     local max = UnitPowerMax("player", E_PT.Runes)
-    if max <= 0 then return nil, nil end
+    if not IsPositivePlainNumber(max) then return nil, nil end
     local current = 0
     for i = 1, max do
         local slot = runeCooldownSnapshot[i]
@@ -199,18 +286,18 @@ local function GetSecondaryResourceValue(resource)
             if IsSecretNumber(raw) then
                 local cur0 = UnitPower("player", resource, false)
                 local max0 = UnitPowerMax("player", resource, false)
-                if max0 <= 0 then return nil, nil end
+                if not IsPositivePlainNumber(max0) then return nil, nil end
                 return max0, cur0
             end
             local r = tonumber(raw) or 0
             local curShards = math.floor(r / 10) + (r % 10) / 10
             local maxP = UnitPowerMax("player", resource, false) or 5
-            if maxP <= 0 then return nil, nil end
+            if not IsPositivePlainNumber(maxP) then return nil, nil end
             return maxP, curShards
         end
         local cur = UnitPower("player", resource, false)
         local max = UnitPowerMax("player", resource, false)
-        if max <= 0 then return nil, nil end
+        if not IsPositivePlainNumber(max) then return nil, nil end
         return max, cur
     end
 
@@ -234,7 +321,7 @@ local function GetSecondaryResourceValue(resource)
 
     local cur = UnitPower("player", resource)
     local max = UnitPowerMax("player", resource)
-    if max <= 0 then return nil, nil end
+    if not IsPositivePlainNumber(max) then return nil, nil end
     return max, cur
 end
 
@@ -327,10 +414,10 @@ local function ApplyMainBarFillColor(sb, resource, style, cur, max)
     local tex = sb.GetStatusBarTexture and sb:GetStatusBarTexture()
     if tex then
         tex:SetVertexColor(r, g, b, a)
-    else
-        sb:SetStatusBarColor(r, g, b, a)
+        sb._vf_fillColorSig = colorSig
+        return
     end
-    sb._vf_fillColorSig = colorSig
+    ApplyStatusBarColorCached(sb, c, 1, 1, 1, 1)
 end
 
 --- 精华：层数变化时重置下一格充能起点；未满且无起点时补上。
@@ -465,15 +552,30 @@ local function RuntimeUsesOverchargedComboPointColor(resource)
         and resource == E_PT.ComboPoints
 end
 
-local function BuildChargedComboPointLookup(resource)
+local function BuildChargedComboPointLookup(host, resource)
     if not RuntimeUsesOverchargedComboPointColor(resource) or not GetUnitChargedPowerPoints then
+        if host then
+            host._vf_chargedLookup = nil
+            host._vf_chargedLookupSig = nil
+        end
         return nil
     end
-    local lookup = {}
-    for _, pointIndex in ipairs(GetUnitChargedPowerPoints("player") or {}) do
+    local points = GetUnitChargedPowerPoints("player") or {}
+    local signature = (#points > 0) and table.concat(points, ",") or ""
+    if host and host._vf_chargedLookupSig == signature then
+        return host._vf_chargedLookup
+    end
+    local lookup = (host and host._vf_chargedLookup) or {}
+    wipe(lookup)
+    for _, pointIndex in ipairs(points) do
         lookup[pointIndex] = true
     end
-    return next(lookup) and lookup or nil
+    lookup = next(lookup) and lookup or nil
+    if host then
+        host._vf_chargedLookup = lookup
+        host._vf_chargedLookupSig = signature
+    end
+    return lookup
 end
 
 local function ComputeDiscretePipFill(resource, host, gameSlot, cur, max, runeOrder, runeFill)
@@ -499,17 +601,17 @@ local function SetDualColorForDiscreteSeg(segSb, resource, fill, gameSlot, cur, 
     end
     if RS.RuntimeUsesEssenceRechargeTicker(resource) and curIntEssence then
         if gameSlot <= curIntEssence then
-            segSb:SetStatusBarColor(readyCol.r or 1, readyCol.g or 1, readyCol.b or 1, readyCol.a or 1)
+            ApplyStatusBarColorCached(segSb, readyCol, 1, 1, 1, 1)
         else
-            segSb:SetStatusBarColor(rechargeCol.r or 1, rechargeCol.g or 1, rechargeCol.b or 1, rechargeCol.a or 1)
+            ApplyStatusBarColorCached(segSb, rechargeCol, 1, 1, 1, 1)
         end
         return true
     end
     if resource == E_PT.Runes then
         if fill >= 1 - 1e-6 then
-            segSb:SetStatusBarColor(readyCol.r or 1, readyCol.g or 1, readyCol.b or 1, readyCol.a or 1)
+            ApplyStatusBarColorCached(segSb, readyCol, 1, 1, 1, 1)
         else
-            segSb:SetStatusBarColor(rechargeCol.r or 1, rechargeCol.g or 1, rechargeCol.b or 1, rechargeCol.a or 1)
+            ApplyStatusBarColorCached(segSb, rechargeCol, 1, 1, 1, 1)
         end
         return true
     end
@@ -517,9 +619,9 @@ local function SetDualColorForDiscreteSeg(segSb, resource, fill, gameSlot, cur, 
         local c = tonumber(cur) or 0
         local w = math.floor(c)
         if gameSlot <= w then
-            segSb:SetStatusBarColor(readyCol.r or 1, readyCol.g or 1, readyCol.b or 1, readyCol.a or 1)
+            ApplyStatusBarColorCached(segSb, readyCol, 1, 1, 1, 1)
         else
-            segSb:SetStatusBarColor(rechargeCol.r or 1, rechargeCol.g or 1, rechargeCol.b or 1, rechargeCol.a or 1)
+            ApplyStatusBarColorCached(segSb, rechargeCol, 1, 1, 1, 1)
         end
         return true
     end
@@ -610,6 +712,10 @@ local function ClearSegmentUI(host)
     if host._vf_sb then
         host._vf_sb:Show()
     end
+    host._vf_lastValueResource = nil
+    host._vf_lastValueMax = nil
+    host._vf_lastValueCur = nil
+    host._vf_lastValueShowText = nil
     if host._vf_borderFrame and PP and PP.ShowBorder then
         PP.ShowBorder(host._vf_borderFrame)
     end
@@ -675,19 +781,24 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
         local useSmoothSeg = cfg and (cfg.smoothProgress == nil or cfg.smoothProgress == true)
         local useDual = RuntimeUsesSegmentRechargeColors(resource)
         local useOverchargedCombo = RuntimeUsesOverchargedComboPointColor(resource)
-        local chargedLookup = BuildChargedComboPointLookup(resource)
+        local chargedLookup = BuildChargedComboPointLookup(host, resource)
         local chargedColor = chargedLookup and RS.ResolveOverchargedComboPointColor(style, fillCol) or nil
+        local dimChargedColor = chargedColor and RS.DimBarColor(chargedColor, 0.5) or nil
         local comboCurrent = useOverchargedCombo and UnitPower("player", resource) or cur
         local dimFillCol = useOverchargedCombo and RS.DimBarColor(fillCol, 0.5) or nil
         local isSecret = IsSecretNumber(cur)
 
         local function StyleAndShowSegment(segFrame, pos)
             local segSb = segFrame._sb
-            segSb:SetStatusBarTexture(texPath)
-            segSb._vf_fillColorSig = nil
-            BFK.ConfigureStatusBar(segSb)
-            BFK.SetOrientation(segSb, dir)
-            BFK.SetReverseFill(segSb, false)
+            local chromeSig = table.concat({ tostring(texPath), tostring(dir) }, "\031")
+            if segSb._vf_chromeSig ~= chromeSig then
+                segSb:SetStatusBarTexture(texPath)
+                segSb._vf_fillColorSig = nil
+                BFK.ConfigureStatusBar(segSb)
+                BFK.SetOrientation(segSb, dir)
+                BFK.SetReverseFill(segSb, false)
+                segSb._vf_chromeSig = chromeSig
+            end
             BFK.ApplySegmentCellBorder(segFrame._border, cfg)
 
             local gameSlot = reverse and (max - pos + 1) or pos
@@ -696,65 +807,33 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
             segFrame._bg:SetColorTexture(0, 0, 0, 0)
             local didDual = false
             if useOverchargedCombo then
-                segSb:SetMinMaxValues(0, 1)
                 if isCharged then
-                    segSb:SetValue(1)
+                    ApplyBarProgressCached(segSb, 0, 1, 1, useSmoothSeg)
                     if gameSlot <= comboCurrent then
-                        segSb:SetStatusBarColor(
-                            chargedColor.r or 1,
-                            chargedColor.g or 1,
-                            chargedColor.b or 1,
-                            chargedColor.a ~= nil and chargedColor.a or 1
-                        )
+                        ApplyStatusBarColorCached(segSb, chargedColor, 1, 1, 1, 1)
                     else
-                        local dimChargedColor = RS.DimBarColor(chargedColor, 0.5)
-                        segSb:SetStatusBarColor(
-                            dimChargedColor.r or 1,
-                            dimChargedColor.g or 1,
-                            dimChargedColor.b or 1,
-                            dimChargedColor.a ~= nil and dimChargedColor.a or 1
-                        )
+                        ApplyStatusBarColorCached(segSb, dimChargedColor, 1, 1, 1, 1)
                     end
                 elseif gameSlot <= comboCurrent then
-                    segSb:SetValue(1)
-                    segSb:SetStatusBarColor(
-                        fillCol.r or 1,
-                        fillCol.g or 1,
-                        fillCol.b or 1,
-                        fillCol.a ~= nil and fillCol.a or 1
-                    )
+                    ApplyBarProgressCached(segSb, 0, 1, 1, useSmoothSeg)
+                    ApplyStatusBarColorCached(segSb, fillCol, 1, 1, 1, 1)
                 else
-                    segSb:SetValue(0)
-                    segSb:SetStatusBarColor(
-                        dimFillCol.r or 1,
-                        dimFillCol.g or 1,
-                        dimFillCol.b or 1,
-                        dimFillCol.a ~= nil and dimFillCol.a or 1
-                    )
+                    ApplyBarProgressCached(segSb, 0, 1, 0, useSmoothSeg)
+                    ApplyStatusBarColorCached(segSb, dimFillCol, 1, 1, 1, 1)
                 end
             elseif isSecret then
-                segSb:SetMinMaxValues(gameSlot - 1, gameSlot)
-                segSb:SetValue(cur)
-                segSb:SetStatusBarColor(
-                    fillCol.r or 1,
-                    fillCol.g or 1,
-                    fillCol.b or 1,
-                    fillCol.a ~= nil and fillCol.a or 1
-                )
+                ApplyBarProgressCached(segSb, gameSlot - 1, gameSlot, cur, false)
+                ApplyStatusBarColorCached(segSb, fillCol, 1, 1, 1, 1)
             elseif useDual then
                 didDual = SetDualColorForDiscreteSeg(segSb, resource, fill, gameSlot, cur, curInt, rechargeCol, readyCol)
             end
             if not didDual and not isSecret then
                 if not isCharged and not useOverchargedCombo then
-                    segSb:SetMinMaxValues(0, 1)
-                    segSb:SetValue(fill)
+                    ApplyBarProgressCached(segSb, 0, 1, fill, useSmoothSeg)
                     ApplyMainBarFillColor(segSb, resource, style, cur, max)
                 end
-            elseif not isSecret and BFK.ApplyBarProgress then
-                BFK.ApplyBarProgress(segSb, 1, fill, useSmoothSeg)
             elseif not isSecret then
-                segSb:SetMinMaxValues(0, 1)
-                segSb:SetValue(fill)
+                ApplyBarProgressCached(segSb, 0, 1, fill, useSmoothSeg)
             end
             segFrame:Show()
         end
@@ -792,8 +871,9 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
     local useSmoothSeg = cfg and (cfg.smoothProgress == nil or cfg.smoothProgress == true)
     local useDual = RuntimeUsesSegmentRechargeColors(resource)
     local useOverchargedCombo = RuntimeUsesOverchargedComboPointColor(resource)
-    local chargedLookup = BuildChargedComboPointLookup(resource)
+    local chargedLookup = BuildChargedComboPointLookup(host, resource)
     local chargedColor = chargedLookup and RS.ResolveOverchargedComboPointColor(style, fillCol) or nil
+    local dimChargedColor = chargedColor and RS.DimBarColor(chargedColor, 0.5) or nil
     local comboCurrent = useOverchargedCombo and UnitPower("player", resource) or cur
     local dimFillCol = useOverchargedCombo and RS.DimBarColor(fillCol, 0.5) or nil
     local isSecret = IsSecretNumber(cur)
@@ -808,65 +888,33 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
             segFrame._bg:SetColorTexture(0, 0, 0, 0)
             local didDual = false
             if useOverchargedCombo then
-                segFrame._sb:SetMinMaxValues(0, 1)
                 if isCharged then
-                    segFrame._sb:SetValue(1)
+                    ApplyBarProgressCached(segFrame._sb, 0, 1, 1, useSmoothSeg)
                     if gameSlot <= comboCurrent then
-                        segFrame._sb:SetStatusBarColor(
-                            chargedColor.r or 1,
-                            chargedColor.g or 1,
-                            chargedColor.b or 1,
-                            chargedColor.a ~= nil and chargedColor.a or 1
-                        )
+                        ApplyStatusBarColorCached(segFrame._sb, chargedColor, 1, 1, 1, 1)
                     else
-                        local dimChargedColor = RS.DimBarColor(chargedColor, 0.5)
-                        segFrame._sb:SetStatusBarColor(
-                            dimChargedColor.r or 1,
-                            dimChargedColor.g or 1,
-                            dimChargedColor.b or 1,
-                            dimChargedColor.a ~= nil and dimChargedColor.a or 1
-                        )
+                        ApplyStatusBarColorCached(segFrame._sb, dimChargedColor, 1, 1, 1, 1)
                     end
                 elseif gameSlot <= comboCurrent then
-                    segFrame._sb:SetValue(1)
-                    segFrame._sb:SetStatusBarColor(
-                        fillCol.r or 1,
-                        fillCol.g or 1,
-                        fillCol.b or 1,
-                        fillCol.a ~= nil and fillCol.a or 1
-                    )
+                    ApplyBarProgressCached(segFrame._sb, 0, 1, 1, useSmoothSeg)
+                    ApplyStatusBarColorCached(segFrame._sb, fillCol, 1, 1, 1, 1)
                 else
-                    segFrame._sb:SetValue(0)
-                    segFrame._sb:SetStatusBarColor(
-                        dimFillCol.r or 1,
-                        dimFillCol.g or 1,
-                        dimFillCol.b or 1,
-                        dimFillCol.a ~= nil and dimFillCol.a or 1
-                    )
+                    ApplyBarProgressCached(segFrame._sb, 0, 1, 0, useSmoothSeg)
+                    ApplyStatusBarColorCached(segFrame._sb, dimFillCol, 1, 1, 1, 1)
                 end
             elseif isSecret then
-                segFrame._sb:SetMinMaxValues(gameSlot - 1, gameSlot)
-                segFrame._sb:SetValue(cur)
-                segFrame._sb:SetStatusBarColor(
-                    fillCol.r or 1,
-                    fillCol.g or 1,
-                    fillCol.b or 1,
-                    fillCol.a ~= nil and fillCol.a or 1
-                )
+                ApplyBarProgressCached(segFrame._sb, gameSlot - 1, gameSlot, cur, false)
+                ApplyStatusBarColorCached(segFrame._sb, fillCol, 1, 1, 1, 1)
             elseif useDual then
                 didDual = SetDualColorForDiscreteSeg(segFrame._sb, resource, fill, gameSlot, cur, curInt, rechargeCol, readyCol)
             end
             if not didDual and not isSecret then
                 if not isCharged and not useOverchargedCombo then
-                    segFrame._sb:SetMinMaxValues(0, 1)
-                    segFrame._sb:SetValue(fill)
+                    ApplyBarProgressCached(segFrame._sb, 0, 1, fill, useSmoothSeg)
                     ApplyMainBarFillColor(segFrame._sb, resource, style, cur, max)
                 end
-            elseif not isSecret and BFK.ApplyBarProgress then
-                BFK.ApplyBarProgress(segFrame._sb, 1, fill, useSmoothSeg)
             elseif not isSecret then
-                segFrame._sb:SetMinMaxValues(0, 1)
-                segFrame._sb:SetValue(fill)
+                ApplyBarProgressCached(segFrame._sb, 0, 1, fill, useSmoothSeg)
             end
         end
     end
@@ -1043,6 +1091,42 @@ local function BarUsesSmooth(cfg)
     return cfg and (cfg.smoothProgress == nil or cfg.smoothProgress == true)
 end
 
+local function ResourceNeedsContinuousValueRefresh(resource)
+    return E_PT and (resource == E_PT.Essence or resource == E_PT.Runes)
+end
+
+local function CanSkipValueOnlyRefresh(host, resource, max, cur, style)
+    if not host or not style then
+        return false
+    end
+    if ResourceNeedsContinuousValueRefresh(resource) then
+        return false
+    end
+    if IsSecretNumber(max) or IsSecretNumber(cur) then
+        return false
+    end
+    return host._vf_lastValueResource == resource
+        and host._vf_lastValueMax == max
+        and host._vf_lastValueCur == cur
+        and host._vf_lastValueShowText == (style.showText ~= false)
+end
+
+local function RememberLastValueState(host, resource, max, cur, style)
+    if not host or IsSecretNumber(max) or IsSecretNumber(cur) then
+        if host then
+            host._vf_lastValueResource = nil
+            host._vf_lastValueMax = nil
+            host._vf_lastValueCur = nil
+            host._vf_lastValueShowText = nil
+        end
+        return
+    end
+    host._vf_lastValueResource = resource
+    host._vf_lastValueMax = max
+    host._vf_lastValueCur = cur
+    host._vf_lastValueShowText = style and (style.showText ~= false) or false
+end
+
 --- StyleDisplay 作用域勾选且全局条件触发展示策略时，阻止显示（不替代模块自身的禁用/无资源等硬隐藏）
 local function StyleDisplayForcesResourceBarHide()
     local VC = VFlow.VisibilityControl
@@ -1139,11 +1223,10 @@ local function UpdateOneSlot(context, isSecondary, skipLayout)
             local placeholderResource = (E_PT and E_PT.Mana) or "MANA"
             local phStyle = RS.ResolveStyle(db, placeholderResource)
             SetResourceHostShown(host, true)
-            sb:SetMinMaxValues(0, 5)
-            sb:SetValue(4)
+            ApplyBarProgressCached(sb, 0, 5, 4, false)
             ApplyMainBarFillColor(sb, placeholderResource, phStyle, 4, 5)
-            fs:SetText("4")
-            fs:SetShown(phStyle.showText ~= false)
+            SetTextIfChanged(fs, "4")
+            SetShownIfChanged(fs, phStyle.showText ~= false)
         else
             ClearSegmentUI(host)
             host:Hide()
@@ -1164,11 +1247,10 @@ local function UpdateOneSlot(context, isSecondary, skipLayout)
         if EditModeActive() then
             ClearSegmentUI(host)
             SetResourceHostShown(host, true)
-            sb:SetMinMaxValues(0, 5)
-            sb:SetValue(4)
+            ApplyBarProgressCached(sb, 0, 5, 4, false)
             ApplyMainBarFillColor(sb, type(resource) == "number" and resource or ((E_PT and E_PT.Mana) or "MANA"), style, 4, 5)
-            fs:SetText("4")
-            fs:SetShown(style.showText ~= false)
+            SetTextIfChanged(fs, "4")
+            SetShownIfChanged(fs, style.showText ~= false)
         else
             ClearSegmentUI(host)
             host:Hide()
@@ -1177,15 +1259,21 @@ local function UpdateOneSlot(context, isSecondary, skipLayout)
     end
 
     SetResourceHostShown(host, true)
+    if skipLayout and CanSkipValueOnlyRefresh(host, resource, max, cur, style) then
+        return
+    end
     local segOn = UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, style, skipLayout)
     if not segOn then
-        if BFK and BFK.ApplyBarProgress then
-            BFK.ApplyBarProgress(sb, max, cur, BarUsesSmooth(cfg))
-        end
+        ApplyBarProgressCached(sb, 0, max, cur, BarUsesSmooth(cfg))
         ApplyMainBarFillColor(sb, resource, style, cur, max)
     end
-    fs:SetText(FormatText(style, max, cur, resource))
-    fs:SetShown(style.showText ~= false)
+    if style.showText ~= false then
+        SetTextIfChanged(fs, FormatText(style, max, cur, resource))
+    else
+        SetTextIfChanged(fs, "")
+    end
+    SetShownIfChanged(fs, style.showText ~= false)
+    RememberLastValueState(host, resource, max, cur, style)
 end
 
 local RefreshValuesOnly
@@ -1211,9 +1299,21 @@ local function StartResourceBarValuePoll()
 end
 
 local function RefreshAll()
-    local context = BuildRuntimeContext()
+    local context = BuildRuntimeContext(nil, true)
     UpdateOneSlot(context, false, false)
     UpdateOneSlot(context, true, false)
+end
+
+local function RefreshLayoutOnly()
+    local context = BuildRuntimeContext(nil, false)
+    UpdateOneSlot(context, false, false)
+    UpdateOneSlot(context, true, false)
+end
+
+local function RefreshVisibilityOnly()
+    local context = BuildRuntimeContext(nil, false)
+    UpdateOneSlot(context, false, true)
+    UpdateOneSlot(context, true, true)
 end
 
 --- 双槽均隐藏且非编辑模式时跳过轮询
@@ -1233,12 +1333,13 @@ RefreshValuesOnly = function()
     if ResourceBarsPollShouldSkip() then
         return
     end
-    local context = BuildRuntimeContext()
+    local context = BuildRuntimeContext(nil, false)
     UpdateOneSlot(context, false, true)
     UpdateOneSlot(context, true, true)
 end
 
 local function HandleLayoutRuntimeEvent()
+    MarkRuntimeContextDirty()
     RefreshAll()
 end
 
@@ -1247,6 +1348,7 @@ end
 -- =========================================================
 
 rb.RefreshAll = RefreshAll
+rb.RefreshVisibilityOnly = RefreshVisibilityOnly
 
 function rb.OnSkillViewerLayoutChanged()
     local d = GetDb()
@@ -1260,7 +1362,7 @@ function rb.OnSkillViewerLayoutChanged()
         end
     end
     if need then
-        RefreshAll()
+        RefreshLayoutOnly()
     end
 end
 
@@ -1418,6 +1520,7 @@ local MODULE_DB_DEFAULT_BG = { r = 0.2, g = 0.2, b = 0.2, a = 0.5 }
 
 function rb.OnModuleReady()
     if initialized then
+        MarkRuntimeContextDirty()
         if RS and RS.WipeRuntimeCaches then
             RS.WipeRuntimeCaches(GetDb())
         end
@@ -1461,7 +1564,7 @@ function rb.OnModuleReady()
             if RS and RS.WipeRuntimeCaches then
                 RS.WipeRuntimeCaches(d)
             end
-            RefreshAll()
+            RefreshLayoutOnly()
             RegisterDrag()
         end)
     end

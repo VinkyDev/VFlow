@@ -29,7 +29,8 @@ local CHANGELOG = {
 		version = "0.5.5",
 		date = "2026-04-14",
 		content = {
-			"解决卡顿问题,buff条暂时只支持从中间增长"
+			"4.16更新: 优化Buff条和资源条性能",
+			"解决卡顿问题"
 		},
 	},
 	{
@@ -224,8 +225,8 @@ local function renderContent(container, _menuKey)
 				return cfg.changelogShowHistory == true
 			end,
 			children = {
-				{ type = "spacer", height = 4, cols = 24 },
-				{ type = "subtitle", text = L["History changelog"], cols = 24 },
+				{ type = "spacer",    height = 4,                    cols = 24 },
+				{ type = "subtitle",  text = L["History changelog"], cols = 24 },
 				{ type = "separator", cols = 24 },
 				{
 					type = "for",
@@ -249,13 +250,14 @@ local function renderContent(container, _menuKey)
 	end
 
 	local tail = {
-		{ type = "spacer", height = 10, cols = 24 },
-		{ type = "subtitle", text = L["Feature Description"], cols = 24 },
+		{ type = "spacer",    height = 10,                     cols = 24 },
+		{ type = "subtitle",  text = L["Feature Description"], cols = 24 },
 		{ type = "separator", cols = 24 },
 		{
 			type = "interactiveText",
 			cols = 24,
-			text = L["Most features use the system Cooldown Manager. Configure tracked spells in {cooldown manager}, enhance with this addon. Supports skill groups, BUFF groups, custom monitors. Two ways to move frames: {System Edit Mode} opens Blizzard's editor; {Internal Edit Mode} in top-right directly edits addon frames."],
+			text = L
+				["Most features use the system Cooldown Manager. Configure tracked spells in {cooldown manager}, enhance with this addon. Supports skill groups, BUFF groups, custom monitors. Two ways to move frames: {System Edit Mode} opens Blizzard's editor; {Internal Edit Mode} in top-right directly edits addon frames."],
 			links = {
 				[L["cooldown manager"]] = function()
 					VFlow.openCooldownManager()
@@ -271,7 +273,7 @@ local function renderContent(container, _menuKey)
 			},
 		},
 
-		{ type = "subtitle", text = L["General Settings"], cols = 24 },
+		{ type = "subtitle",  text = L["General Settings"], cols = 24 },
 		{ type = "separator", cols = 24 },
 		{
 			type = "checkbox",
@@ -293,8 +295,8 @@ local function renderContent(container, _menuKey)
 			end,
 		},
 
-		{ type = "spacer", height = 10, cols = 24 },
-		{ type = "subtitle", text = L["Related Links"], cols = 24 },
+		{ type = "spacer",    height = 10,               cols = 24 },
+		{ type = "subtitle",  text = L["Related Links"], cols = 24 },
 		{ type = "separator", cols = 24 },
 		{
 			type = "customRender",

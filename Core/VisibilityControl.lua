@@ -200,7 +200,9 @@ function VisibilityControl.EvaluateAll()
 
     -- 资源条未 RegisterFrame，显隐在内联判断中：状态/显示条件变化时需立即刷新
     local RB = VFlow.ResourceBars
-    if RB and RB.RefreshAll then
+    if RB and RB.RefreshVisibilityOnly then
+        RB.RefreshVisibilityOnly()
+    elseif RB and RB.RefreshAll then
         RB.RefreshAll()
     end
 end

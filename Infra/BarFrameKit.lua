@@ -15,6 +15,7 @@ BFK.WHITE8X8 = WHITE8X8
 BFK.DEFAULT_BAR_TEXTURE = WHITE8X8
 
 local STATUSBAR_SMOOTH_OUT = _G.Enum and Enum.StatusBarInterpolation and Enum.StatusBarInterpolation.ExponentialEaseOut
+local supportsInterpolatedStatusBarCalls = nil
 
 function BFK.DisableTextureSnap(tex)
     if not tex then
@@ -200,11 +201,17 @@ function BFK.ApplyBarProgress(sb, max, cur, useSmooth)
     end
     local interp = useSmooth and STATUSBAR_SMOOTH_OUT or nil
     if interp then
-        local ok = pcall(function()
+        if supportsInterpolatedStatusBarCalls == nil then
+            supportsInterpolatedStatusBarCalls = pcall(function()
+                sb:SetMinMaxValues(0, max, interp)
+                sb:SetValue(cur, interp)
+            end)
+            if supportsInterpolatedStatusBarCalls then
+                return
+            end
+        elseif supportsInterpolatedStatusBarCalls then
             sb:SetMinMaxValues(0, max, interp)
             sb:SetValue(cur, interp)
-        end)
-        if ok then
             return
         end
     end
