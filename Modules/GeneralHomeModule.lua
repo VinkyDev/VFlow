@@ -26,6 +26,13 @@ VFlow.registerModule(MODULE_KEY, {
 
 local CHANGELOG = {
 	{
+		version = "0.5.6",
+		date = "2026-04-23",
+		content = {
+			"资源条兼容最新版本",
+		},
+	},
+	{
 		version = "0.5.5",
 		date = "2026-04-14",
 		content = {
