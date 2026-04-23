@@ -454,8 +454,10 @@ local function GetEssencePipFill(host, gameSlot, curInt, maxInt)
     end
     if gameSlot == curInt + 1 and curInt < maxInt then
         local rate = GetPowerRegenForPowerType(Enum.PowerType.Essence)
-        if not rate or rate <= 0 then
-            rate = 0.2
+        if type(rate) == "number" and not IsSecretNumber(rate) and rate > 0 then
+            host._vf_essenceLastRate = rate
+        else
+            rate = host._vf_essenceLastRate or 0.2
         end
         local rechargeTime = 1 / rate
         local now = GetTime()
