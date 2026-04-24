@@ -1015,17 +1015,11 @@ local function GetBarHostPixelDimensions(cfg)
     return along, thick
 end
 
-local function AnchorStorePathForConfig(db, anchorCfg)
-    if not db or not anchorCfg then return nil end
-    if anchorCfg == db.primaryBar then return "primaryBar" end
-    if anchorCfg == db.secondaryBar then return "secondaryBar" end
-    return nil
-end
-
 ---@param layoutCfg 条尺寸与样式键位
 ---@param anchorCfg 锚点键位，默认同 layoutCfg；次条可在主条隐藏时改用 primaryBar
----@param noPersist boolean|nil 仅应用布局/位置，不做 canonicalSync 写回 Store（避免 x/y 变更导致的递归刷新）
-local function ApplyLayoutHost(host, layoutCfg, anchorCfg, noPersist)
+--- 运行时刷新只消费现有配置，不允许把计算后的位置反写到 Store。
+--- 坐标持久化仅允许来自显式编辑：DragFrame 拖拽回调或 Grid 的 x/y 控件。
+local function ApplyLayoutHost(host, layoutCfg, anchorCfg)
     if not host or not layoutCfg then return end
     anchorCfg = anchorCfg or layoutCfg
     local w, h = GetBarHostPixelDimensions(layoutCfg)
@@ -1034,24 +1028,9 @@ local function ApplyLayoutHost(host, layoutCfg, anchorCfg, noPersist)
     else
         host:SetSize(w, h)
     end
-    local db = GetDb()
-    local path = AnchorStorePathForConfig(db, anchorCfg)
-    local store = VFlow.Store
     local DF = VFlow.DragFrame
     if not (DF and DF.isHostDragging and DF.isHostDragging(host)) then
-        CA.ApplyFramePosition(host, anchorCfg, nil, {
-            canonicalSync = (not noPersist and path and store and store.set) and function(nx, ny)
-                rb._vf_inCanonicalSync = true
-                local ok, err = pcall(function()
-                    store.set(MODULE_KEY, path .. ".x", nx)
-                    store.set(MODULE_KEY, path .. ".y", ny)
-                end)
-                rb._vf_inCanonicalSync = false
-                if not ok then
-                    error(err)
-                end
-            end or nil,
-        })
+        CA.ApplyFramePosition(host, anchorCfg, nil)
     end
 end
 
@@ -1552,13 +1531,10 @@ function rb.OnModuleReady()
             local d = GetDb()
             if not d then return end
             if key and (key:find("%.x$") or key:find("%.y$")) then
-                if rb._vf_inCanonicalSync then
-                    return
-                end
                 EnsureFrames()
-                ApplyLayoutHost(primaryHost, d.primaryBar, nil, true)
+                ApplyLayoutHost(primaryHost, d.primaryBar)
                 if d.secondaryBar and secondaryHost then
-                    ApplyLayoutHost(secondaryHost, d.secondaryBar, AnchorConfigForSecondary(d), true)
+                    ApplyLayoutHost(secondaryHost, d.secondaryBar, AnchorConfigForSecondary(d))
                 end
                 RegisterDrag()
                 return
