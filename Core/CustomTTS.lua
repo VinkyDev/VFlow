@@ -27,53 +27,6 @@ local function resolveEntry(entry)
         entry.soundChannel or "Master"
 end
 
-local function speakAddonTTS(text)
-    if type(text) ~= "string" or text == "" then
-        return false
-    end
-    if not (C_VoiceChat and C_VoiceChat.SpeakText) then
-        return false
-    end
-
-    local voiceID, rate, volume = 0, 0, 100
-    if C_TTSSettings then
-        pcall(function()
-            if C_TTSSettings.GetVoiceOptionID and Enum.TtsVoiceType then
-                local id = C_TTSSettings.GetVoiceOptionID(Enum.TtsVoiceType.Standard)
-                if type(id) == "number" then
-                    voiceID = id
-                end
-            end
-            if C_TTSSettings.GetSpeechRate then
-                local r = C_TTSSettings.GetSpeechRate()
-                if type(r) == "number" then
-                    rate = r
-                end
-            end
-            if C_TTSSettings.GetSpeechVolume then
-                local v = C_TTSSettings.GetSpeechVolume()
-                if type(v) == "number" then
-                    volume = v
-                end
-            end
-        end)
-    end
-
-    local ok = pcall(function()
-        C_VoiceChat.SpeakText(voiceID, text, rate, volume, false)
-    end)
-    if ok then
-        return true
-    end
-    if Enum.VoiceTtsDestination and Enum.VoiceTtsDestination.LocalPlayback then
-        ok = pcall(function()
-            C_VoiceChat.SpeakText(voiceID, text, Enum.VoiceTtsDestination.LocalPlayback, rate, volume)
-        end)
-    end
-    return ok and true or false
-end
-
---- 与 BuffScanner.ResolveSpellID 一致：BUFF 条目的主键常在 linkedSpellIDs[1]，spellID 可能为 0 或与配置不一致。
 local function resolveBuffViewerSpellID(info)
     if not info then
         return nil
@@ -154,11 +107,11 @@ local function tryInstallHook()
     hookInstalled = true
 
     hooksecurefunc("CooldownViewerAlert_PlayAlert", function(cooldownItem, _spellName, alert)
-        onCooldownViewerAlert(cooldownItem, _spellName, alert)
+        onCooldownViewerAlert(cooldownItem, alert)
     end)
 end
 
-onCooldownViewerAlert = function(cooldownItem, _spellName, alert)
+onCooldownViewerAlert = function(cooldownItem, alert)
         local db = VFlow.getDBIfReady(MODULE_KEY)
         if not db then
             return
@@ -197,12 +150,18 @@ onCooldownViewerAlert = function(cooldownItem, _spellName, alert)
             return
         end
 
-        C_VoiceChat.StopSpeakingText()
+        if C_VoiceChat and C_VoiceChat.StopSpeakingText then
+            pcall(C_VoiceChat.StopSpeakingText)
+        end
 
-        if mode == "text" and text ~= "" then
-            speakAddonTTS(text)
+        if mode == "text" and text ~= "" and type(TextToSpeechFrame_PlayCooldownAlertMessage) == "function" then
+            pcall(function()
+                TextToSpeechFrame_PlayCooldownAlertMessage(alert, text, true)
+            end)
         elseif mode == "sound" and sound ~= "" then
-            PlaySoundFile(sound, channel or "Master")
+            pcall(function()
+                PlaySoundFile(sound, channel or "Master")
+            end)
         end
 end
 
