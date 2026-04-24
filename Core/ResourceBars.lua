@@ -1041,6 +1041,13 @@ local function SecondaryAnchorsToPrimaryBar(db)
         and not primaryHost:IsShown()
 end
 
+local function SecondaryAnchorOwner(db)
+    if SecondaryAnchorsToPrimaryBar(db) then
+        return "primary"
+    end
+    return "secondary"
+end
+
 local function AnchorConfigForSecondary(db)
     if not db or not db.secondaryBar then
         return nil
@@ -1158,17 +1165,26 @@ local function UpdateOneSlot(context, isSecondary, skipLayout)
 
     host._vf_slotIsSecondary = isSecondary
 
-    if not skipLayout then
-        local anchorCfg = nil
-        if isSecondary then
-            anchorCfg = AnchorConfigForSecondary(db)
+    local forceLayout = skipLayout ~= true
+    local anchorCfg = nil
+    if isSecondary then
+        anchorCfg = AnchorConfigForSecondary(db)
+        local desiredAnchorOwner = SecondaryAnchorOwner(db)
+        if skipLayout and host._vf_anchorOwner ~= nil and host._vf_anchorOwner ~= desiredAnchorOwner then
+            forceLayout = true
         end
+    end
+
+    if forceLayout then
         ApplyLayoutHost(host, cfg, anchorCfg)
         ApplyTextFont(fs, cfg.textFont)
         ApplyBarBackground(host, db)
         sb._vf_fillColorSig = nil
         if BFK and BFK.ApplyResourceBarChrome then
             BFK.ApplyResourceBarChrome(host, cfg)
+        end
+        if isSecondary then
+            host._vf_anchorOwner = SecondaryAnchorOwner(db)
         end
     end
 
@@ -1310,11 +1326,34 @@ local function ResourceBarsPollShouldSkip()
     return false
 end
 
+local function RuntimeContextNeedsRecovery(context)
+    if not context then
+        return true
+    end
+    if context.specID == nil then
+        return true
+    end
+    if primaryHost and not primaryHost:IsShown() and context.primaryResource == nil then
+        return true
+    end
+    if secondaryHost and not secondaryHost:IsShown() and context.secondaryResource == nil then
+        local row = FindActiveResourceRow(context.specID, GetShapeshiftFormID())
+        local expectedSecondary = ResolveRuntimeResourceToken(row and row.secondary)
+        if expectedSecondary ~= nil then
+            return true
+        end
+    end
+    return false
+end
+
 RefreshValuesOnly = function()
-    if ResourceBarsPollShouldSkip() then
+    local context = BuildRuntimeContext(nil, false)
+    if RuntimeContextNeedsRecovery(context) then
+        context = BuildRuntimeContext(nil, true)
+    end
+    if ResourceBarsPollShouldSkip() and not RuntimeContextNeedsRecovery(context) then
         return
     end
-    local context = BuildRuntimeContext(nil, false)
     UpdateOneSlot(context, false, true)
     UpdateOneSlot(context, true, true)
 end
