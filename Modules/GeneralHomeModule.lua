@@ -26,6 +26,14 @@ VFlow.registerModule(MODULE_KEY, {
 
 local CHANGELOG = {
 	{
+		version = "0.5.7",
+		date = "2026-04-25",
+		content = {
+			"修复自定义播报在12.0.5版本下不生效的BUG",
+			"修复资源条位置相关BUG",
+		},
+	},
+	{
 		version = "0.5.6",
 		date = "2026-04-23",
 		content = {
@@ -66,13 +74,6 @@ local CHANGELOG = {
 		content = {
 			"修复图形监控 - 充能条相关BUG",
 			"修复自定义技能组的样式相关BUG",
-		},
-	},
-	{
-		version = "0.3.3",
-		date = "2026-03-25",
-		content = {
-			"修复BUFF条相关BUG"
 		},
 	},
 	{
