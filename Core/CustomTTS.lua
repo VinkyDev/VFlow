@@ -27,6 +27,41 @@ local function resolveEntry(entry)
         entry.soundChannel or "Master"
 end
 
+local function resolveTTSVoiceID()
+    if not (C_VoiceChat and C_VoiceChat.GetTtsVoices and C_TTSSettings and C_TTSSettings.GetVoiceOptionID) then
+        return nil
+    end
+
+    local voiceType = Enum and Enum.TtsVoiceType and Enum.TtsVoiceType.Standard or 0
+    local selectedVoiceID = C_TTSSettings.GetVoiceOptionID(voiceType)
+    if type(selectedVoiceID) == "number" and selectedVoiceID > 0 then
+        return selectedVoiceID
+    end
+
+    local voices = C_VoiceChat.GetTtsVoices()
+    if type(voices) == "table" and voices[1] and type(voices[1].voiceID) == "number" then
+        return voices[1].voiceID
+    end
+
+    return nil
+end
+
+local function playCustomTextToSpeech(text)
+    if text == "" or not (C_VoiceChat and C_VoiceChat.SpeakText) then
+        return
+    end
+
+    local voiceID = resolveTTSVoiceID()
+    if not voiceID then
+        return
+    end
+
+    local speechRate = (C_TTSSettings and C_TTSSettings.GetSpeechRate and C_TTSSettings.GetSpeechRate()) or 0
+    local speechVolume = (C_TTSSettings and C_TTSSettings.GetSpeechVolume and C_TTSSettings.GetSpeechVolume()) or 100
+    local allowOverlappedSpeech = true
+    pcall(C_VoiceChat.SpeakText, voiceID, text, speechRate, speechVolume, allowOverlappedSpeech)
+end
+
 local function resolveBuffViewerSpellID(info)
     if not info then
         return nil
@@ -154,10 +189,8 @@ onCooldownViewerAlert = function(cooldownItem, alert)
             pcall(C_VoiceChat.StopSpeakingText)
         end
 
-        if mode == "text" and text ~= "" and type(TextToSpeechFrame_PlayCooldownAlertMessage) == "function" then
-            pcall(function()
-                TextToSpeechFrame_PlayCooldownAlertMessage(alert, text, true)
-            end)
+        if mode == "text" and text ~= "" then
+            playCustomTextToSpeech(text)
         elseif mode == "sound" and sound ~= "" then
             pcall(function()
                 PlaySoundFile(sound, channel or "Master")
