@@ -1411,6 +1411,7 @@ local function UpdateChargeBar(barFrame, spellID)
                         borderFrame._vfBorderColor = { r = r, g = g, b = b, a = a }
                     end
                 end
+                PP.ShowBorder(borderFrame)
                 borderFrame:Show()
             end
         end
@@ -2207,6 +2208,9 @@ VFlow.on("PLAYER_ENTERING_WORLD", "CustomMonitorRuntime", function()
     C_Timer.After(1.6, function()
         if not next(_activeSkillBars) and not next(_activeBuffBars) then
             return
+        end
+        for _, barFrame in pairs(_activeSkillBars) do
+            barFrame._needsChargeRefresh = true
         end
         ClearAllHooks()
         ScanCDMViewers()
