@@ -487,6 +487,7 @@ L["Other resource types"] = "All other types"
 L["Smooth bar fill"] = true
 L["Faster bar refresh"] = true
 L["Primary values by spec / form"] = true
+L["Secondary values by spec / form"] = true
 L["Resource map compact line"] = "%s: %s"
 L["Per-spec visibility"] = true
 L["No resource map rows"] = true
