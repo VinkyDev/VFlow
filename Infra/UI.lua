@@ -392,13 +392,35 @@ end
 -- @param parent Frame 父帧
 -- @param text string 文本内容
 -- @return FontString 文本对象
-function UI.title(parent, text)
-    local fs = parent:CreateFontString(nil, "OVERLAY", UI.style.fonts.title)
+local function createPooledText(parent, text, fontObject, color)
+    local container = Pool.acquire("VFlowFontString", parent)
+    container._vf_poolType = "VFlowFontString"
+
+    local fs = container.fontString
+    fs:SetFontObject(fontObject)
     fs:SetText(text or "")
     fs:SetJustifyH("LEFT")
+    fs:SetJustifyV("TOP")
+    fs:SetWordWrap(true)
+    fs:ClearAllPoints()
+    fs:SetPoint("TOPLEFT", container, "TOPLEFT", 0, 0)
+    fs:SetPoint("TOPRIGHT", container, "TOPRIGHT", 0, 0)
+    fs:SetTextColor(color[1], color[2], color[3], color[4] or 1)
+
+    container._vf_text = text or ""
+    container.RefreshVisuals = function(self)
+        self.fontString:SetText(self._vf_text or "")
+        local height = self.fontString:GetStringHeight() or 0
+        self:SetHeight(math.max(height, 1))
+    end
+    container:RefreshVisuals()
+
+    return container
+end
+
+function UI.title(parent, text)
     local c = UI.style.colors.primary
-    fs:SetTextColor(c[1], c[2], c[3], c[4])
-    return fs
+    return createPooledText(parent, text, UI.style.fonts.title, c)
 end
 
 --- 创建副标题
@@ -406,12 +428,8 @@ end
 -- @param text string 文本内容
 -- @return FontString 文本对象
 function UI.subtitle(parent, text)
-    local fs = parent:CreateFontString(nil, "OVERLAY", UI.style.fonts.subtitle)
-    fs:SetText(text or "")
-    fs:SetJustifyH("LEFT")
     local c = UI.style.colors.text
-    fs:SetTextColor(c[1], c[2], c[3], c[4])
-    return fs
+    return createPooledText(parent, text, UI.style.fonts.subtitle, c)
 end
 
 --- 创建描述文本
@@ -419,12 +437,8 @@ end
 -- @param text string 文本内容
 -- @return FontString 文本对象
 function UI.description(parent, text)
-    local fs = parent:CreateFontString(nil, "OVERLAY", UI.style.fonts.default)
-    fs:SetText(text or "")
-    fs:SetJustifyH("LEFT")
     local c = UI.style.colors.textDim
-    fs:SetTextColor(c[1], c[2], c[3], c[4])
-    return fs
+    return createPooledText(parent, text, UI.style.fonts.default, c)
 end
 
 -- =========================================================
@@ -1620,6 +1634,45 @@ function UI.interactiveText(parent, config)
     local lineHeight = 16
     local lineGap = 4
 
+    local function acquireSegmentButton()
+        container._segmentButtonPool = container._segmentButtonPool or {}
+        local btn = table.remove(container._segmentButtonPool)
+        if btn then
+            btn:SetParent(container)
+            return btn, btn._vfText, btn._vfUnderline
+        end
+
+        btn = CreateFrame("Button", nil, container)
+        btn:SetHeight(lineHeight)
+
+        local fs = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        fs:SetJustifyH("LEFT")
+        fs:SetJustifyV("TOP")
+        fs:SetPoint("TOPLEFT", btn, "TOPLEFT", 1, 0)
+        fs:SetPoint("TOPRIGHT", btn, "TOPRIGHT", -1, 0)
+        btn._vfText = fs
+
+        local underline = btn:CreateTexture(nil, "BACKGROUND")
+        underline:SetPoint("BOTTOMLEFT",  fs, "BOTTOMLEFT",  0, -1)
+        underline:SetPoint("BOTTOMRIGHT", fs, "BOTTOMRIGHT", 0, -1)
+        underline:SetHeight(1)
+        btn._vfUnderline = underline
+
+        return btn, fs, underline
+    end
+
+    local function acquireSegmentText()
+        container._segmentTextPool = container._segmentTextPool or {}
+        local fs = table.remove(container._segmentTextPool)
+        if fs then
+            return fs
+        end
+        fs = container:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        fs:SetJustifyH("LEFT")
+        fs:SetJustifyV("TOP")
+        return fs
+    end
+
     local function nextUtf8Char(str, i)
         local c = str:byte(i)
         if not c then return nil, i end
@@ -1670,24 +1723,14 @@ function UI.interactiveText(parent, config)
 
     for _, segment in ipairs(segments) do
         if segment.clickable then
-            local btn = CreateFrame("Button", nil, container)
+            local btn, fs, underline = acquireSegmentButton()
             btn:SetHeight(lineHeight)
-
-            local fs = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
             fs:SetText(segment.text)
             fs:SetTextColor(linkColor[1], linkColor[2], linkColor[3], linkColor[4])
-            fs:SetJustifyH("LEFT")
-            fs:SetJustifyV("TOP")
-            fs:SetPoint("TOPLEFT", btn, "TOPLEFT", 1, 0)
-            fs:SetPoint("TOPRIGHT", btn, "TOPRIGHT", -1, 0)
 
             local w = fs:GetStringWidth() + 2
             btn:SetWidth(w)
 
-            local underline = btn:CreateTexture(nil, "BACKGROUND")
-            underline:SetPoint("BOTTOMLEFT",  fs, "BOTTOMLEFT",  0, -1)
-            underline:SetPoint("BOTTOMRIGHT", fs, "BOTTOMRIGHT", 0, -1)
-            underline:SetHeight(1)
             underline:SetColorTexture(linkColor[1], linkColor[2], linkColor[3], 0.5)
 
             btn:SetScript("OnEnter", function(self)
@@ -1710,11 +1753,9 @@ function UI.interactiveText(parent, config)
         else
             local tokens = splitTextTokens(segment.text)
             for _, token in ipairs(tokens) do
-                local fs = container:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+                local fs = acquireSegmentText()
                 fs:SetText(token)
                 fs:SetTextColor(textColor[1], textColor[2], textColor[3], textColor[4])
-                fs:SetJustifyH("LEFT")
-                fs:SetJustifyV("TOP")
                 local w = fs:GetStringWidth()
                 table.insert(container.segments, { text = fs })
                 table.insert(nodes, { frame = fs, width = w, isSpace = token:match("^%s+$") ~= nil })

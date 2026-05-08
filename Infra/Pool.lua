@@ -197,6 +197,8 @@ local function StandardReset(pool, frame)
 
     -- VFlowInteractiveText特有：清理文本片段
     if frame.segments then
+        frame._segmentButtonPool = frame._segmentButtonPool or {}
+        frame._segmentTextPool = frame._segmentTextPool or {}
         for _, segment in ipairs(frame.segments) do
             if segment.button then
                 segment.button:Hide()
@@ -204,11 +206,12 @@ local function StandardReset(pool, frame)
                 segment.button:SetScript("OnClick", nil)
                 segment.button:SetScript("OnEnter", nil)
                 segment.button:SetScript("OnLeave", nil)
-            end
-            if segment.text then
+                table.insert(frame._segmentButtonPool, segment.button)
+            elseif segment.text then
                 segment.text:Hide()
                 segment.text:ClearAllPoints()
                 segment.text:SetText("")
+                table.insert(frame._segmentTextPool, segment.text)
             end
             if segment.underline then
                 segment.underline:Hide()
