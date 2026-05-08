@@ -323,6 +323,46 @@ end
 
 local SPELL_ONLY_GCD_SPELL_ID = 61304
 
+local function GetOtherFeaturesDB()
+    local get = VFlow.Store and VFlow.Store.getModuleRef
+    if not get then
+        return nil
+    end
+    return get("VFlow.OtherFeatures")
+end
+
+local function GetOtherFeaturesSkillRule(spellID)
+    if not spellID then
+        return nil
+    end
+
+    local db = GetOtherFeaturesDB()
+    local rules = db and db.skillRules
+    if not rules then
+        return nil
+    end
+
+    local rule = rules[spellID] or rules[tostring(spellID)]
+    if type(rule) ~= "table" or rule.hideBuffCooldownOverlay ~= true then
+        return nil
+    end
+
+    return rule
+end
+
+local function SkillWantsSpellOnlyCooldown(button)
+    if not button or not IsSkillCooldownManagerIcon(button) or IsVFItemAppendSkillSlot(button) then
+        return false
+    end
+
+    local spellID = GetSpellIDForSpellOnlyCooldown(button)
+    if not spellID then
+        return false
+    end
+
+    return GetOtherFeaturesSkillRule(spellID) ~= nil
+end
+
 --- 仅用于「仅技能冷却」图标灰度；不依赖 cdInfo.isActive（关联 BUFF 续时间时 isActive 可能抖动导致闪灰）
 local function ComputeSpellOnlyTargetDesaturation(button)
     if not button._vf_hideBuffCooldownOverlay or not IsSkillCooldownManagerIcon(button)
@@ -502,22 +542,19 @@ end
 --- 前向声明：SPELL_UPDATE_COOLDOWN 刷新路径需绑定本函数为 upvalue
 local OnCooldownMaskDriverRefresh
 
-local function SkillsModuleWantsSpellOnlyCooldown()
-    local get = VFlow.Store and VFlow.Store.getModuleRef
-    if not get then return false end
-    local db = get("VFlow.Skills")
-    if not db then return false end
-    local function wants(c)
-        return type(c) == "table" and c.hideBuffCooldownOverlay == true
+local function HasAnySpellOnlyCooldownRule()
+    local db = GetOtherFeaturesDB()
+    local rules = db and db.skillRules
+    if not rules then
+        return false
     end
-    if wants(db.importantSkills) or wants(db.efficiencySkills) then
-        return true
-    end
-    for _, grp in ipairs(db.customGroups or {}) do
-        if wants(grp and grp.config) then
+
+    for _, rule in pairs(rules) do
+        if type(rule) == "table" and rule.hideBuffCooldownOverlay == true then
             return true
         end
     end
+
     return false
 end
 
@@ -530,7 +567,7 @@ local function EnsureSpellOnlyCooldownSpellUpdateFlush()
     spellOnlyCdFlushFrame:Hide()
     spellOnlyCdFlushFrame:SetScript("OnUpdate", function(self)
         self:Hide()
-        if not SkillsModuleWantsSpellOnlyCooldown() then return end
+        if not HasAnySpellOnlyCooldownRule() then return end
         local SL = VFlow.StyleLayout
         if not SL or not SL.CollectIcons then return end
         for _, name in ipairs({ "EssentialCooldownViewer", "UtilityCooldownViewer" }) do
@@ -556,7 +593,7 @@ local function EnsureSpellOnlyCooldownSpellUpdateFlush()
         end
     end)
     VFlow.on("SPELL_UPDATE_COOLDOWN", "VFlow.StyleApply.SpellOnlyCd", function()
-        if not SkillsModuleWantsSpellOnlyCooldown() then return end
+        if not HasAnySpellOnlyCooldownRule() then return end
         spellOnlyCdFlushFrame:Show()
     end)
 end
@@ -610,7 +647,7 @@ function StyleApply.ApplyAuraSwipeColor(button, groupCfg)
     button._vf_buffMaskColor = groupCfg.buffMaskColor
     button._vf_cooldownMaskColor = groupCfg.cooldownMaskColor
     button._vf_chargeRechargeMaskColor = groupCfg.chargeRechargeMaskColor
-    button._vf_hideBuffCooldownOverlay = groupCfg.hideBuffCooldownOverlay == true
+    button._vf_hideBuffCooldownOverlay = SkillWantsSpellOnlyCooldown(button)
 
     if button._vf_hideBuffCooldownOverlay then
         EnsureSpellOnlyCooldownSpellUpdateFlush()
@@ -666,7 +703,7 @@ function StyleApply.ApplyButtonStyle(button, cfg)
         StyleApply.ApplyKeybind(button, cfg)
     end
 
-    if cfg.buffMaskColor or cfg.cooldownMaskColor or cfg.chargeRechargeMaskColor or cfg.hideBuffCooldownOverlay then
+    if cfg.buffMaskColor or cfg.cooldownMaskColor or cfg.chargeRechargeMaskColor then
         StyleApply.ApplyAuraSwipeColor(button, cfg)
     end
 
@@ -683,9 +720,14 @@ end
 function StyleApply.ApplyButtonStyleIfStale(button, cfg)
     if not button or not cfg then return end
     local ver = VFlow._buttonStyleVersion or 0
-    if button._vf_btnStyleVer == ver then return end
+    local spellID = GetSpellIDForSpellOnlyCooldown(button) or 0
+    local spellMaskKey = tostring(spellID) .. ":" .. (SkillWantsSpellOnlyCooldown(button) and "1" or "0")
+    if button._vf_btnStyleVer == ver and button._vf_spellMaskKey == spellMaskKey then
+        return
+    end
     StyleApply.ApplyButtonStyle(button, cfg)
     button._vf_btnStyleVer = ver
+    button._vf_spellMaskKey = spellMaskKey
 end
 
 -- =========================================================

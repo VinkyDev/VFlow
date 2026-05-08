@@ -1,6 +1,7 @@
 ﻿--[[ Core 依赖：
   - Core/CustomTTS.lua：消费 ttsAliases，自定义文字转语音/音效播报
   - Core/CooldownStyle.lua：消费 highlightRules，自定义高亮
+  - Core/StyleApply.lua：消费 skillRules，技能级隐藏增益剩余时间遮罩层
   - Core/BuffScanner.lua、SkillScanner.lua：State 图标数据（只读）
   例外：技能/BUFF 子页内 State.watch 仅用于刷新图标网格列表。
 ]]
@@ -20,7 +21,7 @@ local mergeLayouts = Utils.mergeLayouts
 
 VFlow.registerModule(MODULE_KEY, {
     name = "特殊设置",
-    description = "技能与BUFF的自定义播报和高亮",
+    description = "技能与BUFF的自定义播报、高亮和技能遮罩层",
 })
 
 -- =========================================================
@@ -43,6 +44,11 @@ local defaults = {
         spellId = "",
         source = "skill",
         enabled = false,
+    },
+    skillRules = {},
+    skillForm = {
+        spellId = "",
+        hideBuffCooldownOverlay = false,
     },
 }
 
@@ -117,6 +123,16 @@ local function normalizeHighlightRule(rule)
     }
 end
 
+local function normalizeSkillRule(rule)
+    if type(rule) ~= "table" then
+        return nil
+    end
+
+    return {
+        hideBuffCooldownOverlay = rule.hideBuffCooldownOverlay == true,
+    }
+end
+
 local function getSelectedSpellID(cfg)
     local form = cfg and cfg.ttsForm
     local spellID = tonumber(form and form.spellId)
@@ -154,6 +170,46 @@ local function getStoredHighlightRule(spellID)
     return normalizeHighlightRule(rules[spellID] or rules[tostring(spellID)])
 end
 
+local function getStoredSkillRule(spellID)
+    local rules = db.skillRules or {}
+    return normalizeSkillRule(rules[spellID] or rules[tostring(spellID)])
+end
+
+local function removeSkillRule(spellID)
+    if not spellID then
+        return
+    end
+
+    local rules = db.skillRules or {}
+    if rules[spellID] == nil and rules[tostring(spellID)] == nil then
+        return
+    end
+
+    rules[spellID] = nil
+    rules[tostring(spellID)] = nil
+    VFlow.Store.set(MODULE_KEY, "skillRules", rules)
+end
+
+local function setSkillRule(spellID, hideBuffCooldownOverlay)
+    if not spellID then
+        return
+    end
+
+    if hideBuffCooldownOverlay ~= true then
+        removeSkillRule(spellID)
+        return
+    end
+
+    local currentRule = getStoredSkillRule(spellID)
+    if currentRule and currentRule.hideBuffCooldownOverlay == true then
+        return
+    end
+
+    VFlow.Store.set(MODULE_KEY, "skillRules." .. spellID, {
+        hideBuffCooldownOverlay = true,
+    })
+end
+
 local function setHighlightRule(spellID, enabled, sourceKind)
     local normalizedSource = normalizeSource(sourceKind)
     local currentRule = getStoredHighlightRule(spellID)
@@ -186,8 +242,15 @@ local function hasHighlightConfig(spellID, sourceKind)
     return getHighlightRuleForSource(spellID, sourceKind) ~= nil
 end
 
+local function hasSkillMaskConfig(spellID)
+    local rule = getStoredSkillRule(spellID)
+    return rule and rule.hideBuffCooldownOverlay == true or false
+end
+
 local function hasAnyConfig(spellID, sourceKind)
-    return hasTtsConfig(spellID) or hasHighlightConfig(spellID, sourceKind)
+    return hasTtsConfig(spellID)
+        or hasHighlightConfig(spellID, sourceKind)
+        or (normalizeSource(sourceKind) == "skill" and hasSkillMaskConfig(spellID))
 end
 
 local function getCurrentTtsFormSpellID()
@@ -231,6 +294,14 @@ local function sameHighlightForm(a, b)
         and (a.enabled == true) == (b.enabled == true)
 end
 
+local function sameSkillForm(a, b)
+    if type(a) ~= "table" or type(b) ~= "table" then
+        return false
+    end
+    return tostring(a.spellId or "") == tostring(b.spellId or "")
+        and (a.hideBuffCooldownOverlay == true) == (b.hideBuffCooldownOverlay == true)
+end
+
 local function loadHighlightForm(spellID, sourceKind)
     local normalizedSource = normalizeSource(sourceKind)
     local storedRule = getStoredHighlightRule(spellID)
@@ -248,6 +319,18 @@ local function loadHighlightForm(spellID, sourceKind)
     VFlow.Store.set(MODULE_KEY, "highlightForm", nextForm)
 end
 
+local function loadSkillForm(spellID)
+    local rule = getStoredSkillRule(spellID)
+    local nextForm = {
+        spellId = tostring(spellID or ""),
+        hideBuffCooldownOverlay = rule and rule.hideBuffCooldownOverlay == true or false,
+    }
+    if sameSkillForm(db.skillForm, nextForm) then
+        return
+    end
+    VFlow.Store.set(MODULE_KEY, "skillForm", nextForm)
+end
+
 local function selectItem(spellID, sourceKind)
     local normalizedSource = normalizeSource(sourceKind)
     if getCurrentTtsFormSpellID() == spellID
@@ -256,6 +339,9 @@ local function selectItem(spellID, sourceKind)
     end
     loadTtsForm(spellID)
     loadHighlightForm(spellID, normalizedSource)
+    if normalizedSource == "skill" then
+        loadSkillForm(spellID)
+    end
 end
 
 local function removeTtsAlias(spellID)
@@ -299,6 +385,16 @@ local function syncSelectedHighlightRule()
 
     local form = db.highlightForm or {}
     setHighlightRule(spellID, form.enabled == true, form.source)
+end
+
+local function syncSelectedSkillRule()
+    local spellID = getCurrentTtsFormSpellID()
+    if not spellID or spellID <= 0 then
+        return
+    end
+
+    local form = db.skillForm or {}
+    setSkillRule(spellID, form.hideBuffCooldownOverlay == true)
 end
 
 -- =========================================================
@@ -402,6 +498,9 @@ local function buildIconTemplate(sourceKind)
                 end
                 if hasHighlightConfig(data.spellID, sourceKind) then
                     tip:AddLine("|cff33dd55已配置自定义高亮|r", 1, 1, 1, true)
+                end
+                if normalizeSource(sourceKind) == "skill" and hasSkillMaskConfig(data.spellID) then
+                    tip:AddLine("|cff33dd55已配置隐藏增益剩余时间遮罩层|r", 1, 1, 1, true)
                 end
                 tip:AddLine("|cff00ff00点击进行设置|r", 1, 1, 1, true)
             end
@@ -549,6 +648,28 @@ local function buildHighlightSectionLayout(sourceKind)
     }
 end
 
+local function buildSkillMaskSectionLayout()
+    return {
+        { type = "subtitle", text = L["Buff overlay behavior"], cols = 24 },
+        { type = "separator", cols = 24 },
+        {
+            type = "checkbox",
+            key = "skillForm.hideBuffCooldownOverlay",
+            label = L["Hide buff remaining time overlay"],
+            cols = 24,
+            onChange = function()
+                syncSelectedSkillRule()
+            end,
+        },
+        {
+            type = "description",
+            cols = 24,
+            text = "|cff888888" .. L["When enabled, this skill always keeps the cooldown swipe and timer on the spell itself."] .. "|r",
+        },
+        { type = "spacer", height = 10, cols = 24 },
+    }
+end
+
 local function buildEntityPageLayout(sourceKind)
     local spec = getSourceSpec(sourceKind)
 
@@ -576,6 +697,7 @@ local function buildEntityPageLayout(sourceKind)
                 "ttsAliases",
                 "ttsForm.spellId",
                 "highlightRules",
+                "skillRules",
             },
             dataSource = spec.dataSource,
             template = buildIconTemplate(sourceKind),
@@ -608,6 +730,9 @@ local function buildEntityPageLayout(sourceKind)
                 "highlightForm.spellId",
                 "highlightForm.source",
                 "highlightForm.enabled",
+                "skillRules",
+                "skillForm.spellId",
+                "skillForm.hideBuffCooldownOverlay",
                 "highlightOnlyInCombat",
             },
             condition = function(cfg)
@@ -616,6 +741,7 @@ local function buildEntityPageLayout(sourceKind)
             children = mergeLayouts(
                 buildSelectedItemLayout(sourceKind),
                 buildTtsSectionLayout(),
+                normalizeSource(sourceKind) == "skill" and buildSkillMaskSectionLayout(),
                 buildHighlightSectionLayout(sourceKind)
             ),
         },

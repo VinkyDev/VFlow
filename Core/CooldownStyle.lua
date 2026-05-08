@@ -1840,6 +1840,10 @@ end)
 
 VFlow.Store.watch("VFlow.OtherFeatures", "CooldownStyle_OtherHL", function(key, _)
     if not key then return end
+    if key == "skillRules" or key:find("^skillRules%.") then
+        BumpButtonStyleVersion()
+        RequestRefresh(0)
+    end
     if key == "highlightRules" or key:find("^highlightRules%.")
         or key == "highlightOnlyInCombat" then
         C_Timer.After(0, RefreshAllOtherFeatureHighlights)

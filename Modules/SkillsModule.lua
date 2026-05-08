@@ -1,7 +1,7 @@
 --[[ Core 依赖：
   - Core/SkillGroups.lua：重要/效能/自定义技能分组布局与容器
   - Core/CooldownStyle.lua：监听本模块配置并应用冷却管理器样式与布局
-  - Core/StyleApply.lua：技能遮罩与 hideBuffCooldownOverlay 时的冷却驱动
+  - Core/StyleApply.lua：消费本模块遮罩颜色并应用技能冷却驱动
   - Core/SkillScanner.lua：维护 State.trackedSkills（本模块技能列表数据源，只读）
 ]]
 
@@ -121,7 +121,6 @@ local function getDefaultGroupConfig()
         cooldownMaskColor = { r = 0, g = 0, b = 0, a = 0.7 },
         chargeRechargeMaskColor = { r = 0, g = 0, b = 0, a = 0 },
         buffMaskColor = { r = 1, g = 0.95, b = 0.57, a = 0.7 },
-        hideBuffCooldownOverlay = false,
     }
 end
 
@@ -364,33 +363,30 @@ local function renderGroupConfig(container, groupConfig, groupName, options)
             { type = "subtitle", text = L["Mask Config"], cols = 24 },
             { type = "separator", cols = 24 },
             {
-                type = "checkbox",
-                key = "hideBuffCooldownOverlay",
-                label = L["Show spell cooldown only (hide buff duration on swipe)"],
+                type = "interactiveText",
                 cols = 24,
-            },
-            {
-                type = "description",
-                text = L["When a spell has a linked buff, the game may show the buff duration on the cooldown swipe. This option keeps the swipe and timer on the spell cooldown instead. Buff mask color below does not apply while this is on."],
-                cols = 24,
+                text = L["Use {Special Settings} -> {Skills} to configure {Hide buff remaining time overlay} per skill."],
+                links = {
+                    [L["Special Settings"]] = function()
+                        if VFlow.MainUI and VFlow.MainUI.openMenu then
+                            VFlow.MainUI.openMenu("other_skill")
+                        end
+                    end,
+                    [L["Skills"]] = function()
+                        if VFlow.MainUI and VFlow.MainUI.openMenu then
+                            VFlow.MainUI.openMenu("other_skill")
+                        end
+                    end,
+                    [L["Hide buff remaining time overlay"]] = function()
+                        if VFlow.MainUI and VFlow.MainUI.openMenu then
+                            VFlow.MainUI.openMenu("other_skill")
+                        end
+                    end,
+                },
             },
             { type = "colorPicker", key = "cooldownMaskColor", label = L["Normal cooldown mask color"], hasAlpha = true, cols = 12 },
-            {
-                type = "if",
-                dependsOn = "hideBuffCooldownOverlay",
-                condition = function(cfg) return cfg.hideBuffCooldownOverlay == true end,
-                children = {
-                    { type = "colorPicker", key = "chargeRechargeMaskColor", label = L["Charge recharge mask color"], hasAlpha = true, cols = 12 },
-                },
-            },
-            {
-                type = "if",
-                dependsOn = "hideBuffCooldownOverlay",
-                condition = function(cfg) return cfg.hideBuffCooldownOverlay ~= true end,
-                children = {
-                    { type = "colorPicker", key = "buffMaskColor", label = L["Buff mask color"], hasAlpha = true, cols = 12 },
-                },
-            },
+            { type = "colorPicker", key = "chargeRechargeMaskColor", label = L["Charge recharge mask color"], hasAlpha = true, cols = 12 },
+            { type = "colorPicker", key = "buffMaskColor", label = L["Buff mask color"], hasAlpha = true, cols = 12 },
         },
 
         -- 键位显示
