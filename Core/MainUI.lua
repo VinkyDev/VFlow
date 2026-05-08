@@ -232,10 +232,10 @@ local menuItems = {
     {
         type = "category",
         key = "other",
-        label = L["Other Features"],
+        label = "特殊设置",
         children = {
-            { key = "other_tts", label = L["Custom Announce"], module = "OtherFeatures" },
-            { key = "other_highlight", label = L["Custom Highlight"], module = "OtherFeatures" },
+            { key = "other_skill", label = L["Skills"], module = "OtherFeatures" },
+            { key = "other_buff", label = L["BUFF"], module = "OtherFeatures" },
         }
     },
 }

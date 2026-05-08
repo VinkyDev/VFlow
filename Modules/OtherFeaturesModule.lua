@@ -1,8 +1,8 @@
---[[ Core 依赖：
-  - Core/CustomTTS.lua：自定义文字转语音/音效播报
-  - Core/CooldownStyle.lua：自定义高亮规则与表单协同
+﻿--[[ Core 依赖：
+  - Core/CustomTTS.lua：消费 ttsAliases，自定义文字转语音/音效播报
+  - Core/CooldownStyle.lua：消费 highlightRules，自定义高亮
   - Core/BuffScanner.lua、SkillScanner.lua：State 图标数据（只读）
-  例外：播报/高亮子页内 State.watch 仅用于刷新图标网格列表。
+  例外：技能/BUFF 子页内 State.watch 仅用于刷新图标网格列表。
 ]]
 
 -- =========================================================
@@ -19,8 +19,8 @@ local Utils = VFlow.Utils
 local mergeLayouts = Utils.mergeLayouts
 
 VFlow.registerModule(MODULE_KEY, {
-    name = L["Other Features"],
-    description = L["Announce & highlight extensions"],
+    name = "特殊设置",
+    description = "技能与BUFF的自定义播报和高亮",
 })
 
 -- =========================================================
@@ -31,6 +31,7 @@ local defaults = {
     ttsAliases = {},
     ttsForm = {
         spellId = "",
+        enabled = false,
         mode = "text",
         text = "",
         sound = "",
@@ -40,7 +41,7 @@ local defaults = {
     highlightOnlyInCombat = true,
     highlightForm = {
         spellId = "",
-        source = "",
+        source = "skill",
         enabled = false,
     },
 }
@@ -64,7 +65,7 @@ local PRIMARY_COLOR = { 0.2, 0.6, 1, 1 }
 local CONFIGURED_COLOR = { 0.2, 0.85, 0.3, 1 }
 
 -- =========================================================
--- SECTION 3: 扫描链接（播报 / 高亮共用）
+-- SECTION 3: 扫描链接与共享工具
 -- =========================================================
 
 local function getScanLinks()
@@ -85,14 +86,18 @@ local function getScanLinks()
     }
 end
 
--- =========================================================
--- SECTION 4: 播报 — 工具与表单
--- =========================================================
+local function normalizeSource(source)
+    if source == "buff" then
+        return "buff"
+    end
+    return "skill"
+end
 
-local function normalizeEntry(entry)
+local function normalizeTtsEntry(entry)
     if type(entry) ~= "table" or not entry.mode then
         return nil
     end
+
     return {
         mode = entry.mode,
         text = entry.text or "",
@@ -101,85 +106,210 @@ local function normalizeEntry(entry)
     }
 end
 
-local function hasAlias(spellID)
-    local a = db.ttsAliases or {}
-    return normalizeEntry(a[spellID] or a[tostring(spellID)]) ~= nil
-end
-
-local function selectedSpellId(cfg)
-    return tonumber(cfg.ttsForm and cfg.ttsForm.spellId)
-end
-
-local function applyAliasToForm(spellID)
-    local f = db.ttsForm
-    f.spellId = tostring(spellID)
-    local raw = (db.ttsAliases or {})[spellID] or (db.ttsAliases or {})[tostring(spellID)]
-    local norm = normalizeEntry(raw)
-    if norm then
-        f.mode = norm.mode
-        f.text = norm.text
-        f.sound = norm.sound
-        f.soundChannel = norm.soundChannel
-    else
-        f.mode = "text"
-        f.text = ""
-        f.sound = ""
-        f.soundChannel = "Master"
+local function normalizeHighlightRule(rule)
+    if type(rule) ~= "table" then
+        return nil
     end
-    VFlow.Store.set(MODULE_KEY, "ttsForm", f)
+
+    return {
+        enabled = rule.enabled == true,
+        source = normalizeSource(rule.source),
+    }
 end
 
--- =========================================================
--- SECTION 5: 高亮 — 工具与表单（Core：CooldownStyle + StyleApply）
--- =========================================================
-
-local function hasHighlightRule(spellID)
-    local form = db.highlightForm
-    local formSid = form and tonumber(form.spellId)
-    if formSid == spellID then
-        return form.enabled == true
+local function getSelectedSpellID(cfg)
+    local form = cfg and cfg.ttsForm
+    local spellID = tonumber(form and form.spellId)
+    if spellID and spellID > 0 then
+        return spellID
     end
-    local raw = (db.highlightRules or {})[spellID] or (db.highlightRules or {})[tostring(spellID)]
-    return type(raw) == "table" and raw.enabled == true
+    return nil
 end
 
-local function normalizeHighlightSource(src)
-    if src == "buff" then return "buff" end
-    return "skill"
+local function hasSelectedItem(cfg)
+    return getSelectedSpellID(cfg) ~= nil
 end
 
-local function selectedHighlightSpellId(cfg)
-    return tonumber(cfg.highlightForm and cfg.highlightForm.spellId)
+local function getSpellDisplayText(spellID)
+    if not spellID then
+        return ""
+    end
+
+    local info = C_Spell.GetSpellInfo(spellID)
+    local name = info and info.name or ("?" .. tostring(spellID))
+    return "|cff88ccff" .. name .. "|r  |cffaaaaaa#" .. tostring(spellID) .. "|r"
 end
 
-local function applyHighlightForm(spellID, source)
-    local f = db.highlightForm
-    local prevSid = tonumber(f and f.spellId)
-    -- 切换选中法术前，把上一行的编辑结果写回持久化规则（避免只靠 Core 在监听里反写 Store）
-    if prevSid and prevSid > 0 and prevSid ~= spellID then
-        VFlow.Store.set(MODULE_KEY, "highlightRules." .. prevSid, {
-            enabled = f.enabled == true,
-            source = normalizeHighlightSource(f.source),
+local function getTtsEntry(spellID)
+    local aliases = db.ttsAliases or {}
+    return normalizeTtsEntry(aliases[spellID] or aliases[tostring(spellID)])
+end
+
+local function hasTtsConfig(spellID)
+    return getTtsEntry(spellID) ~= nil
+end
+
+local function getStoredHighlightRule(spellID)
+    local rules = db.highlightRules or {}
+    return normalizeHighlightRule(rules[spellID] or rules[tostring(spellID)])
+end
+
+local function setHighlightRule(spellID, enabled, sourceKind)
+    local normalizedSource = normalizeSource(sourceKind)
+    local currentRule = getStoredHighlightRule(spellID)
+    if currentRule
+        and currentRule.enabled == (enabled == true)
+        and currentRule.source == normalizedSource then
+        return
+    end
+
+    VFlow.Store.set(MODULE_KEY, "highlightRules." .. spellID, {
+        enabled = enabled == true,
+        source = normalizedSource,
+    })
+end
+
+local function getHighlightRuleForSource(spellID, sourceKind)
+    local normalizedSource = normalizeSource(sourceKind)
+    local rule = getStoredHighlightRule(spellID)
+    if not rule or rule.enabled ~= true then
+        return nil
+    end
+    if rule.source ~= normalizedSource then
+        return nil
+    end
+
+    return rule
+end
+
+local function hasHighlightConfig(spellID, sourceKind)
+    return getHighlightRuleForSource(spellID, sourceKind) ~= nil
+end
+
+local function hasAnyConfig(spellID, sourceKind)
+    return hasTtsConfig(spellID) or hasHighlightConfig(spellID, sourceKind)
+end
+
+local function getCurrentTtsFormSpellID()
+    return tonumber(db.ttsForm and db.ttsForm.spellId)
+end
+
+local function sameTtsForm(a, b)
+    if type(a) ~= "table" or type(b) ~= "table" then
+        return false
+    end
+    return tostring(a.spellId or "") == tostring(b.spellId or "")
+        and (a.enabled == true) == (b.enabled == true)
+        and tostring(a.mode or "") == tostring(b.mode or "")
+        and tostring(a.text or "") == tostring(b.text or "")
+        and tostring(a.sound or "") == tostring(b.sound or "")
+        and tostring(a.soundChannel or "") == tostring(b.soundChannel or "")
+end
+
+local function loadTtsForm(spellID)
+    local entry = getTtsEntry(spellID)
+    local nextForm = {
+        spellId = tostring(spellID or ""),
+        enabled = entry ~= nil,
+        mode = entry and entry.mode or "text",
+        text = entry and entry.text or "",
+        sound = entry and entry.sound or "",
+        soundChannel = entry and entry.soundChannel or "Master",
+    }
+    if sameTtsForm(db.ttsForm, nextForm) then
+        return
+    end
+    VFlow.Store.set(MODULE_KEY, "ttsForm", nextForm)
+end
+
+local function sameHighlightForm(a, b)
+    if type(a) ~= "table" or type(b) ~= "table" then
+        return false
+    end
+    return tostring(a.spellId or "") == tostring(b.spellId or "")
+        and normalizeSource(a.source) == normalizeSource(b.source)
+        and (a.enabled == true) == (b.enabled == true)
+end
+
+local function loadHighlightForm(spellID, sourceKind)
+    local normalizedSource = normalizeSource(sourceKind)
+    local storedRule = getStoredHighlightRule(spellID)
+    local nextForm = {
+        spellId = tostring(spellID or ""),
+        source = normalizedSource,
+        enabled = storedRule
+        and storedRule.enabled == true
+        and storedRule.source == normalizedSource
+        or false,
+    }
+    if sameHighlightForm(db.highlightForm, nextForm) then
+        return
+    end
+    VFlow.Store.set(MODULE_KEY, "highlightForm", nextForm)
+end
+
+local function selectItem(spellID, sourceKind)
+    local normalizedSource = normalizeSource(sourceKind)
+    if getCurrentTtsFormSpellID() == spellID
+        and normalizeSource(db.highlightForm and db.highlightForm.source) == normalizedSource then
+        return
+    end
+    loadTtsForm(spellID)
+    loadHighlightForm(spellID, normalizedSource)
+end
+
+local function removeTtsAlias(spellID)
+    if not spellID then
+        return
+    end
+
+    local aliases = db.ttsAliases or {}
+    if aliases[spellID] == nil and aliases[tostring(spellID)] == nil then
+        return
+    end
+    aliases[spellID] = nil
+    aliases[tostring(spellID)] = nil
+    VFlow.Store.set(MODULE_KEY, "ttsAliases", aliases)
+end
+
+local function syncSelectedTtsAlias()
+    local spellID = getCurrentTtsFormSpellID()
+    if not spellID or spellID <= 0 then
+        return
+    end
+
+    local form = db.ttsForm or {}
+    if form.enabled == true then
+        VFlow.Store.set(MODULE_KEY, "ttsAliases." .. spellID, {
+            mode = form.mode,
+            text = form.text or "",
+            sound = form.sound or "",
+            soundChannel = form.soundChannel or "Master",
         })
+    else
+        removeTtsAlias(spellID)
     end
-    f.spellId = tostring(spellID)
-    f.source = source
-    local r = (db.highlightRules or {})[spellID] or (db.highlightRules or {})[tostring(spellID)]
-    f.enabled = type(r) == "table" and r.enabled == true
-    if type(r) == "table" and r.source then
-        f.source = normalizeHighlightSource(r.source)
+end
+
+local function syncSelectedHighlightRule()
+    local spellID = getCurrentTtsFormSpellID()
+    if not spellID or spellID <= 0 then
+        return
     end
-    VFlow.Store.set(MODULE_KEY, "highlightForm", f)
+
+    local form = db.highlightForm or {}
+    setHighlightRule(spellID, form.enabled == true, form.source)
 end
 
 -- =========================================================
--- SECTION 6: 技能 / BUFF 图标数据源
+-- SECTION 4: 技能 / BUFF 图标数据源
 -- =========================================================
 
 local function buildSkillIconRows()
     local merged = {}
     local trackedImportant = VFlow.State.get("trackedSkills") or {}
     local trackedUtility = VFlow.State.get("trackedUtilitySkills") or {}
+
     for spellID, info in pairs(trackedImportant) do
         merged[spellID] = info
     end
@@ -188,6 +318,7 @@ local function buildSkillIconRows()
             merged[spellID] = info
         end
     end
+
     local items = {}
     for spellID, info in pairs(merged) do
         items[#items + 1] = {
@@ -196,322 +327,219 @@ local function buildSkillIconRows()
             icon = info.icon,
         }
     end
+
     Utils.sortByName(items)
     return items
 end
 
 local function buildBuffIconRows()
     local items = {}
-    local tracked = VFlow.State.get("trackedBuffs") or {}
-    for spellID, info in pairs(tracked) do
+    local trackedBuffs = VFlow.State.get("trackedBuffs") or {}
+
+    for spellID, info in pairs(trackedBuffs) do
         items[#items + 1] = {
             spellID = spellID,
             name = info.name,
             icon = info.icon,
         }
     end
+
     Utils.sortByName(items)
     return items
 end
 
-local function ttsIconTemplate()
+local SOURCE_SPECS = {
+    skill = {
+        menuKey = "other_skill",
+        title = L["Skills"],
+        introText = L["Tracked spell or BUFF must be shown in {cooldown manager} first. {Scan Skills} or {Scan BUFFs} to refresh the list."],
+        emptyHint = "|cff888888点击上方技能图标后，可在下方同时配置该技能的自定义播报和自定义高亮。|r",
+        highlightLabel = L["Highlight when skill ready"],
+        dataSource = buildSkillIconRows,
+        stateKeys = { "trackedSkills", "trackedUtilitySkills" },
+    },
+    buff = {
+        menuKey = "other_buff",
+        title = L["BUFF"],
+        introText = L["Tracked spell or BUFF must be shown in {cooldown manager} first. {Scan Skills} or {Scan BUFFs} to refresh the list."],
+        emptyHint = "|cff888888点击上方BUFF图标后，可在下方同时配置该BUFF的自定义播报和自定义高亮。|r",
+        highlightLabel = L["Highlight when BUFF active"],
+        dataSource = buildBuffIconRows,
+        stateKeys = { "trackedBuffs" },
+    },
+}
+
+local function getSourceSpec(sourceKind)
+    return SOURCE_SPECS[normalizeSource(sourceKind)]
+end
+
+-- =========================================================
+-- SECTION 5: 页面布局
+-- =========================================================
+
+local function buildIconTemplate(sourceKind)
     return {
         type = "iconButton",
         size = 32,
-        icon = function(d)
-            return d.icon
+        icon = function(data)
+            return data.icon
         end,
-        borderColor = function(d)
-            local sid = selectedSpellId(db)
-            if sid and d.spellID == sid then
+        borderColor = function(data)
+            local selectedSpellID = getSelectedSpellID(db)
+            if selectedSpellID and data.spellID == selectedSpellID then
                 return PRIMARY_COLOR
-            elseif hasAlias(d.spellID) then
+            end
+            if hasAnyConfig(data.spellID, sourceKind) then
                 return CONFIGURED_COLOR
             end
             return nil
         end,
-        tooltip = function(d)
+        tooltip = function(data)
             return function(tip)
-                tip:SetSpellByID(d.spellID)
-                if hasAlias(d.spellID) then
-                    tip:AddLine("|cff33dd55" .. L["Announce configured"] .. "|r", 1, 1, 1, true)
+                tip:SetSpellByID(data.spellID)
+                if hasTtsConfig(data.spellID) then
+                    tip:AddLine("|cff33dd55已配置自定义播报|r", 1, 1, 1, true)
                 end
-                tip:AddLine("|cff00ff00" .. L["Click to edit"] .. "|r", 1, 1, 1, true)
+                if hasHighlightConfig(data.spellID, sourceKind) then
+                    tip:AddLine("|cff33dd55已配置自定义高亮|r", 1, 1, 1, true)
+                end
+                tip:AddLine("|cff00ff00点击进行设置|r", 1, 1, 1, true)
             end
         end,
-        onClick = function(d)
-            applyAliasToForm(d.spellID)
+        onClick = function(data)
+            selectItem(data.spellID, sourceKind)
         end,
     }
 end
 
-local function highlightIconTemplate(sourceKind)
+local function buildSelectedItemLayout(sourceKind)
     return {
-        type = "iconButton",
-        size = 32,
-        icon = function(d)
-            return d.icon
-        end,
-        borderColor = function(d)
-            local sid = selectedHighlightSpellId(db)
-            if sid and d.spellID == sid then
-                return PRIMARY_COLOR
-            elseif hasHighlightRule(d.spellID) then
-                return CONFIGURED_COLOR
-            end
-            return nil
-        end,
-        tooltip = function(d)
-            return function(tip)
-                tip:SetSpellByID(d.spellID)
-                if hasHighlightRule(d.spellID) then
-                    tip:AddLine("|cff33dd55" .. L["Highlight configured"] .. "|r", 1, 1, 1, true)
-                end
-                tip:AddLine("|cff00ff00" .. L["Click to edit"] .. "|r", 1, 1, 1, true)
-            end
-        end,
-        onClick = function(d)
-            applyHighlightForm(d.spellID, sourceKind)
-        end,
-    }
-end
-
--- =========================================================
--- SECTION 7: 顶部说明 + 双列表（播报 / 高亮共用结构）
--- =========================================================
-
-local function buildSharedTopAndIconGrid(titleText, introText, legendText, forDependsOn, skillTemplate, buffTemplate)
-    return {
-        { type = "title", text = titleText, cols = 24 },
-        { type = "spacer", height = 6, cols = 24 },
-        {
-            type = "interactiveText",
-            cols = 24,
-            text = introText,
-            links = getScanLinks(),
-        },
-        { type = "spacer", height = 6, cols = 24 },
         {
             type = "description",
             cols = 24,
-            text = legendText,
+            dependsOn = { "ttsForm.spellId" },
+            text = function(cfg)
+                local spellID = getSelectedSpellID(cfg)
+                return getSpellDisplayText(spellID)
+            end,
         },
-        { type = "spacer", height = 8, cols = 24 },
-        { type = "subtitle", text = L["Skills"], cols = 24 },
+        { type = "spacer", height = 6, cols = 24 },
+    }
+end
+
+local function buildTtsSectionLayout()
+    return {
+        { type = "subtitle", text = L["Custom Announce"], cols = 24 },
         { type = "separator", cols = 24 },
         {
-            type = "for",
-            cols = 2,
-            dependsOn = forDependsOn,
-            dataSource = buildSkillIconRows,
-            template = skillTemplate,
+            type = "interactiveText",
+            cols = 24,
+            text = L["Custom announce requires the spell to enable text-to-speech alert in {cooldown manager} first."],
+            links = getScanLinks(),
         },
-        { type = "spacer", height = 8, cols = 24 },
-        { type = "subtitle", text = L["BUFF"], cols = 24 },
-        { type = "separator", cols = 24 },
         {
-            type = "for",
-            cols = 2,
-            dependsOn = forDependsOn,
-            dataSource = buildBuffIconRows,
-            template = buffTemplate,
+            type = "checkbox",
+            key = "ttsForm.enabled",
+            label = L["Enable custom announce"],
+            cols = 24,
+            onChange = function()
+                syncSelectedTtsAlias()
+            end,
+        },
+        {
+            type = "if",
+            dependsOn = { "ttsForm.enabled" },
+            condition = function(cfg)
+                return cfg.ttsForm and cfg.ttsForm.enabled == true
+            end,
+            children = {
+                {
+                    type = "dropdown",
+                    key = "ttsForm.mode",
+                    label = L["Announce method"],
+                    cols = 8,
+                    items = MODE_ITEMS,
+                    onChange = function()
+                        syncSelectedTtsAlias()
+                    end,
+                },
+                {
+                    type = "if",
+                    dependsOn = { "ttsForm.mode" },
+                    condition = function(subCfg)
+                        return (subCfg.ttsForm and subCfg.ttsForm.mode) == "text"
+                    end,
+                    children = {
+                        {
+                            type = "input",
+                            key = "ttsForm.text",
+                            label = L["Speak content"],
+                            cols = 16,
+                            onChange = function()
+                                syncSelectedTtsAlias()
+                            end,
+                        },
+                    },
+                },
+                {
+                    type = "if",
+                    dependsOn = { "ttsForm.mode" },
+                    condition = function(subCfg)
+                        return (subCfg.ttsForm and subCfg.ttsForm.mode) == "sound"
+                    end,
+                    children = {
+                        {
+                            type = "input",
+                            key = "ttsForm.sound",
+                            label = L["Sound path"],
+                            cols = 16,
+                            onChange = function()
+                                syncSelectedTtsAlias()
+                            end,
+                        },
+                        {
+                            type = "description",
+                            cols = 24,
+                            text = "|cff888888" .. L["Sound path example: Interface\\AddOns\\VFlow\\Sounds\\alert.ogg"] .. "|r",
+                        },
+                        {
+                            type = "dropdown",
+                            key = "ttsForm.soundChannel",
+                            label = L["Sound channel"],
+                            cols = 14,
+                            items = CHANNEL_ITEMS,
+                            onChange = function()
+                                syncSelectedTtsAlias()
+                            end,
+                        },
+                    },
+                },
+            },
         },
         { type = "spacer", height = 10, cols = 24 },
     }
 end
 
--- =========================================================
--- SECTION 8: 播报 — 底部配置
--- =========================================================
+local function buildHighlightSectionLayout(sourceKind)
+    local spec = getSourceSpec(sourceKind)
 
-local function buildTtsSelectedConfigLayout()
     return {
-        {
-            type = "description",
-            cols = 24,
-            dependsOn = "ttsForm.spellId",
-            text = function(cfg)
-                local sid = selectedSpellId(cfg)
-                if not sid then
-                    return ""
-                end
-                local si = C_Spell.GetSpellInfo(sid)
-                local name = si and si.name or ("?" .. tostring(sid))
-                return "|cff88ccff" .. name .. "|r  |cffaaaaaa#" .. tostring(sid) .. "|r"
-            end,
-        },
+        { type = "subtitle", text = L["Custom Highlight"], cols = 24 },
         { type = "separator", cols = 24 },
         {
-            type = "dropdown",
-            key = "ttsForm.mode",
-            label = L["Announce method"],
-            cols = 8,
-            items = MODE_ITEMS,
-        },
-        {
-            type = "if",
-            dependsOn = { "ttsForm.mode" },
-            condition = function(cfg)
-                return (cfg.ttsForm and cfg.ttsForm.mode) == "text"
-            end,
-            children = {
-                { type = "input", key = "ttsForm.text", label = L["Speak content"], cols = 16 },
-            },
-        },
-        {
-            type = "if",
-            dependsOn = { "ttsForm.mode" },
-            condition = function(cfg)
-                return (cfg.ttsForm and cfg.ttsForm.mode) == "sound"
-            end,
-            children = {
-                { type = "input", key = "ttsForm.sound", label = L["Sound path"], cols = 16 },
-                {
-                    type = "description",
-                    cols = 24,
-                    text = "|cff888888" .. L["Sound path example: Interface\\AddOns\\VFlow\\Sounds\\alert.ogg"] .. "|r",
-                },
-                {
-                    type = "dropdown",
-                    key = "ttsForm.soundChannel",
-                    label = L["Sound channel"],
-                    cols = 14,
-                    items = CHANNEL_ITEMS,
-                },
-            },
-        },
-        { type = "spacer", height = 6, cols = 24 },
-        {
-            type = "button",
-            text = L["Save"],
-            cols = 12,
-            onClick = function(cfg)
-                local sid = selectedSpellId(cfg)
-                if not sid then
-                    return
-                end
-                local f = cfg.ttsForm
-                VFlow.Store.set(MODULE_KEY, "ttsAliases." .. sid, {
-                    mode = f.mode,
-                    text = f.text or "",
-                    sound = f.sound or "",
-                    soundChannel = f.soundChannel or "Master",
-                })
-            end,
-        },
-        {
-            type = "button",
-            text = L["Clear config"],
-            cols = 12,
-            onClick = function(cfg)
-                local sid = selectedSpellId(cfg)
-                if not sid then
-                    return
-                end
-                if cfg.ttsAliases then
-                    cfg.ttsAliases[sid] = nil
-                    cfg.ttsAliases[tostring(sid)] = nil
-                    VFlow.Store.set(MODULE_KEY, "ttsAliases", cfg.ttsAliases)
-                end
-                applyAliasToForm(sid)
-            end,
-        },
-    }
-end
-
-local function buildFullTtsLayout()
-    local top = buildSharedTopAndIconGrid(
-        L["Custom Announce"],
-        L["This feature overrides system TTS alerts. Enable TTS for target spell in {cooldown manager} first. {Scan Skills} or {Scan BUFFs} to update icons."],
-        "|cff3399ff■|r " .. L["Current selection"] .. "  |cff33dd55■|r " .. L["Announce configured"],
-        { "ttsAliases", "ttsForm.spellId" },
-        ttsIconTemplate(),
-        ttsIconTemplate()
-    )
-
-    local tail = {
-        {
-            type = "if",
-            dependsOn = { "ttsForm.spellId" },
-            condition = function(cfg)
-                local sid = selectedSpellId(cfg)
-                return sid == nil or sid <= 0
-            end,
-            children = {
-                {
-                    type = "description",
-                    cols = 24,
-                    text = "|cff888888" .. L["Click a skill or BUFF icon above, then set speak or sound."] .. "|r",
-                },
-            },
-        },
-        {
-            type = "if",
-            dependsOn = { "ttsForm.spellId", "ttsForm.mode" },
-            condition = function(cfg)
-                local sid = selectedSpellId(cfg)
-                return sid ~= nil and sid > 0
-            end,
-            children = mergeLayouts({
-                { type = "subtitle", text = L["Current spell"], cols = 24 },
-                { type = "separator", cols = 24 },
-            }, buildTtsSelectedConfigLayout()),
-        },
-    }
-
-    return mergeLayouts(top, tail)
-end
-
--- =========================================================
--- SECTION 9: 高亮 — 底部配置
--- =========================================================
-
-local function buildHighlightSelectedConfigLayout()
-    return {
-        {
-            type = "description",
+            type = "checkbox",
+            key = "highlightOnlyInCombat",
+            label = L["Highlight only in combat"],
             cols = 24,
-            dependsOn = "highlightForm.spellId",
-            text = function(cfg)
-                local sid = selectedHighlightSpellId(cfg)
-                if not sid then
-                    return ""
-                end
-                local si = C_Spell.GetSpellInfo(sid)
-                local name = si and si.name or ("?" .. tostring(sid))
-                return "|cff88ccff" .. name .. "|r  |cffaaaaaa#" .. tostring(sid) .. "|r"
-            end,
-        },
-        { type = "separator", cols = 24 },
-        {
-            type = "if",
-            dependsOn = { "highlightForm.source" },
-            condition = function(cfg)
-                return (cfg.highlightForm and cfg.highlightForm.source) == "skill"
-            end,
-            children = {
-                {
-                    type = "checkbox",
-                    key = "highlightForm.enabled",
-                    label = L["Highlight when skill ready"],
-                    cols = 24,
-                },
-            },
         },
         {
-            type = "if",
-            dependsOn = { "highlightForm.source" },
-            condition = function(cfg)
-                return (cfg.highlightForm and cfg.highlightForm.source) == "buff"
+            type = "checkbox",
+            key = "highlightForm.enabled",
+            label = spec.highlightLabel,
+            cols = 24,
+            onChange = function()
+                syncSelectedHighlightRule()
             end,
-            children = {
-                {
-                    type = "checkbox",
-                    key = "highlightForm.enabled",
-                    label = L["Highlight when BUFF active"],
-                    cols = 24,
-                },
-            },
         },
         {
             type = "description",
@@ -521,55 +549,75 @@ local function buildHighlightSelectedConfigLayout()
     }
 end
 
-local function buildFullHighlightLayout()
-    local top = buildSharedTopAndIconGrid(
-        L["Custom Highlight"],
-        L["Highlight icons when skill ready or BUFF active. Show spell/BUFF in cooldown manager first; list matches announce page. {Scan Skills} or {Scan BUFFs} to update."],
-        "|cff3399ff■|r " .. L["Current selection"] .. "  |cff33dd55■|r " .. L["Highlight configured"],
+local function buildEntityPageLayout(sourceKind)
+    local spec = getSourceSpec(sourceKind)
+
+    local top = {
+        { type = "title", text = spec.title, cols = 24 },
+        { type = "spacer", height = 6, cols = 24 },
         {
-            "highlightRules",
-            "highlightForm.spellId",
-            "highlightForm.source",
-            "highlightForm.enabled",
-            "highlightOnlyInCombat",
+            type = "interactiveText",
+            cols = 24,
+            text = spec.introText,
+            links = getScanLinks(),
         },
-        highlightIconTemplate("skill"),
-        highlightIconTemplate("buff")
-    )
+        { type = "spacer", height = 6, cols = 24 },
+        {
+            type = "description",
+            cols = 24,
+            text = "|cff3399ff■|r 当前选中  |cff33dd55■|r 已有播报或高亮配置",
+        },
+        { type = "spacer", height = 8, cols = 24 },
+        { type = "separator", cols = 24 },
+        {
+            type = "for",
+            cols = 2,
+            dependsOn = {
+                "ttsAliases",
+                "ttsForm.spellId",
+                "highlightRules",
+            },
+            dataSource = spec.dataSource,
+            template = buildIconTemplate(sourceKind),
+        },
+        { type = "spacer", height = 10, cols = 24 },
+    }
 
     local tail = {
         {
-            type = "checkbox",
-            key = "highlightOnlyInCombat",
-            label = L["Highlight only in combat"],
-            cols = 24,
-        },
-        {
             type = "if",
-            dependsOn = { "highlightForm.spellId" },
+            dependsOn = { "ttsForm.spellId" },
             condition = function(cfg)
-                local sid = selectedHighlightSpellId(cfg)
-                return sid == nil or sid <= 0
+                return not hasSelectedItem(cfg)
             end,
             children = {
                 {
                     type = "description",
                     cols = 24,
-                    text = "|cff888888" .. L["Click a skill or BUFF icon above, then set highlight condition."] .. "|r",
+                    text = spec.emptyHint,
                 },
             },
         },
         {
             type = "if",
-            dependsOn = { "highlightForm.spellId", "highlightForm.source", "highlightForm.enabled" },
+            dependsOn = {
+                "ttsAliases",
+                "ttsForm.spellId",
+                "ttsForm.mode",
+                "highlightRules",
+                "highlightForm.spellId",
+                "highlightForm.source",
+                "highlightForm.enabled",
+                "highlightOnlyInCombat",
+            },
             condition = function(cfg)
-                local sid = selectedHighlightSpellId(cfg)
-                return sid ~= nil and sid > 0 and cfg.highlightForm and (cfg.highlightForm.source == "skill" or cfg.highlightForm.source == "buff")
+                return hasSelectedItem(cfg)
             end,
-            children = mergeLayouts({
-                { type = "subtitle", text = L["Current spell"], cols = 24 },
-                { type = "separator", cols = 24 },
-            }, buildHighlightSelectedConfigLayout()),
+            children = mergeLayouts(
+                buildSelectedItemLayout(sourceKind),
+                buildTtsSectionLayout(),
+                buildHighlightSectionLayout(sourceKind)
+            ),
         },
     }
 
@@ -577,43 +625,36 @@ local function buildFullHighlightLayout()
 end
 
 -- =========================================================
--- SECTION 10: 渲染入口
+-- SECTION 6: 渲染入口
 -- =========================================================
 
-local function renderTtsPage(container)
-    Grid.render(container, buildFullTtsLayout(), db, MODULE_KEY)
+local function bindStateRefresh(container, sourceKind)
+    local spec = getSourceSpec(sourceKind)
 
     local function refreshAll()
         Grid.refresh(container)
     end
 
-    VFlow.State.watch("trackedSkills", "OtherFeatures.TTS.Skills", refreshAll)
-    VFlow.State.watch("trackedUtilitySkills", "OtherFeatures.TTS.UtilitySkills", refreshAll)
-    VFlow.State.watch("trackedBuffs", "OtherFeatures.TTS.Buffs", refreshAll)
+    for _, stateKey in ipairs(spec.stateKeys) do
+        VFlow.State.watch(stateKey, "OtherFeatures." .. sourceKind .. "." .. stateKey, refreshAll)
+    end
 end
 
-local function renderHighlightPage(container)
-    Grid.render(container, buildFullHighlightLayout(), db, MODULE_KEY)
-
-    local function refreshAll()
-        Grid.refresh(container)
-    end
-
-    VFlow.State.watch("trackedSkills", "OtherFeatures.Highlight.Skills", refreshAll)
-    VFlow.State.watch("trackedUtilitySkills", "OtherFeatures.Highlight.UtilitySkills", refreshAll)
-    VFlow.State.watch("trackedBuffs", "OtherFeatures.Highlight.Buffs", refreshAll)
+local function renderEntityPage(container, sourceKind)
+    Grid.render(container, buildEntityPageLayout(sourceKind), db, MODULE_KEY)
+    bindStateRefresh(container, sourceKind)
 end
 
 local function renderContent(container, menuKey)
-    if menuKey == "other_tts" then
-        renderTtsPage(container)
-    elseif menuKey == "other_highlight" then
-        renderHighlightPage(container)
+    if menuKey == "other_skill" then
+        renderEntityPage(container, "skill")
+    elseif menuKey == "other_buff" then
+        renderEntityPage(container, "buff")
     end
 end
 
 -- =========================================================
--- SECTION 11: 公共接口
+-- SECTION 7: 公共接口
 -- =========================================================
 
 if not VFlow.Modules then

@@ -139,20 +139,10 @@ local function NormalizeOtherFeaturesHighlightSource(src)
     return "skill"
 end
 
---- 当前正在设置页选中的法术：以 highlightForm 为准（运行时编辑态）；其余法术读持久化的 highlightRules
 local function GetOtherFeaturesHighlightRule(spellID)
     if not spellID then return nil end
     local db = GetOtherFeaturesDB()
     if not db then return nil end
-    local form = db.highlightForm
-    local formSid = form and tonumber(form.spellId)
-    if formSid == spellID then
-        if not form.enabled then return nil end
-        return {
-            enabled = true,
-            source = NormalizeOtherFeaturesHighlightSource(form.source),
-        }
-    end
     local rules = db.highlightRules
     if not rules then return nil end
     local r = rules[spellID] or rules[tostring(spellID)]
@@ -1851,8 +1841,7 @@ end)
 VFlow.Store.watch("VFlow.OtherFeatures", "CooldownStyle_OtherHL", function(key, _)
     if not key then return end
     if key == "highlightRules" or key:find("^highlightRules%.")
-        or key == "highlightOnlyInCombat"
-        or key == "highlightForm" or key:find("^highlightForm%.") then
+        or key == "highlightOnlyInCombat" then
         C_Timer.After(0, RefreshAllOtherFeatureHighlights)
     end
 end)
