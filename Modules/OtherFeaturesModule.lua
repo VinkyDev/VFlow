@@ -56,15 +56,15 @@ local db = VFlow.getDB(MODULE_KEY, defaults)
 
 local MODE_ITEMS = {
     { L["Text-to-speech"], "text" },
-    { L["Custom sound"], "sound" },
+    { L["Custom sound"],   "sound" },
 }
 
 local CHANNEL_ITEMS = {
-    { L["Master"], "Master" },
-    { L["SFX"], "SFX" },
+    { L["Master"],   "Master" },
+    { L["SFX"],      "SFX" },
     { L["Ambience"], "Ambience" },
-    { L["Music"], "Music" },
-    { L["Dialog"], "Dialog" },
+    { L["Music"],    "Music" },
+    { L["Dialog"],   "Dialog" },
 }
 
 local PRIMARY_COLOR = { 0.2, 0.6, 1, 1 }
@@ -309,9 +309,9 @@ local function loadHighlightForm(spellID, sourceKind)
         spellId = tostring(spellID or ""),
         source = normalizedSource,
         enabled = storedRule
-        and storedRule.enabled == true
-        and storedRule.source == normalizedSource
-        or false,
+            and storedRule.enabled == true
+            and storedRule.source == normalizedSource
+            or false,
     }
     if sameHighlightForm(db.highlightForm, nextForm) then
         return
@@ -448,7 +448,8 @@ local SOURCE_SPECS = {
     skill = {
         menuKey = "other_skill",
         title = L["Skills"],
-        introText = L["Tracked spell or BUFF must be shown in {cooldown manager} first. {Scan Skills} or {Scan BUFFs} to refresh the list."],
+        introText = L
+        ["Tracked spell or BUFF must be shown in {cooldown manager} first. {Scan Skills} or {Scan BUFFs} to refresh the list."],
         emptyHint = "|cff888888点击上方技能图标后，可在下方同时配置该技能的自定义播报和自定义高亮。|r",
         highlightLabel = L["Highlight when skill ready"],
         dataSource = buildSkillIconRows,
@@ -457,7 +458,8 @@ local SOURCE_SPECS = {
     buff = {
         menuKey = "other_buff",
         title = L["BUFF"],
-        introText = L["Tracked spell or BUFF must be shown in {cooldown manager} first. {Scan Skills} or {Scan BUFFs} to refresh the list."],
+        introText = L
+        ["Tracked spell or BUFF must be shown in {cooldown manager} first. {Scan Skills} or {Scan BUFFs} to refresh the list."],
         emptyHint = "|cff888888点击上方BUFF图标后，可在下方同时配置该BUFF的自定义播报和自定义高亮。|r",
         highlightLabel = L["Highlight when BUFF active"],
         dataSource = buildBuffIconRows,
@@ -528,7 +530,7 @@ end
 
 local function buildTtsSectionLayout()
     return {
-        { type = "subtitle", text = L["Custom Announce"], cols = 24 },
+        { type = "subtitle",  text = L["Custom Announce"], cols = 24 },
         { type = "separator", cols = 24 },
         {
             type = "interactiveText",
@@ -599,7 +601,8 @@ local function buildTtsSectionLayout()
                         {
                             type = "description",
                             cols = 24,
-                            text = "|cff888888" .. L["Sound path example: Interface\\AddOns\\VFlow\\Sounds\\alert.ogg"] .. "|r",
+                            text = "|cff888888" ..
+                            L["Sound path example: Interface\\AddOns\\VFlow\\Sounds\\alert.ogg"] .. "|r",
                         },
                         {
                             type = "dropdown",
@@ -623,22 +626,22 @@ local function buildHighlightSectionLayout(sourceKind)
     local spec = getSourceSpec(sourceKind)
 
     return {
-        { type = "subtitle", text = L["Custom Highlight"], cols = 24 },
+        { type = "subtitle",  text = L["Custom Highlight"], cols = 24 },
         { type = "separator", cols = 24 },
-        {
-            type = "checkbox",
-            key = "highlightOnlyInCombat",
-            label = L["Highlight only in combat"],
-            cols = 24,
-        },
         {
             type = "checkbox",
             key = "highlightForm.enabled",
             label = spec.highlightLabel,
-            cols = 24,
+            cols = 12,
             onChange = function()
                 syncSelectedHighlightRule()
             end,
+        },
+        {
+            type = "checkbox",
+            key = "highlightOnlyInCombat",
+            label = L["Highlight only in combat"],
+            cols = 12,
         },
         {
             type = "description",
@@ -650,7 +653,7 @@ end
 
 local function buildSkillMaskSectionLayout()
     return {
-        { type = "subtitle", text = L["Buff overlay behavior"], cols = 24 },
+        { type = "subtitle",  text = L["Buff overlay behavior"], cols = 24 },
         { type = "separator", cols = 24 },
         {
             type = "checkbox",
@@ -664,7 +667,8 @@ local function buildSkillMaskSectionLayout()
         {
             type = "description",
             cols = 24,
-            text = "|cff888888" .. L["When enabled, this skill always keeps the cooldown swipe and timer on the spell itself."] .. "|r",
+            text = "|cff888888" ..
+            L["When enabled, this skill always keeps the cooldown swipe and timer on the spell itself."] .. "|r",
         },
         { type = "spacer", height = 10, cols = 24 },
     }
@@ -674,21 +678,21 @@ local function buildEntityPageLayout(sourceKind)
     local spec = getSourceSpec(sourceKind)
 
     local top = {
-        { type = "title", text = spec.title, cols = 24 },
-        { type = "spacer", height = 6, cols = 24 },
+        { type = "title",  text = spec.title, cols = 24 },
+        { type = "spacer", height = 6,        cols = 24 },
         {
             type = "interactiveText",
             cols = 24,
             text = spec.introText,
             links = getScanLinks(),
         },
-        { type = "spacer", height = 6, cols = 24 },
+        { type = "spacer",    height = 6, cols = 24 },
         {
             type = "description",
             cols = 24,
             text = "|cff3399ff■|r 当前选中  |cff33dd55■|r 已有播报或高亮配置",
         },
-        { type = "spacer", height = 8, cols = 24 },
+        { type = "spacer",    height = 8, cols = 24 },
         { type = "separator", cols = 24 },
         {
             type = "for",
@@ -756,13 +760,37 @@ end
 
 local function bindStateRefresh(container, sourceKind)
     local spec = getSourceSpec(sourceKind)
+    local ownerPrefix = "OtherFeatures." .. sourceKind .. "." .. tostring(container)
+    local watchEntries = {}
 
+    local pendingInitialCallbacks = #spec.stateKeys
     local function refreshAll()
-        Grid.refresh(container)
+        if pendingInitialCallbacks > 0 then
+            pendingInitialCallbacks = pendingInitialCallbacks - 1
+            return
+        end
+        if container and container:GetParent() then
+            Grid.refresh(container)
+        end
     end
 
     for _, stateKey in ipairs(spec.stateKeys) do
-        VFlow.State.watch(stateKey, "OtherFeatures." .. sourceKind .. "." .. stateKey, refreshAll)
+        local owner = ownerPrefix .. "." .. stateKey
+        watchEntries[#watchEntries + 1] = {
+            stateKey = stateKey,
+            owner = owner,
+        }
+        VFlow.State.watch(stateKey, owner, refreshAll)
+    end
+
+    local previousDispose = container._vfOnDispose
+    container._vfOnDispose = function(self)
+        for _, entry in ipairs(watchEntries) do
+            VFlow.State.unwatch(entry.stateKey, entry.owner)
+        end
+        if previousDispose then
+            previousDispose(self)
+        end
     end
 end
 

@@ -250,6 +250,33 @@ local showContent
 local showAddGroupInput
 local loadCustomGroups
 
+local function disposeRightPanelContent()
+    if not rightPanel or not rightPanel.content then
+        return
+    end
+
+    local content = rightPanel.content
+    rightPanel.content = nil
+
+    if content._vfOnDispose then
+        local ok, err = pcall(content._vfOnDispose, content)
+        if not ok then
+            print("|cffff0000VFlow错误:|r 右侧内容释放失败:", err)
+        end
+    end
+
+    if VFlow.Grid and VFlow.Grid.clear then
+        local ok, err = pcall(VFlow.Grid.clear, content)
+        if not ok then
+            print("|cffff0000VFlow错误:|r 右侧布局清理失败:", err)
+        end
+    end
+
+    content:Hide()
+    content:ClearAllPoints()
+    content:SetParent(nil)
+end
+
 local STATIC_SKILL_CHILDREN = {
     { key = "skill_important", label = L["Important Skill Group"], module = "Skills" },
     { key = "skill_efficiency", label = L["Efficiency Skill Group"], module = "Skills" },
@@ -814,11 +841,8 @@ showContent = function(menuKey, moduleName)
     currentMenuKey = menuKey
     updateMenuSelection()
 
-    -- 清空右侧内容
-    if rightPanel.content then
-        rightPanel.content:Hide()
-        rightPanel.content:SetParent(nil)
-    end
+    -- 切页前先完整释放旧页面，避免 Grid / watch 回调残留
+    disposeRightPanelContent()
 
     -- 创建内容容器
     local content = CreateFrame("Frame", nil, rightPanel)
