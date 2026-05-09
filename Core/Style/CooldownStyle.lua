@@ -1369,7 +1369,9 @@ if Profiler and Profiler.registerScope then
 end
 
 local function RequestInitialViewerRefresh()
-    RequestSkillRefresh(RefreshBus.PRESETS.SKILL_FULL)
+    RequestSkillRefresh(RefreshBus.PRESETS.SKILL_FULL, {
+        flags = { forceDependentLayout = true },
+    })
 
     local get = VFlow and VFlow.Store and VFlow.Store.getModuleRef
     local buffsDB = get and get("VFlow.Buffs")
