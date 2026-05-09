@@ -7,6 +7,8 @@ local VFlow = _G.VFlow
 if not VFlow then return end
 
 local MODULE_KEY = "VFlow.Skills"
+
+if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MODULE_KEY) then return end
 local StyleLayout = VFlow.StyleLayout
 local Profiler = VFlow.Profiler
 local MasqueSupport = VFlow.MasqueSupport

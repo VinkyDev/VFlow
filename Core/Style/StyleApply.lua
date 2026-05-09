@@ -13,6 +13,9 @@ VFlow.StyleApply = StyleApply
 
 local abs = math.abs
 local Profiler = VFlow.Profiler
+local function isModuleRuntimeEnabled(moduleKey)
+    return not VFlow.isModuleEnabled or VFlow.isModuleEnabled(moduleKey)
+end
 
 -- =========================================================
 -- SECTION 2: 工具函数
@@ -64,12 +67,36 @@ local BLIZZARD_ICON_OVERLAY_ATLAS = "UI-HUD-CoolDownManager-IconOverlay"
 local BLIZZARD_ICON_MASK_ATLAS = "UI-HUD-CoolDownManager-Mask"
 local BLIZZARD_ICON_OVERLAY_TEXTURE_FILE_ID = 6707800
 
+local function ResetStyleCache()
+    styleCache.zoomIcons = false
+    styleCache.zoomAmount = 0.08
+    styleCache.hideIconOverlay = false
+    styleCache.hideIconOverlayTexture = false
+    styleCache.hideDebuffBorder = false
+    styleCache.hidePandemicIndicator = false
+    styleCache.hideCooldownBling = false
+    styleCache.hideIconGCD = false
+    styleCache.borderFile = nil
+    styleCache.borderSize = 1
+    styleCache.borderOffsetX = 0
+    styleCache.borderOffsetY = 0
+    styleCache.borderColor = nil
+end
+
 local function RefreshStyleCache()
     if lastRefreshedVersion == styleCacheVersion then return end
     lastRefreshedVersion = styleCacheVersion
 
+    if not isModuleRuntimeEnabled("VFlow.StyleIcon") then
+        ResetStyleCache()
+        return
+    end
+
     local db = VFlow.Store and VFlow.Store.getModuleRef and VFlow.Store.getModuleRef("VFlow.StyleIcon")
-    if not db then return end
+    if not db then
+        ResetStyleCache()
+        return
+    end
 
     styleCache.zoomIcons              = db.zoomIcons or false
     styleCache.zoomAmount             = db.zoomAmount or 0.08
@@ -317,6 +344,9 @@ end
 
 --- StyleIcon.hideIconGCD
 local function StyleIconWantsHideGcdSwipe()
+    if not isModuleRuntimeEnabled("VFlow.StyleIcon") then
+        return false
+    end
     local db = VFlow.Store and VFlow.Store.getModuleRef and VFlow.Store.getModuleRef("VFlow.StyleIcon")
     return db and db.hideIconGCD == true
 end
@@ -324,6 +354,9 @@ end
 local SPELL_ONLY_GCD_SPELL_ID = 61304
 
 local function GetOtherFeaturesDB()
+    if not isModuleRuntimeEnabled("VFlow.OtherFeatures") then
+        return nil
+    end
     local get = VFlow.Store and VFlow.Store.getModuleRef
     if not get then
         return nil
@@ -911,6 +944,9 @@ local hideGcdFlushFrame = CreateFrame("Frame")
 hideGcdFlushFrame:Hide()
 
 local function HideIconGcdOptionEnabled()
+    if not isModuleRuntimeEnabled("VFlow.StyleIcon") then
+        return false
+    end
     local db = VFlow.Store and VFlow.Store.getModuleRef and VFlow.Store.getModuleRef("VFlow.StyleIcon")
     return db and db.hideIconGCD == true
 end
@@ -1241,6 +1277,14 @@ function StyleApply.RefreshActiveCustomGlows()
 end
 
 function StyleApply.RefreshGlowCache()
+    if not isModuleRuntimeEnabled("VFlow.StyleGlow") then
+        glowCache.type = "proc"
+        glowCache.useCustomColor = false
+        glowCache.color = nil
+        StyleApply.RefreshActiveGlows()
+        StyleApply.RefreshActiveCustomGlows()
+        return
+    end
     local db = VFlow.Store and VFlow.Store.getModuleRef and VFlow.Store.getModuleRef("VFlow.StyleGlow")
     if db then
         glowCache.type = db.glowType or "proc"
@@ -1368,16 +1412,20 @@ end
 -- SECTION 12: Store 监听与初始化
 -- =========================================================
 
-VFlow.Store.watch("VFlow.StyleGlow", "StyleApply_Glow", function()
-    StyleApply.RefreshGlowCache()
-end)
-
-VFlow.Store.watch("VFlow.StyleIcon", "StyleApply_Style", function()
-    StyleApply.InvalidateStyleCache()
-end)
-
-VFlow.on("PLAYER_LOGIN", "StyleApply_Glow", function()
-    C_Timer.After(1, function()
-        StyleApply.InitializeGlow()
+if isModuleRuntimeEnabled("VFlow.StyleGlow") then
+    VFlow.Store.watch("VFlow.StyleGlow", "StyleApply_Glow", function()
+        StyleApply.RefreshGlowCache()
     end)
-end)
+
+    VFlow.on("PLAYER_LOGIN", "StyleApply_Glow", function()
+        C_Timer.After(1, function()
+            StyleApply.InitializeGlow()
+        end)
+    end)
+end
+
+if isModuleRuntimeEnabled("VFlow.StyleIcon") then
+    VFlow.Store.watch("VFlow.StyleIcon", "StyleApply_Style", function()
+        StyleApply.InvalidateStyleCache()
+    end)
+end

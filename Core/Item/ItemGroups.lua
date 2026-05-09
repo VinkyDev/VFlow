@@ -8,6 +8,8 @@ if not VFlow then return end
 
 local MODULE_KEY = "VFlow.Items"
 
+if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MODULE_KEY) then return end
+
 -- =========================================================
 -- SECTION 2: 模块状态与刷新调度
 -- =========================================================

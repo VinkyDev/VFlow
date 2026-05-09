@@ -7,6 +7,8 @@ local VFlow = _G.VFlow
 if not VFlow then return end
 
 local MODULE_KEY = "VFlow.Resources"
+
+if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MODULE_KEY) then return end
 local EVENT_OWNER = "Core.ResourceBars.Runtime"
 local Utils = VFlow.Utils
 local CR = VFlow.ClassResourceMap

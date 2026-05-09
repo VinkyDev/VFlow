@@ -13,11 +13,21 @@ local Profiler = VFlow.Profiler
 -- =========================================================
 
 local TARGETS = {
-    EssentialCooldownViewer = { menuKey = "skill_important" },
-    UtilityCooldownViewer = { menuKey = "skill_efficiency" },
-    BuffIconCooldownViewer = { menuKey = "buff_monitor" },
-    BuffBarCooldownViewer = { menuKey = "buff_bar" },
+    EssentialCooldownViewer = { menuKey = "skill_important", moduleKey = "VFlow.Skills" },
+    UtilityCooldownViewer = { menuKey = "skill_efficiency", moduleKey = "VFlow.Skills" },
+    BuffIconCooldownViewer = { menuKey = "buff_monitor", moduleKey = "VFlow.Buffs" },
+    BuffBarCooldownViewer = { menuKey = "buff_bar", moduleKey = "VFlow.BuffBar" },
 }
+
+local function IsTargetEnabled(target)
+    if not target then
+        return false
+    end
+    if not target.moduleKey then
+        return true
+    end
+    return not VFlow.isModuleEnabled or VFlow.isModuleEnabled(target.moduleKey)
+end
 
 local function ResolveButtonTemplate()
     if _G.EditModeSystemSettingsDialogExtraButtonTemplate then
@@ -116,7 +126,7 @@ local function UpdateDialogButton(dialog, systemFrame)
     local button = dialog._vfOpenMainUIButton
     local buttonParent = dialog.Buttons or dialog
 
-    if not target then
+    if not target or not IsTargetEnabled(target) then
         if button then
             button:Hide()
         end
@@ -187,6 +197,10 @@ end
 local function HideNonCheckboxSettings(dialog, systemFrame)
     local frameName = systemFrame and systemFrame.GetName and systemFrame:GetName()
     if not TARGET_FRAME_NAMES[frameName] then return end
+    local target = frameName and TARGETS[frameName]
+    if not IsTargetEnabled(target) then
+        return
+    end
     local container = dialog.Settings
     if not container then return end
     for _, child in ipairs({ container:GetChildren() }) do

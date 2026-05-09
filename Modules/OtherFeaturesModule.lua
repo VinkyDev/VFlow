@@ -15,6 +15,8 @@ if not VFlow then return end
 local L = VFlow.L
 
 local MODULE_KEY = "VFlow.OtherFeatures"
+
+if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MODULE_KEY) then return end
 local Grid = VFlow.Grid
 local Utils = VFlow.Utils
 local mergeLayouts = Utils.mergeLayouts

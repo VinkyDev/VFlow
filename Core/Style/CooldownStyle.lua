@@ -37,6 +37,9 @@ local viewerPhaseRegistered = false
 local MAX_BUFF_READY_RETRIES = 20
 local MAX_BUFFBAR_READY_RETRIES = 20
 local skillRefreshPending = false
+local function isModuleRuntimeEnabled(moduleKey)
+    return not VFlow.isModuleEnabled or VFlow.isModuleEnabled(moduleKey)
+end
 
 -- =========================================================
 -- SECTION 2: 样式版本与 DB 缓存
@@ -64,17 +67,23 @@ local _cachedBuffBarDB
 local function InvalidateDBCache()
     local store = VFlow and VFlow.Store
     if not store or not store.getModuleRef then return end
-    _cachedBuffsDB  = store.getModuleRef("VFlow.Buffs")
-    _cachedBuffBarDB = store.getModuleRef("VFlow.BuffBar")
+    _cachedBuffsDB = isModuleRuntimeEnabled("VFlow.Buffs") and store.getModuleRef("VFlow.Buffs") or nil
+    _cachedBuffBarDB = isModuleRuntimeEnabled("VFlow.BuffBar") and store.getModuleRef("VFlow.BuffBar") or nil
 end
 
 local function GetBuffViewerAndConfig()
+    if not isModuleRuntimeEnabled("VFlow.Buffs") then
+        return nil, nil
+    end
     local viewer = _G.BuffIconCooldownViewer
     local cfg = _cachedBuffsDB and _cachedBuffsDB.buffMonitor
     return viewer, cfg
 end
 
 local function GetBuffBarViewerAndConfig()
+    if not isModuleRuntimeEnabled("VFlow.BuffBar") then
+        return nil, nil
+    end
     local viewer = _G.BuffBarCooldownViewer
     return viewer, _cachedBuffBarDB
 end
@@ -139,6 +148,9 @@ end
 local OTHER_FEATURES_KEY = "VFlow.OtherFeatures"
 
 local function GetOtherFeaturesDB()
+    if not isModuleRuntimeEnabled(OTHER_FEATURES_KEY) then
+        return nil
+    end
     local store = VFlow.Store
     if not store or not store.getModuleRef then return nil end
     return store.getModuleRef(OTHER_FEATURES_KEY)
@@ -1489,104 +1501,111 @@ SetupHooks = function()
         })
     end
 
-    registerSkillViewer(QK_ESSENTIAL, false)
-    registerSkillViewer(QK_UTILITY, true)
-
-    ViewerRuntime.register({
-        name = QK_BUFF_ICONS,
-        lockViewerScale = true,
-        lockFrameScale = true,
-        invalidateCollectIcons = true,
-        hookRefreshLayout = true,
-        hookRefreshData = true,
-        hookUpdateLayout = true,
-        requestMap = {
-            manual = RefreshBus.PRESETS.BUFF_FULL,
-            refreshLayout = RefreshBus.PRESETS.BUFF_FULL,
-            refreshData = RefreshBus.PRESETS.BUFF_FULL,
-            updateLayout = RefreshBus.PRESETS.BUFF_FULL,
-            onShow = RefreshBus.PRESETS.BUFF_FULL,
-            acquire = RefreshBus.PRESETS.BUFF_FULL,
-        },
-        requestHandler = function(scopes, viewers, opts)
-            RequestNamedViewers(scopes, viewers, opts)
-        end,
-        onSetup = function(viewer)
-            enforceScaleOnViewer(viewer)
-        end,
-        onAcquireFrame = function(_, frame)
-            if frame.OnCooldownIDSet and not frame._vf_cdIDHooked then
-                frame._vf_cdIDHooked = true
-                hooksecurefunc(frame, "OnCooldownIDSet", function(self)
-                    StyleLayout.InvalidateCooldownViewerInfoCache(self)
-                    queueBuffIconAfterHighlight(self)
-                end)
-            end
-            if frame.OnActiveStateChanged and not frame._vf_activeStateHooked then
-                frame._vf_activeStateHooked = true
-                hooksecurefunc(frame, "OnActiveStateChanged", function(self)
-                    if not self then return end
-                    self._vf_cdmKind = "buff"
-                    TouchCustomHighlight(self)
-                    RequestBuffRefresh()
-                end)
-            end
-            frame._vf_cdmKind = "buff"
-            TouchCustomHighlight(frame)
-        end,
-    })
-
-    ViewerRuntime.register({
-        name = QK_BUFF_BAR,
-        lockViewerScale = false,
-        lockFrameScale = true,
-        invalidateCollectIcons = false,
-        hookRefreshLayout = false,
-        hookRefreshData = false,
-        hookUpdateLayout = false,
-        hookPoolRelease = true,
-        requestMap = {
-            manual = RefreshBus.PRESETS.BUFFBAR_FULL,
-            onShow = RefreshBus.PRESETS.BUFFBAR_FULL,
-            acquire = RefreshBus.PRESETS.BUFFBAR_FULL,
-            poolRelease = RefreshBus.PRESETS.BUFFBAR_FULL,
-        },
-        requestHandler = function(scopes, viewers, opts)
-            RequestNamedViewers(scopes, viewers, opts)
-        end,
-        onAcquireFrame = function(_, frame)
-            local viewer, cfg = GetBuffBarViewerAndConfig()
-            if not viewer or not cfg then return end
-
-            if frame.SetScale then frame:SetScale(1) end
-
-            if frame.OnActiveStateChanged and not frame._vf_buffBarActiveStateHooked then
-                frame._vf_buffBarActiveStateHooked = true
-                frame._vf_barLastShown = frame.IsShown and frame:IsShown() or false
-                hooksecurefunc(frame, "OnActiveStateChanged", function(self)
-                    if not self then return end
-                    local shown = self.IsShown and self:IsShown() or false
-                    if self._vf_barLastShown == shown then
-                        return
-                    end
-                    self._vf_barLastShown = shown
-                    RequestBuffBarRefresh()
-                end)
-            end
-
-            frame._vf_barStyled = false
-            frame._vf_barLastShown = frame.IsShown and frame:IsShown() or false
-            ApplyBuffBarFrameStyle(frame, cfg, ResolveBuffBarWidth(cfg), cfg.barHeight or 20)
-        end,
-    })
-
-    if CooldownViewerBuffIconItemMixin and CooldownViewerBuffIconItemMixin.OnCooldownIDSet then
-        hooksecurefunc(CooldownViewerBuffIconItemMixin, "OnCooldownIDSet", function(frame)
-            if frame then StyleLayout.InvalidateCooldownViewerInfoCache(frame) end
-            queueBuffIconAfterHighlight(frame)
-        end)
+    if isModuleRuntimeEnabled("VFlow.Skills") then
+        registerSkillViewer(QK_ESSENTIAL, false)
+        registerSkillViewer(QK_UTILITY, true)
     end
-    if EventRegistry then
+
+    if isModuleRuntimeEnabled("VFlow.Buffs") then
+        ViewerRuntime.register({
+            name = QK_BUFF_ICONS,
+            lockViewerScale = true,
+            lockFrameScale = true,
+            invalidateCollectIcons = true,
+            hookRefreshLayout = true,
+            hookRefreshData = true,
+            hookUpdateLayout = true,
+            requestMap = {
+                manual = RefreshBus.PRESETS.BUFF_FULL,
+                refreshLayout = RefreshBus.PRESETS.BUFF_FULL,
+                refreshData = RefreshBus.PRESETS.BUFF_FULL,
+                updateLayout = RefreshBus.PRESETS.BUFF_FULL,
+                onShow = RefreshBus.PRESETS.BUFF_FULL,
+                acquire = RefreshBus.PRESETS.BUFF_FULL,
+            },
+            requestHandler = function(scopes, viewers, opts)
+                RequestNamedViewers(scopes, viewers, opts)
+            end,
+            onSetup = function(viewer)
+                enforceScaleOnViewer(viewer)
+            end,
+            onAcquireFrame = function(_, frame)
+                if frame.OnCooldownIDSet and not frame._vf_cdIDHooked then
+                    frame._vf_cdIDHooked = true
+                    hooksecurefunc(frame, "OnCooldownIDSet", function(self)
+                        StyleLayout.InvalidateCooldownViewerInfoCache(self)
+                        queueBuffIconAfterHighlight(self)
+                    end)
+                end
+                if frame.OnActiveStateChanged and not frame._vf_activeStateHooked then
+                    frame._vf_activeStateHooked = true
+                    hooksecurefunc(frame, "OnActiveStateChanged", function(self)
+                        if not self then return end
+                        self._vf_cdmKind = "buff"
+                        TouchCustomHighlight(self)
+                        RequestBuffRefresh()
+                    end)
+                end
+                frame._vf_cdmKind = "buff"
+                TouchCustomHighlight(frame)
+            end,
+        })
+
+        if CooldownViewerBuffIconItemMixin and CooldownViewerBuffIconItemMixin.OnCooldownIDSet then
+            hooksecurefunc(CooldownViewerBuffIconItemMixin, "OnCooldownIDSet", function(frame)
+                if frame then StyleLayout.InvalidateCooldownViewerInfoCache(frame) end
+                queueBuffIconAfterHighlight(frame)
+            end)
+        end
+    end
+
+    if isModuleRuntimeEnabled("VFlow.BuffBar") then
+        ViewerRuntime.register({
+            name = QK_BUFF_BAR,
+            lockViewerScale = false,
+            lockFrameScale = true,
+            invalidateCollectIcons = false,
+            hookRefreshLayout = false,
+            hookRefreshData = false,
+            hookUpdateLayout = false,
+            hookPoolRelease = true,
+            requestMap = {
+                manual = RefreshBus.PRESETS.BUFFBAR_FULL,
+                onShow = RefreshBus.PRESETS.BUFFBAR_FULL,
+                acquire = RefreshBus.PRESETS.BUFFBAR_FULL,
+                poolRelease = RefreshBus.PRESETS.BUFFBAR_FULL,
+            },
+            requestHandler = function(scopes, viewers, opts)
+                RequestNamedViewers(scopes, viewers, opts)
+            end,
+            onAcquireFrame = function(_, frame)
+                local viewer, cfg = GetBuffBarViewerAndConfig()
+                if not viewer or not cfg then return end
+
+                if frame.SetScale then frame:SetScale(1) end
+
+                if frame.OnActiveStateChanged and not frame._vf_buffBarActiveStateHooked then
+                    frame._vf_buffBarActiveStateHooked = true
+                    frame._vf_barLastShown = frame.IsShown and frame:IsShown() or false
+                    hooksecurefunc(frame, "OnActiveStateChanged", function(self)
+                        if not self then return end
+                        local shown = self.IsShown and self:IsShown() or false
+                        if self._vf_barLastShown == shown then
+                            return
+                        end
+                        self._vf_barLastShown = shown
+                        RequestBuffBarRefresh()
+                    end)
+                end
+
+                frame._vf_barStyled = false
+                frame._vf_barLastShown = frame.IsShown and frame:IsShown() or false
+                ApplyBuffBarFrameStyle(frame, cfg, ResolveBuffBarWidth(cfg), cfg.barHeight or 20)
+            end,
+        })
+    end
+
+    if isModuleRuntimeEnabled("VFlow.Skills") and EventRegistry then
         EventRegistry:RegisterCallback("CooldownViewerSettings.OnDataChanged", function()
             RequestDelayedSkillRefresh(0.2, RefreshBus.PRESETS.SKILL_FULL)
         end)
@@ -1632,83 +1651,95 @@ local function IsSkillGroupMapConfigKey(key)
         or key:find("%.hideInCooldownManager$")
 end
 
-VFlow.Store.watch("VFlow.Skills", "CooldownStyle_Skills", function(key, value)
-    if key:find("^customGroups%.%d+%.config%.")
-        and (key:find("%.x$") or key:find("%.y$")
-            or key:find("%.anchorFrame$") or key:find("%.relativePoint$")
-            or key:find("%.playerAnchorPosition$")) then
-        local groupIndex = tonumber(key:match("^customGroups%.(%d+)%."))
-        RequestSkillRefresh(RefreshBus.SCOPES.SKILL_GROUP_LAYOUT, {
-            groupIndex = groupIndex,
-            flags = { reanchorOnly = true },
-        })
-        return
-    end
-    if IsSkillStyleConfigKey(key) then
+if isModuleRuntimeEnabled("VFlow.Skills") then
+    VFlow.Store.watch("VFlow.Skills", "CooldownStyle_Skills", function(key, value)
+        if key:find("^customGroups%.%d+%.config%.")
+            and (key:find("%.x$") or key:find("%.y$")
+                or key:find("%.anchorFrame$") or key:find("%.relativePoint$")
+                or key:find("%.playerAnchorPosition$")) then
+            local groupIndex = tonumber(key:match("^customGroups%.(%d+)%."))
+            RequestSkillRefresh(RefreshBus.SCOPES.SKILL_GROUP_LAYOUT, {
+                groupIndex = groupIndex,
+                flags = { reanchorOnly = true },
+            })
+            return
+        end
+        if IsSkillStyleConfigKey(key) then
+            BumpButtonStyleVersion()
+            if SkillStylePass and SkillStylePass.Invalidate then
+                SkillStylePass.Invalidate()
+            end
+            RequestSkillRefresh(RefreshBus.PRESETS.SKILL_STYLE)
+            return
+        end
+
+        if IsSkillGroupMapConfigKey(key) then
+            RequestSkillRefresh(RefreshBus.PRESETS.SKILL_GROUP_MAP)
+            return
+        end
+
+        RequestSkillRefresh(RefreshBus.PRESETS.SKILL_LAYOUT)
+    end)
+end
+
+if isModuleRuntimeEnabled("VFlow.Buffs") then
+    VFlow.Store.watch("VFlow.Buffs", "CooldownStyle_Buffs", function(key, value)
+        InvalidateDBCache()
+        if key:find("%.x$") or key:find("%.y$")
+            or key:find("%.anchorFrame$") or key:find("%.relativePoint$") or key:find("%.playerAnchorPosition$") then
+            return
+        end
         BumpButtonStyleVersion()
+        if ViewerRefreshQueue then ViewerRefreshQueue.bumpVersion() end
+        RequestBuffRefresh()
+    end)
+end
+
+if isModuleRuntimeEnabled("VFlow.BuffBar") then
+    VFlow.Store.watch("VFlow.BuffBar", "CooldownStyle_BuffBar", function(key, value)
+        InvalidateDBCache()
+        BumpButtonStyleVersion()
+        BumpBuffBarStyleVersion()
+        if ViewerRefreshQueue then ViewerRefreshQueue.bumpVersion() end
+        RequestBuffBarRefresh()
+    end)
+end
+
+if isModuleRuntimeEnabled("VFlow.CustomMonitor") then
+    VFlow.Store.watch("VFlow.CustomMonitor", "CooldownStyle_CustomMonitor", function(key, value)
+        if key:find("%.hideInCooldownManager$") then
+            RequestSkillRefresh(RefreshBus.PRESETS.SKILL_LAYOUT)
+        end
+    end)
+end
+
+if isModuleRuntimeEnabled("VFlow.OtherFeatures") then
+    VFlow.Store.watch("VFlow.OtherFeatures", "CooldownStyle_OtherHL", function(key, _)
+        if not key then return end
+        if key == "skillRules" or key:find("^skillRules%.") then
+            BumpButtonStyleVersion()
+            RequestSkillRefresh({
+                RefreshBus.SCOPES.SKILL_STYLE,
+                RefreshBus.SCOPES.HIGHLIGHT,
+            })
+        end
+        if key == "highlightRules" or key:find("^highlightRules%.")
+            or key == "highlightOnlyInCombat" then
+            RequestSkillRefresh(RefreshBus.PRESETS.SKILL_HIGHLIGHT, { immediate = false })
+            C_Timer.After(0, RefreshAllOtherFeatureHighlights)
+        end
+    end)
+end
+
+if isModuleRuntimeEnabled("VFlow.StyleIcon") then
+    VFlow.Store.watch("VFlow.StyleIcon", "CooldownStyle_StyleIcon", function(key, value)
+        BumpButtonStyleVersion()
+        BumpBuffBarStyleVersion()
         if SkillStylePass and SkillStylePass.Invalidate then
             SkillStylePass.Invalidate()
         end
         RequestSkillRefresh(RefreshBus.PRESETS.SKILL_STYLE)
-        return
-    end
-
-    if IsSkillGroupMapConfigKey(key) then
-        RequestSkillRefresh(RefreshBus.PRESETS.SKILL_GROUP_MAP)
-        return
-    end
-
-    RequestSkillRefresh(RefreshBus.PRESETS.SKILL_LAYOUT)
-end)
-
-VFlow.Store.watch("VFlow.Buffs", "CooldownStyle_Buffs", function(key, value)
-    InvalidateDBCache()
-    if key:find("%.x$") or key:find("%.y$")
-        or key:find("%.anchorFrame$") or key:find("%.relativePoint$") or key:find("%.playerAnchorPosition$") then
-        return
-    end
-    BumpButtonStyleVersion()
-    if ViewerRefreshQueue then ViewerRefreshQueue.bumpVersion() end
-    RequestBuffRefresh()
-end)
-
-VFlow.Store.watch("VFlow.BuffBar", "CooldownStyle_BuffBar", function(key, value)
-    InvalidateDBCache()
-    BumpButtonStyleVersion()
-    BumpBuffBarStyleVersion()
-    if ViewerRefreshQueue then ViewerRefreshQueue.bumpVersion() end
-    RequestBuffBarRefresh()
-end)
-
-VFlow.Store.watch("VFlow.CustomMonitor", "CooldownStyle_CustomMonitor", function(key, value)
-    if key:find("%.hideInCooldownManager$") then
-        RequestSkillRefresh(RefreshBus.PRESETS.SKILL_LAYOUT)
-    end
-end)
-
-VFlow.Store.watch("VFlow.OtherFeatures", "CooldownStyle_OtherHL", function(key, _)
-    if not key then return end
-    if key == "skillRules" or key:find("^skillRules%.") then
-        BumpButtonStyleVersion()
-        RequestSkillRefresh({
-            RefreshBus.SCOPES.SKILL_STYLE,
-            RefreshBus.SCOPES.HIGHLIGHT,
-        })
-    end
-    if key == "highlightRules" or key:find("^highlightRules%.")
-        or key == "highlightOnlyInCombat" then
-        RequestSkillRefresh(RefreshBus.PRESETS.SKILL_HIGHLIGHT, { immediate = false })
-        C_Timer.After(0, RefreshAllOtherFeatureHighlights)
-    end
-end)
-
-VFlow.Store.watch("VFlow.StyleIcon", "CooldownStyle_StyleIcon", function(key, value)
-    BumpButtonStyleVersion()
-    BumpBuffBarStyleVersion()
-    if SkillStylePass and SkillStylePass.Invalidate then
-        SkillStylePass.Invalidate()
-    end
-    RequestSkillRefresh(RefreshBus.PRESETS.SKILL_STYLE)
-    RequestBuffRefresh()
-    RequestBuffBarRefresh()
-end)
+        RequestBuffRefresh()
+        RequestBuffBarRefresh()
+    end)
+end

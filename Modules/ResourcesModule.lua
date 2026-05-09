@@ -10,6 +10,8 @@ local L = VFlow.L
 
 local MODULE_KEY = "VFlow.Resources"
 
+if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MODULE_KEY) then return end
+
 VFlow.registerModule(MODULE_KEY, {
     name = L["Resource bar"],
     description = L["Resource module description"],
@@ -772,8 +774,8 @@ local function renderContent(container, menuKey)
     syncModuleDefaults()
 
     local panel = CreateFrame("Frame", nil, container)
-    panel:SetPoint("TOPLEFT", 8, -6)
-    panel:SetPoint("BOTTOMRIGHT", container, "BOTTOMRIGHT", -8, 8)
+    panel:SetPoint("TOPLEFT", 0, 0)
+    panel:SetPoint("BOTTOMRIGHT", container, "BOTTOMRIGHT", 0, 0)
 
     if menuKey == "resource_styles" then
         resourceStylesHost = panel

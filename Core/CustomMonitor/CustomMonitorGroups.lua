@@ -9,6 +9,8 @@ if not VFlow then return end
 local Profiler = VFlow.Profiler
 
 local MODULE_KEY = "VFlow.CustomMonitor"
+
+if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MODULE_KEY) then return end
 local PP = VFlow.PixelPerfect  -- 完美像素工具
 local Utils = VFlow.Utils
 

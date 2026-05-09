@@ -16,6 +16,8 @@ local L = VFlow.L
 
 local MODULE_KEY = "VFlow.Items"
 
+if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MODULE_KEY) then return end
+
 VFlow.registerModule(MODULE_KEY, {
     name = L["Extra CD Monitor"],
     description = L["Item and extra cooldown tracking"],

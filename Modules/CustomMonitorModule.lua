@@ -15,6 +15,8 @@ local L = VFlow.L
 
 local MODULE_KEY = "VFlow.CustomMonitor"
 
+if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MODULE_KEY) then return end
+
 VFlow.registerModule(MODULE_KEY, {
     name = L["Graphic Monitor"],
     description = L["Skill cooldown/BUFF duration bar monitor"],
@@ -708,11 +710,14 @@ local function renderContent(container, menuKey)
     local Grid     = VFlow.Grid
 
     local title    = UI.title(container, isSkill and L["Skill Monitor"] or L["BUFF Monitor"])
-    title:SetPoint("TOPLEFT", 0, 0)
+    title:SetPoint("TOPLEFT", 10, -10)
+    title:SetPoint("TOPRIGHT", container, "TOPRIGHT", -10, -10)
+    title:Show()
+    if title.RefreshVisuals then title:RefreshVisuals() end
 
     local bodyFrame = CreateFrame("Frame", nil, container)
     bodyFrame:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -10)
-    bodyFrame:SetPoint("BOTTOMRIGHT", container, "BOTTOMRIGHT", 0, 0)
+    bodyFrame:SetPoint("BOTTOMRIGHT", container, "BOTTOMRIGHT", -10, 10)
 
     -- 左侧选择器面板（固定宽度，用 Grid 驱动）
     local SELECTOR_W = 200

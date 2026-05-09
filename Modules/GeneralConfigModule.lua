@@ -12,6 +12,8 @@ if not VFlow then return end
 local L = VFlow.L
 
 local MODULE_KEY = "VFlow.GeneralConfig"
+
+if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MODULE_KEY) then return end
 local EXPORT_PREFIX = "VFLOWCFG1:"
 local DEFAULT_PROFILE = "default"
 

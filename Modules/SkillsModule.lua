@@ -15,6 +15,8 @@ local L = VFlow.L
 
 local MODULE_KEY = "VFlow.Skills"
 
+if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MODULE_KEY) then return end
+
 VFlow.registerModule(MODULE_KEY, {
     name = L["Skill Monitor"],
     description = L["Skill cooldown tracking"],

@@ -9,6 +9,8 @@ if not VFlow then return end
 local Profiler = VFlow.Profiler
 
 local MODULE_KEY = "VFlow.OtherFeatures"
+
+if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MODULE_KEY) then return end
 local onCooldownViewerAlert
 
 -- =========================================================
