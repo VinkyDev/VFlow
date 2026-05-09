@@ -278,6 +278,22 @@ end
 -- SECTION 6: 分组布局
 -- =========================================================
 
+local function ResetGroupIconStyleState(icon, groupIdx)
+    if not icon then
+        return
+    end
+    if icon._vf_skillGroupOwner == groupIdx then
+        return
+    end
+
+    icon._vf_skillGroupOwner = groupIdx
+    icon._vf_btnStyleVer = nil
+    icon._vf_styleVer = nil
+    icon._vf_skillVisualVersion = nil
+    icon._vf_skillVisualFingerprint = nil
+    icon._vf_spellMaskKey = nil
+end
+
 local function LayoutSkillGroups(groupBuckets)
     local db = VFlow.getDB(MODULE_KEY)
     if not db or not db.customGroups then
@@ -378,6 +394,10 @@ local function LayoutSkillGroups(groupBuckets)
                             end
 
                             for colIdx, button in ipairs(rowIcons) do
+                                if button:GetParent() ~= container then
+                                    button:SetParent(container)
+                                end
+                                ResetGroupIconStyleState(button, groupIdx)
                                 if VFlow.StyleApply then
                                     VFlow.StyleApply.ApplyIconSize(button, wSnap, hSnap)
                                 end
@@ -428,6 +448,10 @@ local function LayoutSkillGroups(groupBuckets)
                             local startY = -(maxColH - colContentH) / 2
 
                             for colIdx, button in ipairs(rowIcons) do
+                                if button:GetParent() ~= container then
+                                    button:SetParent(container)
+                                end
+                                ResetGroupIconStyleState(button, groupIdx)
                                 if VFlow.StyleApply then
                                     VFlow.StyleApply.ApplyIconSize(button, w, h)
                                 end

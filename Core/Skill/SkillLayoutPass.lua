@@ -71,6 +71,10 @@ function SkillLayoutPass.LayoutViewer(viewModel)
     if not viewModel.hasItemCells then
         for _, icon in ipairs(mainVisible) do
             if not icon._vf_itemAppendFrame then
+                if icon._vf_skillGroupOwner ~= nil then
+                    icon._vf_skillGroupOwner = nil
+                    icon._vf_spellMaskKey = nil
+                end
                 icon._vf_btnStyleVer = nil
                 icon._vf_styleVer = nil
                 icon._vf_skillVisualVersion = nil
@@ -178,6 +182,17 @@ function SkillLayoutPass.LayoutViewer(viewModel)
         for colIndex, cell in ipairs(cells) do
             local button = cell.frame
             if button then
+                if button._vf_skillGroupOwner ~= nil then
+                    button._vf_skillGroupOwner = nil
+                    button._vf_spellMaskKey = nil
+                    button._vf_btnStyleVer = nil
+                    button._vf_styleVer = nil
+                    button._vf_skillVisualVersion = nil
+                    button._vf_skillVisualFingerprint = nil
+                end
+                if button:GetParent() ~= viewer then
+                    button:SetParent(viewer)
+                end
                 local width = cellWidth(cell, rowIndex)
                 local height = cellHeight(cell, rowIndex)
                 if width > rowMaxWidth then
