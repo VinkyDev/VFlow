@@ -11,22 +11,32 @@ local Utils = VFlow.Utils
 local StyleApply = VFlow.StyleApply
 local StyleLayout = VFlow.StyleLayout
 local MasqueSupport = VFlow.MasqueSupport
+local RefreshBus = VFlow.RefreshBus
+local ViewerRuntime = VFlow.ViewerRuntime
+local SkillViewModel = VFlow.SkillViewModel
+local SkillLayoutPass = VFlow.SkillLayoutPass
+local SkillGroupLayoutPass = VFlow.SkillGroupLayoutPass
+local SkillStylePass = VFlow.SkillStylePass
+local SkillPostPass = VFlow.SkillPostPass
 local PP = VFlow.PixelPerfect
 local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
 local abs = math.abs
 local Profiler = VFlow.Profiler
 local ViewerRefreshQueue = VFlow.ViewerRefreshQueue
-local QK_ESSENTIAL = ViewerRefreshQueue and ViewerRefreshQueue.KEY_ESSENTIAL or "EssentialCooldownViewer"
-local QK_UTILITY = ViewerRefreshQueue and ViewerRefreshQueue.KEY_UTILITY or "UtilityCooldownViewer"
-local QK_BUFF_ICONS = ViewerRefreshQueue and ViewerRefreshQueue.KEY_BUFF_ICONS or "BuffIconCooldownViewer"
-local QK_BUFF_BAR = ViewerRefreshQueue and ViewerRefreshQueue.KEY_BUFF_BAR or "BuffBarCooldownViewer"
+local QK_ESSENTIAL = "EssentialCooldownViewer"
+local QK_UTILITY = "UtilityCooldownViewer"
+local QK_BUFF_ICONS = "BuffIconCooldownViewer"
+local QK_BUFF_BAR = "BuffBarCooldownViewer"
+local DoBuffRefresh
 local RequestBuffRefresh
 local RequestBuffBarRefresh
 local DoBuffBarRefresh
 local IsViewerReady
 local customHLFlushOnUpdate
+local viewerPhaseRegistered = false
 local MAX_BUFF_READY_RETRIES = 20
 local MAX_BUFFBAR_READY_RETRIES = 20
+local skillRefreshPending = false
 
 -- =========================================================
 -- SECTION 2: 样式版本与 DB 缓存
@@ -421,11 +431,11 @@ local function QueueBuffBarRefresh(opt)
         viewer._vf_needsReRefresh = true
         return
     end
-    if ViewerRefreshQueue then
-        ViewerRefreshQueue.request(QK_BUFF_BAR, opt.immediate == true)
-    else
-        DoBuffBarRefresh(0)
+    if ViewerRuntime and ViewerRuntime.request then
+        ViewerRuntime.request(QK_BUFF_BAR, "manual", opt)
+        return
     end
+    RequestNamedViewers(RefreshBus.PRESETS.BUFFBAR_FULL, { QK_BUFF_BAR }, opt)
 end
 
 --- 一次性 hook：当配置隐藏某文本时，阻止系统 Show() 调用
@@ -773,6 +783,91 @@ end
 
 local _lastLayoutNotifyEssWidth, _lastLayoutNotifyUtilWidth
 
+local function GetSkillsDB()
+    local get = VFlow and VFlow.Store and VFlow.Store.getModuleRef
+    return get and get("VFlow.Skills")
+end
+
+local function ResolveSkillViewerAndConfig(viewerName)
+    local db = GetSkillsDB()
+    if not db then
+        return nil, nil
+    end
+    if viewerName == "EssentialCooldownViewer" and EssentialCooldownViewer then
+        return EssentialCooldownViewer, db.importantSkills
+    end
+    if viewerName == "UtilityCooldownViewer" and UtilityCooldownViewer then
+        return UtilityCooldownViewer, db.efficiencySkills
+    end
+    return nil, nil
+end
+
+local function MergeSkillGroupBuckets(target, source)
+    if not source then
+        return
+    end
+    for groupIndex, bucket in pairs(source) do
+        target[groupIndex] = target[groupIndex] or {}
+        local out = target[groupIndex]
+        for _, icon in ipairs(bucket) do
+            out[#out + 1] = icon
+        end
+    end
+end
+
+local function EnsureSkillViewModels(context)
+    context.skillViewModels = context.skillViewModels or {}
+    context.skillGroupBuckets = context.skillGroupBuckets or {}
+
+    for viewerName in pairs(context.dirtySkillViewers or {}) do
+        if not context.skillViewModels[viewerName] then
+            local viewer, cfg = ResolveSkillViewerAndConfig(viewerName)
+            local viewModel = SkillViewModel and SkillViewModel.BuildViewModel and SkillViewModel.BuildViewModel(viewer, cfg)
+            if viewModel then
+                context.skillViewModels[viewerName] = viewModel
+                MergeSkillGroupBuckets(context.skillGroupBuckets, viewModel.groupBuckets)
+            end
+        end
+    end
+end
+
+local function RunSkillDataPhase(context)
+    EnsureSkillViewModels(context)
+end
+
+local function RunSkillLayoutPhase(context)
+    EnsureSkillViewModels(context)
+    context.viewerLayoutResults = context.viewerLayoutResults or {}
+    wipe(context.viewerLayoutResults)
+
+    for viewerName in pairs(context.dirtySkillViewers or {}) do
+        local viewModel = context.skillViewModels and context.skillViewModels[viewerName]
+        local layoutResult = SkillLayoutPass and SkillLayoutPass.LayoutViewer and SkillLayoutPass.LayoutViewer(viewModel)
+        if layoutResult then
+            layoutResult.rowCells = viewModel.rowCells
+            context.viewerLayoutResults[#context.viewerLayoutResults + 1] = layoutResult
+        end
+    end
+end
+
+local function RunSkillGroupLayoutPhase(context)
+    if SkillGroupLayoutPass and SkillGroupLayoutPass.Layout then
+        SkillGroupLayoutPass.Layout(context)
+    end
+end
+
+local function RunSkillStylePhase(context)
+    if SkillStylePass and SkillStylePass.Apply then
+        SkillStylePass.Apply(context)
+    end
+end
+
+local function RunSkillCooldownOnlyPhase()
+    if SkillStylePass and SkillStylePass.RefreshCooldownOnly then
+        SkillStylePass.RefreshCooldownOnly()
+    end
+end
+
 local function ConsumeSkillViewerWidthChange(force)
     local ew = _G.EssentialCooldownViewer and _G.EssentialCooldownViewer:GetWidth() or 0
     local uw = _G.UtilityCooldownViewer and _G.UtilityCooldownViewer:GetWidth() or 0
@@ -804,338 +899,137 @@ local RefreshSkillViewer
 
 local function FinishSkillViewerRefresh(viewer)
     if not viewer then return end
-    viewer._vf_refreshing = false
-    NotifySkillViewerLayoutDependents()
-    if not viewer._vf_needsReRefresh then return end
+    viewer._vf_refreshing = nil
     viewer._vf_needsReRefresh = nil
-    if ViewerRefreshQueue then
-        local qk
-        if viewer == EssentialCooldownViewer then
-            qk = QK_ESSENTIAL
-        elseif viewer == UtilityCooldownViewer then
-            qk = QK_UTILITY
-        end
-        if qk then
-            ViewerRefreshQueue.request(qk, false)
-        end
-    else
-        local get = VFlow.Store and VFlow.Store.getModuleRef
-        local skillsDB = get and get("VFlow.Skills")
-        if viewer == EssentialCooldownViewer and skillsDB and skillsDB.importantSkills then
-            RefreshSkillViewer(viewer, skillsDB.importantSkills)
-        elseif viewer == UtilityCooldownViewer and skillsDB and skillsDB.efficiencySkills then
-            RefreshSkillViewer(viewer, skillsDB.efficiencySkills)
-        end
-    end
 end
 
 RefreshSkillViewer = function(viewer, cfg)
     if not viewer or not cfg then return end
-    if viewer._vf_refreshing then return end
-    viewer._vf_refreshing = true
-
-    local allIcons = StyleLayout.CollectIcons(viewer)
-
-    -- 分类图标：将自定义组的图标分离出去
-    local mainVisible, groupBuckets = {}, {}
-    if VFlow.SkillGroups and VFlow.SkillGroups.classifyIcons then
-        mainVisible, groupBuckets = VFlow.SkillGroups.classifyIcons(allIcons)
-        -- 过滤主viewer的可见图标
-        mainVisible = StyleLayout.FilterVisible(mainVisible)
-    else
-        -- 降级：所有图标都显示在主viewer
-        mainVisible = StyleLayout.FilterVisible(allIcons)
+    local context = {
+        dirtySkillViewers = { [viewer:GetName()] = true },
+        skillViewModels = {},
+        skillGroupBuckets = {},
+        viewerLayoutResults = {},
+    }
+    local viewModel = SkillViewModel and SkillViewModel.BuildViewModel and SkillViewModel.BuildViewModel(viewer, cfg)
+    if not viewModel then
+        return
     end
-
-    if VFlow.ItemGroups and VFlow.ItemGroups.processSkillViewerIcons then
-        mainVisible = select(1, VFlow.ItemGroups.processSkillViewerIcons(viewer, mainVisible))
+    context.skillViewModels[viewer:GetName()] = viewModel
+    context.skillGroupBuckets = viewModel.groupBuckets or {}
+    local layoutResult = SkillLayoutPass and SkillLayoutPass.LayoutViewer and SkillLayoutPass.LayoutViewer(viewModel)
+    if layoutResult then
+        layoutResult.rowCells = viewModel.rowCells
+        context.viewerLayoutResults[1] = layoutResult
     end
-
-    local appendOnly = false
-    if #mainVisible == 0 and VFlow.ItemGroups and VFlow.ItemGroups.viewerHasAppendEntries then
-        appendOnly = VFlow.ItemGroups.viewerHasAppendEntries(viewer)
+    RunSkillGroupLayoutPhase(context)
+    RunSkillStylePhase(context)
+    if SkillPostPass and SkillPostPass.RunHighlights then
+        SkillPostPass.RunHighlights(context)
     end
+    if SkillPostPass and SkillPostPass.RunDependents then
+        SkillPostPass.RunDependents(context)
+    end
+    FinishSkillViewerRefresh(viewer)
+end
 
-    if #mainVisible == 0 and not appendOnly then
-        -- 隐藏所有无纹理的空图标，避免显示黑框
-        for _, icon in ipairs(allIcons) do
-            if icon:IsShown() and not (icon.Icon and icon.Icon:GetTexture()) then
-                icon:SetAlpha(0)
-            end
+local function RegisterViewerRefreshPhases()
+    if viewerPhaseRegistered or not RefreshBus then
+        return
+    end
+    viewerPhaseRegistered = true
+
+    RefreshBus.register(RefreshBus.SCOPES.SKILL_GROUP_MAP, "CooldownStyle_SkillGroupMap", RunSkillDataPhase)
+    RefreshBus.register(RefreshBus.SCOPES.SKILL_DATA, "CooldownStyle_SkillData", RunSkillDataPhase)
+    RefreshBus.register(RefreshBus.SCOPES.ITEM_APPEND_LAYOUT, "CooldownStyle_ItemAppend", RunSkillDataPhase)
+    RefreshBus.register(RefreshBus.SCOPES.SKILL_LAYOUT, "CooldownStyle_SkillLayout", RunSkillLayoutPhase)
+    RefreshBus.register(RefreshBus.SCOPES.SKILL_GROUP_LAYOUT, "CooldownStyle_SkillGroupLayout", RunSkillGroupLayoutPhase)
+    RefreshBus.register(RefreshBus.SCOPES.SKILL_STYLE, "CooldownStyle_SkillStyle", RunSkillStylePhase)
+    RefreshBus.register(RefreshBus.SCOPES.SKILL_COOLDOWN, "CooldownStyle_SkillCooldownOnly", function()
+        RunSkillCooldownOnlyPhase()
+    end)
+    RefreshBus.register(RefreshBus.SCOPES.BUFF_LAYOUT, "CooldownStyle_BuffLayout", function(context)
+        if context.dirtyViewers and context.dirtyViewers[QK_BUFF_ICONS] then
+            DoBuffRefresh(0)
         end
-        viewer:SetSize(1, 1)
-        if VFlow.SkillGroups and VFlow.SkillGroups.layoutSkillGroups then
-            VFlow.SkillGroups.layoutSkillGroups(groupBuckets)
+    end)
+    RefreshBus.register(RefreshBus.SCOPES.BUFFBAR_LAYOUT, "CooldownStyle_BuffBarLayout", function(context)
+        if context.dirtyViewers and context.dirtyViewers[QK_BUFF_BAR] then
+            DoBuffBarRefresh(0)
         end
-        if VFlow.ItemGroups and VFlow.ItemGroups.refreshStandaloneLayouts then
-            VFlow.ItemGroups.refreshStandaloneLayouts()
+    end)
+    RefreshBus.register(RefreshBus.SCOPES.HIGHLIGHT, "CooldownStyle_Highlight", function(context)
+        if SkillPostPass and SkillPostPass.RunHighlights then
+            SkillPostPass.RunHighlights(context)
         end
-        ScanCooldownViewerIcons(viewer, allIcons)
-        ScanSkillGroupCustomHighlights()
-        FinishSkillViewerRefresh(viewer)
+    end)
+    RefreshBus.register(RefreshBus.SCOPES.DEPENDENT_LAYOUT, "CooldownStyle_Dependents", function(context)
+        if SkillPostPass and SkillPostPass.RunDependents then
+            SkillPostPass.RunDependents(context)
+        end
+    end)
+end
+
+local function CopyRequestOpts(opts)
+    local out = {}
+    for key, value in pairs(opts or {}) do
+        out[key] = value
+    end
+    return out
+end
+
+local function RequestSkillRefresh(scopeOrScopes, opts)
+    if not (RefreshBus and RefreshBus.requestAllSkillViewers) then
         return
     end
 
-    local limit = cfg.maxIconsPerRow or 8
-    local rows = StyleLayout.BuildRows(limit, mainVisible)
-    local growUp = (cfg.growDirection == "up")
-
-    local iconW = cfg.iconWidth or 40
-    local iconH = cfg.iconHeight or 40
-    local row2W = cfg.secondRowIconWidth or iconW
-    local row2H = cfg.secondRowIconHeight or iconH
-
-    local isH = (viewer.isHorizontal ~= false)
-    local iconDir = (viewer.iconDirection == 1) and 1 or -1
-    local spacingX = cfg.spacingX
-    local spacingY = cfg.spacingY
-    local fixedRowLengthByLimit = (cfg.fixedRowLengthByLimit == true)
-    local rowAnchor = cfg.rowAnchor or "center"
-
-    local rowCells
-    if VFlow.ItemGroups and VFlow.ItemGroups.mergeSkillRowsWithAppend then
-        rowCells = VFlow.ItemGroups.mergeSkillRowsWithAppend(viewer, limit, rows)
+    opts = opts or {}
+    if opts.viewers then
+        RefreshBus.requestSkillViewers(scopeOrScopes, opts.viewers, opts)
     else
-        rowCells = {}
-        for ri, rIcons in ipairs(rows) do
-            rowCells[ri] = {}
-            for _, icon in ipairs(rIcons) do
-                rowCells[ri][#rowCells[ri] + 1] = { frame = icon, isItem = false }
-            end
+        RefreshBus.requestAllSkillViewers(scopeOrScopes, opts)
+    end
+end
+
+local function RequestDelayedSkillRefresh(delay, scopeOrScopes, opts)
+    if delay and delay > 0 then
+        if skillRefreshPending then
+            return
         end
+        skillRefreshPending = true
+        C_Timer.After(delay, function()
+            skillRefreshPending = false
+            RequestSkillRefresh(scopeOrScopes, opts)
+        end)
+        return
     end
+    RequestSkillRefresh(scopeOrScopes, opts)
+end
 
-    -- 本 Viewer 无追加物品格时：清技能按钮上的样式/尺寸幂等缓存，避免刚从追加切回单独分组时仍沿用合并布局下的状态
-    local hasItemCells = false
-    for _, r in ipairs(rowCells) do
-        for _, c in ipairs(r) do
-            if c.isItem then
-                hasItemCells = true
-                break
-            end
+local function RequestNamedViewers(scopeOrScopes, viewerNames, opts)
+    if not (RefreshBus and RefreshBus.requestViewers) then
+        return
+    end
+    RefreshBus.requestViewers(scopeOrScopes, viewerNames, opts or {})
+end
+
+VFlow.RequestSkillRefresh = RequestSkillRefresh
+RegisterViewerRefreshPhases()
+
+if SkillPostPass and SkillPostPass.registerHighlight then
+    SkillPostPass.registerHighlight("CooldownStyle_SkillHighlightViewer", function(context)
+        for _, layoutResult in ipairs(context.viewerLayoutResults or {}) do
+            ScanCooldownViewerIcons(layoutResult.viewer, layoutResult.allIcons)
         end
-        if hasItemCells then break end
-    end
-    if not hasItemCells then
-        for _, icon in ipairs(mainVisible) do
-            if not icon._vf_itemAppendFrame then
-                icon._vf_btnStyleVer = nil
-                icon._vf_styleVer = nil
-                icon._vf_w = nil
-                icon._vf_h = nil
-                icon._vf_zoomKey = nil
-                icon._vf_cdSizeKey = nil
-            end
-        end
-    end
+        ScanSkillGroupCustomHighlights()
+    end)
+end
 
-    local function cellWidth(_, rowIdx)
-        return (rowIdx == 1) and iconW or row2W
-    end
-
-    local function cellHeight(_, rowIdx)
-        return (rowIdx == 1) and iconH or row2H
-    end
-
-    local function rowContentWidth(rCells, rowIdx)
-        local sum = 0
-        for i, cell in ipairs(rCells) do
-            sum = sum + cellWidth(cell, rowIdx)
-            if i < #rCells then
-                sum = sum + spacingX
-            end
-        end
-        return sum
-    end
-
-    local rowContentWs = {}
-    for ri, cells in ipairs(rowCells) do
-        rowContentWs[ri] = rowContentWidth(cells, ri)
-    end
-    local rowBaseWs = {}
-    for rowIdx, _ in ipairs(rowCells) do
-        local wSkill = (rowIdx == 1) and iconW or row2W
-        local rowContentW = rowContentWs[rowIdx] or 0
-        local slotBandW = math.max(limit, 1) * (wSkill + spacingX) - spacingX
-        if fixedRowLengthByLimit then
-            rowBaseWs[rowIdx] = math.max(slotBandW, rowContentW)
-        else
-            rowBaseWs[rowIdx] = rowContentW
-        end
-    end
-    local maxRowW = 0
-    for _, rb in ipairs(rowBaseWs) do
-        if rb > maxRowW then maxRowW = rb end
-    end
-    if not fixedRowLengthByLimit then
-        for ri = 1, #rowCells do
-            rowBaseWs[ri] = maxRowW
-        end
-    end
-
-    local numRows = #rowCells
-    -- 各行最大高度，用于「向上增长」时按槽位镜像 y，避免次行被摆到 viewer TOP 之外导致编辑框错位
-    local rowHeights = {}
-    for rowIdx, rCells in ipairs(rowCells) do
-        local rowMaxH = 0
-        for _, cell in ipairs(rCells) do
-            local h = cellHeight(cell, rowIdx)
-            if h > rowMaxH then rowMaxH = h end
-        end
-        rowHeights[rowIdx] = rowMaxH
-    end
-    local prefixY = { [0] = 0 }
-    for i = 1, numRows do
-        prefixY[i] = prefixY[i - 1] + rowHeights[i] + (i < numRows and spacingY or 0)
-    end
-
-    local xAccum = 0
-
-    for rowIdx, rCells in ipairs(rowCells) do
-        local rowContentW = rowContentWs[rowIdx] or 0
-        local rowBaseW = rowBaseWs[rowIdx] or maxRowW
-
-        local alignOffset = rowBaseW - rowContentW
-        local anchorOffset = 0
-        if rowAnchor == "right" then
-            anchorOffset = alignOffset
-        elseif rowAnchor == "center" then
-            anchorOffset = alignOffset / 2
-        end
-        local startX = ((maxRowW - rowBaseW) / 2 + anchorOffset) * iconDir
-        if iconDir == -1 then startX = -startX end
-
-        local wRow = (rowIdx == 1) and iconW or row2W
-        local hRow = (rowIdx == 1) and iconH or row2H
-        local wSnap, strideX = wRow, (wRow + (spacingX or 0))
-        local curX = startX
-        local hSnap = hRow
-        if isH and PP and PP.NormalizeColumnStride and PP.PixelSnap then
-            wSnap, strideX = PP.NormalizeColumnStride(wRow, spacingX or 0, viewer)
-            hSnap = PP.PixelSnap(hRow, viewer)
-            curX = PP.PixelSnap(startX, viewer)
-        end
-
-        local rowMaxH = 0
-        local rowMaxW = 0
-
-        for colIdx, cell in ipairs(rCells) do
-            local button = cell.frame
-            if not button then
-                -- skip
-            else
-                local w = cellWidth(cell, rowIdx)
-                local h = cellHeight(cell, rowIdx)
-                if h > rowMaxH then rowMaxH = h end
-                if w > rowMaxW then rowMaxW = w end
-
-                if isH then
-                    StyleApply.ApplyIconSize(button, wSnap, hSnap)
-                else
-                    StyleApply.ApplyIconSize(button, w, h)
-                end
-
-                local x, y
-                if isH then
-                    x = curX
-                    -- 向下：第 k 行 y = -prefixY[k-1]；向上增长：第 k 行占用向下模式中第 (n-k+1) 行的垂直槽位，整体仍在 TOP 锚点下方向下延伸
-                    local downSlot = growUp and (numRows - rowIdx) or (rowIdx - 1)
-                    y = -prefixY[downSlot]
-                    curX = curX + strideX * iconDir
-                else
-                    y = -(colIdx - 1) * (h + spacingY) * iconDir
-                    x = growUp and -xAccum or xAccum
-                end
-
-                StyleLayout.SetPointCached(button, "TOPLEFT", viewer, "TOPLEFT", x, y)
-                if button:IsShown() then button:SetAlpha(1) end
-
-                if cell.isItem then
-                    StyleApply.ApplyButtonStyleIfStale(button, cfg)
-                    if VFlow.ItemGroups and VFlow.ItemGroups.refreshAppendFrameStack then
-                        VFlow.ItemGroups.refreshAppendFrameStack(button, cell.entry)
-                    end
-                    if MasqueSupport and MasqueSupport:IsActive() then
-                        MasqueSupport:RegisterButton(button, button.Icon)
-                    end
-                    button._vf_cdmKind = "skill"
-                else
-                    StyleApply.ApplyButtonStyleIfStale(button, cfg)
-                    if MasqueSupport and MasqueSupport:IsActive() then
-                        MasqueSupport:RegisterButton(button, button.Icon)
-                    end
-                    button._vf_cdmKind = "skill"
-                end
-            end
-        end
-
-        if not isH then
-            xAccum = xAccum + rowMaxW + spacingX
-        end
-    end
-
-    -- Viewer 内未参与本次布局的池化按钮仍可能带着上次的 _vf_border/发光，停在默认位置 → 少技能时出现「多出来的边框」
-    local laidOutFrames = {}
-    for _, r in ipairs(rowCells) do
-        for _, cell in ipairs(r) do
-            local f = cell.frame
-            if f then laidOutFrames[f] = true end
-        end
-    end
-    if groupBuckets then
-        for _, bucket in pairs(groupBuckets) do
-            if bucket then
-                for _, icon in ipairs(bucket) do
-                    if icon then laidOutFrames[icon] = true end
-                end
-            end
-        end
-    end
-    for _, icon in ipairs(allIcons) do
-        if not laidOutFrames[icon] then
-            if StyleApply.HideCustomGlow then StyleApply.HideCustomGlow(icon) end
-            if StyleApply.HideGlow then StyleApply.HideGlow(icon) end
-            if icon._vf_border then icon._vf_border:Hide() end
-            -- 池化格只 Hide 了边框时，幂等版本仍是最新 → ApplyButtonStyleIfStale / ApplyBeautify 会跳过，切天赋复用按钮后边框不恢复
-            icon._vf_btnStyleVer = nil
-            icon._vf_styleVer = nil
-            if icon:IsShown() and not (icon.Icon and icon.Icon:GetTexture()) then
-                icon:SetAlpha(0)
-            end
-        end
-    end
-
-    local bboxIcons = {}
-    for _, r in ipairs(rowCells) do
-        for _, cell in ipairs(r) do
-            local f = cell.frame
-            if f and f:IsShown() then
-                bboxIcons[#bboxIcons + 1] = f
-            end
-        end
-    end
-    StyleLayout.UpdateViewerSizeToMatchIcons(viewer, #bboxIcons > 0 and bboxIcons or mainVisible)
-    -- 固定行长：图标按 maxRowW 居中，viewer 不能窄于该行宽，否则底框与 TOPLEFT+startX 的按钮错位
-    if fixedRowLengthByLimit and isH and maxRowW > 0 then
-        local vw = viewer:GetWidth()
-        if vw and vw < maxRowW then
-            viewer:SetWidth(maxRowW)
-        end
-    end
-
-    -- 布局自定义技能组
-    if VFlow.SkillGroups and VFlow.SkillGroups.layoutSkillGroups then
-        VFlow.SkillGroups.layoutSkillGroups(groupBuckets)
-    end
-
-    if VFlow.ItemGroups and VFlow.ItemGroups.refreshStandaloneLayouts then
-        VFlow.ItemGroups.refreshStandaloneLayouts()
-    end
-
-    ScanCooldownViewerIcons(viewer, allIcons)
-    ScanSkillGroupCustomHighlights()
-
-    FinishSkillViewerRefresh(viewer)
+if SkillPostPass and SkillPostPass.registerDependent then
+    SkillPostPass.registerDependent("CooldownStyle_SkillDependents", function(context)
+        local force = context and context.flags and context.flags.forceDependentLayout
+        NotifySkillViewerLayoutDependents(force == true)
+    end)
 end
 
 -- =========================================================
@@ -1288,6 +1182,7 @@ local function RefreshBuffViewer(viewer, cfg)
         local x, y = ComputeSlotOffset(slot, totalSlots, isH, w, h, spacingX, spacingY, iconDir)
 
         StyleApply.ApplyIconSize(button, w, h)
+        -- BUFF 仍沿用旧链路（本轮重构重点是技能组刷新）；后续可单独将 BUFF 也接入 RefreshBus。
         StyleApply.ApplyButtonStyleIfStale(button, cfg)
 
         if MasqueSupport and MasqueSupport:IsActive() then
@@ -1315,18 +1210,14 @@ local function RefreshBuffViewer(viewer, cfg)
 
     if viewer._vf_needsReRefresh then
         viewer._vf_needsReRefresh = false
-        if ViewerRefreshQueue then
-            ViewerRefreshQueue.request(QK_BUFF_ICONS, false)
-        elseif RequestBuffRefresh then
+        if RequestBuffRefresh then
             RequestBuffRefresh()
         end
     end
 
     if hasNilTex then
         C_Timer.After(0.05, function()
-            if ViewerRefreshQueue then
-                ViewerRefreshQueue.request(QK_BUFF_ICONS, false)
-            elseif RequestBuffRefresh then
+            if RequestBuffRefresh then
                 RequestBuffRefresh()
             end
         end)
@@ -1340,10 +1231,7 @@ end
 -- =========================================================
 
 local hooked = false
-local refreshPending = false
 local SetupHooks
-local DoBuffRefresh
-
 DoBuffRefresh = function(attempt)
     local viewer, cfg = GetBuffViewerAndConfig()
     if not viewer or not cfg then
@@ -1374,11 +1262,11 @@ end
 --- @param opt table|nil opt.immediate 为 true 时本帧立即刷新 Buff 图标（含自定义 Buff 组布局）
 RequestBuffRefresh = function(opt)
     opt = opt or {}
-    if ViewerRefreshQueue then
-        ViewerRefreshQueue.request(QK_BUFF_ICONS, opt.immediate == true)
-    else
-        DoBuffRefresh(0)
+    if ViewerRuntime and ViewerRuntime.request then
+        ViewerRuntime.request(QK_BUFF_ICONS, "manual", opt)
+        return
     end
+    RequestNamedViewers(RefreshBus.PRESETS.BUFF_FULL, { QK_BUFF_ICONS }, opt)
 end
 
 DoBuffBarRefresh = function(attempt)
@@ -1480,25 +1368,12 @@ if Profiler and Profiler.registerScope then
     end)
 end
 
-local function DoRefresh()
+local function RequestInitialViewerRefresh()
+    RequestSkillRefresh(RefreshBus.PRESETS.SKILL_FULL)
+
     local get = VFlow and VFlow.Store and VFlow.Store.getModuleRef
     local buffsDB = get and get("VFlow.Buffs")
     local buffBarDB = get and get("VFlow.BuffBar")
-
-    if ViewerRefreshQueue then
-        ViewerRefreshQueue.request(QK_ESSENTIAL, false)
-        ViewerRefreshQueue.request(QK_UTILITY, false)
-    else
-        local skillsDB = get and get("VFlow.Skills")
-        if skillsDB then
-            if EssentialCooldownViewer and skillsDB.importantSkills then
-                RefreshSkillViewer(EssentialCooldownViewer, skillsDB.importantSkills)
-            end
-            if UtilityCooldownViewer and skillsDB.efficiencySkills then
-                RefreshSkillViewer(UtilityCooldownViewer, skillsDB.efficiencySkills)
-            end
-        end
-    end
 
     if buffsDB and buffsDB.buffMonitor then
         RequestBuffRefresh()
@@ -1509,110 +1384,15 @@ local function DoRefresh()
     end
 end
 
---- 供其他 Core（如 ItemGroups）在装备/法术变化时触发技能 viewer 重排
-VFlow.RequestCooldownStyleRefresh = DoRefresh
-
-local function RequestRefresh(delay)
-    if delay and delay > 0 then
-        if refreshPending then return end
-        refreshPending = true
-        C_Timer.After(delay, function()
-            refreshPending = false
-            DoRefresh()
-        end)
-    else
-        DoRefresh()
-    end
-end
-
 local function RequestKeybindStyleRefresh(delay)
     BumpButtonStyleVersion()
-    RequestRefresh(delay)
+    RequestDelayedSkillRefresh(delay, RefreshBus.PRESETS.SKILL_STYLE)
 end
 
 VFlow.RequestKeybindStyleRefresh = RequestKeybindStyleRefresh
 
 SetupHooks = function()
     if hooked then return end
-
-    if ViewerRefreshQueue then
-        local function getSkillsDB()
-            return VFlow.Store and VFlow.Store.getModuleRef and VFlow.Store.getModuleRef("VFlow.Skills")
-        end
-        ViewerRefreshQueue.register(QK_ESSENTIAL, function()
-            local db = getSkillsDB()
-            if db and db.importantSkills and EssentialCooldownViewer then
-                RefreshSkillViewer(EssentialCooldownViewer, db.importantSkills)
-            end
-        end)
-        ViewerRefreshQueue.register(QK_UTILITY, function()
-            local db = getSkillsDB()
-            if db and db.efficiencySkills and UtilityCooldownViewer then
-                RefreshSkillViewer(UtilityCooldownViewer, db.efficiencySkills)
-            end
-        end)
-        ViewerRefreshQueue.register(QK_BUFF_ICONS, function()
-            DoBuffRefresh(0)
-        end)
-        ViewerRefreshQueue.register(QK_BUFF_BAR, function()
-            DoBuffBarRefresh(0)
-        end)
-    end
-
-    local function SafeHook(obj, method, handler)
-        if obj and obj[method] then
-            hooksecurefunc(obj, method, handler)
-        end
-    end
-
-    local function queueViewerRefresh(viewerName, immediate)
-        local viewer = _G[viewerName]
-        if viewer and viewer._vf_refreshing then
-            viewer._vf_needsReRefresh = true
-            return
-        end
-        if ViewerRefreshQueue then
-            ViewerRefreshQueue.request(viewerName, immediate == true)
-            return
-        end
-        local get = VFlow.Store and VFlow.Store.getModuleRef
-        local skillsDB = get and get("VFlow.Skills")
-        if viewerName == QK_BUFF_BAR then
-            DoBuffBarRefresh(0)
-        elseif viewerName == QK_BUFF_ICONS then
-            DoBuffRefresh(0)
-        elseif viewerName == QK_ESSENTIAL and skillsDB and skillsDB.importantSkills and EssentialCooldownViewer then
-            RefreshSkillViewer(EssentialCooldownViewer, skillsDB.importantSkills)
-        elseif viewerName == QK_UTILITY and skillsDB and skillsDB.efficiencySkills and UtilityCooldownViewer then
-            RefreshSkillViewer(UtilityCooldownViewer, skillsDB.efficiencySkills)
-        end
-    end
-
-    local function hookViewerLayoutDataAndShow(viewer, queueKey)
-        if not viewer then return end
-        SafeHook(viewer, "RefreshLayout", function()
-            queueViewerRefresh(queueKey, false)
-        end)
-        SafeHook(viewer, "RefreshData", function()
-            queueViewerRefresh(queueKey, false)
-        end)
-        viewer:HookScript("OnShow", function()
-            queueViewerRefresh(queueKey, false)
-        end)
-        if viewer.UpdateLayout then
-            SafeHook(viewer, "UpdateLayout", function()
-                queueViewerRefresh(queueKey, false)
-            end)
-        elseif viewer.Layout then
-            SafeHook(viewer, "Layout", function()
-                queueViewerRefresh(queueKey, false)
-            end)
-        end
-    end
-
-    local buffBarReleaseHandler = function()
-        RequestBuffBarRefresh()
-    end
 
     local queueBuffIconAfterHighlight
     queueBuffIconAfterHighlight = function(frame)
@@ -1622,7 +1402,7 @@ SetupHooks = function()
         local viewer, cfg = GetBuffViewerAndConfig()
         if not viewer or not cfg then return end
         TouchCustomHighlight(frame)
-        queueViewerRefresh(QK_BUFF_ICONS, false)
+        RequestBuffRefresh()
     end
 
     if Profiler and Profiler.registerCount then
@@ -1662,53 +1442,77 @@ SetupHooks = function()
         TouchCustomHighlight(frame)
     end
 
-    local function setupSkillCooldownViewer(viewer, queueKey, hookUtilityPoolRelease)
-        if not viewer then return end
-        enforceScaleOnViewer(viewer)
-        if viewer.RefreshLayout then
-            SafeHook(viewer, "RefreshLayout", function()
-                queueViewerRefresh(queueKey, false)
-            end)
-        end
-        viewer:HookScript("OnShow", function()
-            enforceScaleOnViewer(viewer)
-            queueViewerRefresh(queueKey, false)
-        end)
-        if viewer.UpdateSystemSettingIconSize then
-            hooksecurefunc(viewer, "UpdateSystemSettingIconSize", function()
+    local function registerSkillViewer(name, enablePoolRelease)
+        ViewerRuntime.register({
+            name = name,
+            lockViewerScale = true,
+            lockFrameScale = true,
+            invalidateCollectIcons = true,
+            hookRefreshLayout = true,
+            hookRefreshData = false,
+            hookUpdateLayout = false,
+            hookPoolRelease = enablePoolRelease == true,
+            requestMap = {
+                refreshLayout = RefreshBus.PRESETS.SKILL_LAYOUT,
+                onShow = RefreshBus.PRESETS.SKILL_FULL,
+                acquire = {
+                    RefreshBus.SCOPES.SKILL_DATA,
+                    RefreshBus.SCOPES.ITEM_APPEND_LAYOUT,
+                    RefreshBus.SCOPES.SKILL_LAYOUT,
+                    RefreshBus.SCOPES.SKILL_GROUP_LAYOUT,
+                    RefreshBus.SCOPES.HIGHLIGHT,
+                    RefreshBus.SCOPES.DEPENDENT_LAYOUT,
+                },
+                poolRelease = RefreshBus.PRESETS.SKILL_LAYOUT,
+            },
+            requestHandler = function(scopes, viewers, opts)
+                local reqOpts = CopyRequestOpts(opts)
+                reqOpts.viewers = viewers
+                RequestSkillRefresh(scopes, reqOpts)
+            end,
+            onSetup = function(viewer)
                 enforceScaleOnViewer(viewer)
-            end)
-        end
-        if viewer.OnAcquireItemFrame then
-            SafeHook(viewer, "OnAcquireItemFrame", function(_, frame)
-                if not frame then return end
-                StyleLayout.InvalidateCollectIconsCache(viewer)
-                if frame.SetScale and frame:GetScale() ~= 1 then
-                    frame:SetScale(1)
+                if viewer.UpdateSystemSettingIconSize then
+                    hooksecurefunc(viewer, "UpdateSystemSettingIconSize", function()
+                        enforceScaleOnViewer(viewer)
+                    end)
                 end
+            end,
+            onShow = function(viewer)
+                enforceScaleOnViewer(viewer)
+            end,
+            onAcquireFrame = function(viewer, frame)
                 HookSkillFrameForCustomHighlight(viewer, frame)
-                queueViewerRefresh(queueKey, false)
-            end)
-        end
-        if hookUtilityPoolRelease and viewer.itemFramePool and viewer.itemFramePool.Release then
-            hooksecurefunc(viewer.itemFramePool, "Release", function()
-                StyleLayout.InvalidateCollectIconsCache(viewer)
-                queueViewerRefresh(queueKey, false)
-            end)
-        end
+            end,
+        })
     end
 
-    setupSkillCooldownViewer(EssentialCooldownViewer, QK_ESSENTIAL, false)
-    setupSkillCooldownViewer(UtilityCooldownViewer, QK_UTILITY, true)
+    registerSkillViewer(QK_ESSENTIAL, false)
+    registerSkillViewer(QK_UTILITY, true)
 
-    if BuffIconCooldownViewer then
-        hookViewerLayoutDataAndShow(BuffIconCooldownViewer, QK_BUFF_ICONS)
-        SafeHook(BuffIconCooldownViewer, "OnAcquireItemFrame", function(_, frame)
-            if not frame then return end
-            StyleLayout.InvalidateCollectIconsCache(BuffIconCooldownViewer)
-            if frame.SetScale and frame:GetScale() ~= 1 then
-                frame:SetScale(1)
-            end
+    ViewerRuntime.register({
+        name = QK_BUFF_ICONS,
+        lockViewerScale = true,
+        lockFrameScale = true,
+        invalidateCollectIcons = true,
+        hookRefreshLayout = true,
+        hookRefreshData = true,
+        hookUpdateLayout = true,
+        requestMap = {
+            manual = RefreshBus.PRESETS.BUFF_FULL,
+            refreshLayout = RefreshBus.PRESETS.BUFF_FULL,
+            refreshData = RefreshBus.PRESETS.BUFF_FULL,
+            updateLayout = RefreshBus.PRESETS.BUFF_FULL,
+            onShow = RefreshBus.PRESETS.BUFF_FULL,
+            acquire = RefreshBus.PRESETS.BUFF_FULL,
+        },
+        requestHandler = function(scopes, viewers, opts)
+            RequestNamedViewers(scopes, viewers, opts)
+        end,
+        onSetup = function(viewer)
+            enforceScaleOnViewer(viewer)
+        end,
+        onAcquireFrame = function(_, frame)
             if frame.OnCooldownIDSet and not frame._vf_cdIDHooked then
                 frame._vf_cdIDHooked = true
                 hooksecurefunc(frame, "OnCooldownIDSet", function(self)
@@ -1722,24 +1526,33 @@ SetupHooks = function()
                     if not self then return end
                     self._vf_cdmKind = "buff"
                     TouchCustomHighlight(self)
-                    queueViewerRefresh(QK_BUFF_ICONS, false)
+                    RequestBuffRefresh()
                 end)
             end
             frame._vf_cdmKind = "buff"
             TouchCustomHighlight(frame)
-            queueViewerRefresh(QK_BUFF_ICONS, false)
-        end)
-    end
+        end,
+    })
 
-    if BuffBarCooldownViewer then
-        -- SafeHook(BuffBarCooldownViewer, "RefreshData", function()
-        --     queueViewerRefresh(QK_BUFF_BAR, false)
-        -- end)
-        BuffBarCooldownViewer:HookScript("OnShow", function()
-            RequestBuffBarRefresh()
-        end)
-        SafeHook(BuffBarCooldownViewer, "OnAcquireItemFrame", function(_, frame)
-            if not frame then return end
+    ViewerRuntime.register({
+        name = QK_BUFF_BAR,
+        lockViewerScale = false,
+        lockFrameScale = true,
+        invalidateCollectIcons = false,
+        hookRefreshLayout = false,
+        hookRefreshData = false,
+        hookUpdateLayout = false,
+        hookPoolRelease = true,
+        requestMap = {
+            manual = RefreshBus.PRESETS.BUFFBAR_FULL,
+            onShow = RefreshBus.PRESETS.BUFFBAR_FULL,
+            acquire = RefreshBus.PRESETS.BUFFBAR_FULL,
+            poolRelease = RefreshBus.PRESETS.BUFFBAR_FULL,
+        },
+        requestHandler = function(scopes, viewers, opts)
+            RequestNamedViewers(scopes, viewers, opts)
+        end,
+        onAcquireFrame = function(_, frame)
             local viewer, cfg = GetBuffBarViewerAndConfig()
             if not viewer or not cfg then return end
 
@@ -1761,16 +1574,9 @@ SetupHooks = function()
 
             frame._vf_barStyled = false
             frame._vf_barLastShown = frame.IsShown and frame:IsShown() or false
-            local width = ResolveBuffBarWidth(cfg)
-            local height = cfg.barHeight or 20
-            ApplyBuffBarFrameStyle(frame, cfg, width, height)
-            RequestBuffBarRefresh()
-        end)
-
-        if BuffBarCooldownViewer.itemFramePool then
-            hooksecurefunc(BuffBarCooldownViewer.itemFramePool, "Release", buffBarReleaseHandler)
-        end
-    end
+            ApplyBuffBarFrameStyle(frame, cfg, ResolveBuffBarWidth(cfg), cfg.barHeight or 20)
+        end,
+    })
 
     if CooldownViewerBuffIconItemMixin and CooldownViewerBuffIconItemMixin.OnCooldownIDSet then
         hooksecurefunc(CooldownViewerBuffIconItemMixin, "OnCooldownIDSet", function(frame)
@@ -1780,10 +1586,11 @@ SetupHooks = function()
     end
     if EventRegistry then
         EventRegistry:RegisterCallback("CooldownViewerSettings.OnDataChanged", function()
-            RequestRefresh(0.2)
+            RequestDelayedSkillRefresh(0.2, RefreshBus.PRESETS.SKILL_FULL)
         end)
     end
 
+    ViewerRuntime.setupAll()
     hooked = true
 end
 
@@ -1797,20 +1604,59 @@ VFlow.on("PLAYER_ENTERING_WORLD", "VFlow.SkillStyle", function()
     BumpBuffBarStyleVersion()
     if ViewerRefreshQueue then ViewerRefreshQueue.bumpVersion() end
     SetupHooks()
-    RequestRefresh(0.5)
+    C_Timer.After(0.5, RequestInitialViewerRefresh)
 end)
 
 -- =========================================================
 -- SECTION 10: Store 监听
 -- =========================================================
 
+local function IsSkillStyleConfigKey(key)
+    if not key then return false end
+    return key:find("font")
+        or key:find("border")
+        or key:find("overlay")
+        or key:find("glow")
+        or key:find("keybind")
+        or key:find("zoom")
+        or key:find("color")
+        or key:find("mask")
+end
+
+local function IsSkillGroupMapConfigKey(key)
+    if not key then return false end
+    return key:find("%.spellIDs$")
+        or key:find("^customGroups%.%d+%.config%.spellIDs")
+        or key:find("%.hideInCooldownManager$")
+end
+
 VFlow.Store.watch("VFlow.Skills", "CooldownStyle_Skills", function(key, value)
-    if key:find("%.x$") or key:find("%.y$")
-        or key:find("%.anchorFrame$") or key:find("%.relativePoint$") or key:find("%.playerAnchorPosition$") then
+    if key:find("^customGroups%.%d+%.config%.")
+        and (key:find("%.x$") or key:find("%.y$")
+            or key:find("%.anchorFrame$") or key:find("%.relativePoint$")
+            or key:find("%.playerAnchorPosition$")) then
+        local groupIndex = tonumber(key:match("^customGroups%.(%d+)%."))
+        RequestSkillRefresh(RefreshBus.SCOPES.SKILL_GROUP_LAYOUT, {
+            groupIndex = groupIndex,
+            flags = { reanchorOnly = true },
+        })
         return
     end
-    BumpButtonStyleVersion()
-    RequestRefresh(0)
+    if IsSkillStyleConfigKey(key) then
+        BumpButtonStyleVersion()
+        if SkillStylePass and SkillStylePass.Invalidate then
+            SkillStylePass.Invalidate()
+        end
+        RequestSkillRefresh(RefreshBus.PRESETS.SKILL_STYLE)
+        return
+    end
+
+    if IsSkillGroupMapConfigKey(key) then
+        RequestSkillRefresh(RefreshBus.PRESETS.SKILL_GROUP_MAP)
+        return
+    end
+
+    RequestSkillRefresh(RefreshBus.PRESETS.SKILL_LAYOUT)
 end)
 
 VFlow.Store.watch("VFlow.Buffs", "CooldownStyle_Buffs", function(key, value)
@@ -1821,7 +1667,7 @@ VFlow.Store.watch("VFlow.Buffs", "CooldownStyle_Buffs", function(key, value)
     end
     BumpButtonStyleVersion()
     if ViewerRefreshQueue then ViewerRefreshQueue.bumpVersion() end
-    RequestRefresh(0)
+    RequestBuffRefresh()
 end)
 
 VFlow.Store.watch("VFlow.BuffBar", "CooldownStyle_BuffBar", function(key, value)
@@ -1834,7 +1680,7 @@ end)
 
 VFlow.Store.watch("VFlow.CustomMonitor", "CooldownStyle_CustomMonitor", function(key, value)
     if key:find("%.hideInCooldownManager$") then
-        RequestRefresh(0)
+        RequestSkillRefresh(RefreshBus.PRESETS.SKILL_LAYOUT)
     end
 end)
 
@@ -1842,10 +1688,14 @@ VFlow.Store.watch("VFlow.OtherFeatures", "CooldownStyle_OtherHL", function(key, 
     if not key then return end
     if key == "skillRules" or key:find("^skillRules%.") then
         BumpButtonStyleVersion()
-        RequestRefresh(0)
+        RequestSkillRefresh({
+            RefreshBus.SCOPES.SKILL_STYLE,
+            RefreshBus.SCOPES.HIGHLIGHT,
+        })
     end
     if key == "highlightRules" or key:find("^highlightRules%.")
         or key == "highlightOnlyInCombat" then
+        RequestSkillRefresh(RefreshBus.PRESETS.SKILL_HIGHLIGHT, { immediate = false })
         C_Timer.After(0, RefreshAllOtherFeatureHighlights)
     end
 end)
@@ -1853,6 +1703,10 @@ end)
 VFlow.Store.watch("VFlow.StyleIcon", "CooldownStyle_StyleIcon", function(key, value)
     BumpButtonStyleVersion()
     BumpBuffBarStyleVersion()
-    RequestRefresh(0)
+    if SkillStylePass and SkillStylePass.Invalidate then
+        SkillStylePass.Invalidate()
+    end
+    RequestSkillRefresh(RefreshBus.PRESETS.SKILL_STYLE)
+    RequestBuffRefresh()
     RequestBuffBarRefresh()
 end)

@@ -593,8 +593,8 @@ renderMenu = function()
                                 if VFlow.ItemGroups and VFlow.ItemGroups.invalidateSpellMap then
                                     VFlow.ItemGroups.invalidateSpellMap()
                                 end
-                                if VFlow.RequestCooldownStyleRefresh then
-                                    VFlow.RequestCooldownStyleRefresh()
+                                if VFlow.RequestSkillRefresh and VFlow.RefreshBus and VFlow.RefreshBus.PRESETS then
+                                    VFlow.RequestSkillRefresh(VFlow.RefreshBus.PRESETS.SKILL_GROUP_MAP)
                                 end
                             end
                             loadCustomGroups()

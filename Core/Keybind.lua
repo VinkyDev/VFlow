@@ -362,8 +362,8 @@ local function RequestSkillViewerRefresh(delay)
         refreshPending = false
         if VFlow.RequestKeybindStyleRefresh then
             VFlow.RequestKeybindStyleRefresh(0)
-        elseif VFlow.RequestCooldownStyleRefresh then
-            VFlow.RequestCooldownStyleRefresh()
+        elseif VFlow.RequestSkillRefresh and VFlow.RefreshBus and VFlow.RefreshBus.PRESETS then
+            VFlow.RequestSkillRefresh(VFlow.RefreshBus.PRESETS.SKILL_STYLE)
         end
     end)
 end

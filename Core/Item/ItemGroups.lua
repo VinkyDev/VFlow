@@ -95,10 +95,12 @@ local function ShouldShowItemGroup(cfg)
 end
 
 local function ScheduleVisibilityDrivenRefresh()
-    ScheduleStandaloneRefresh()
-    if VFlow.RequestCooldownStyleRefresh then
-        VFlow.RequestCooldownStyleRefresh()
+    if VFlow.RefreshBus and VFlow.RefreshBus.requestAllSkillViewers then
+        VFlow.RefreshBus.requestPreset("SKILL_LAYOUT")
+    elseif VFlow.RequestSkillRefresh then
+        VFlow.RequestSkillRefresh(VFlow.RefreshBus.PRESETS.SKILL_LAYOUT)
     end
+    ScheduleStandaloneRefresh()
 end
 
 local function ResolveManualItemForTracking(configItemID)
@@ -320,6 +322,18 @@ end
 local function ApplyContainerAnchor(container, cfg)
     if not container or not cfg then return end
     VFlow.ContainerAnchor.ApplyFramePosition(container, cfg, nil)
+end
+
+local function ApplyGroupAnchor(groupId)
+    local cfg = GetConfigForGroupId(groupId)
+    local container = EnsureGroupContainer(groupId)
+    if not (cfg and container) then
+        return
+    end
+    ApplyContainerAnchor(container, cfg)
+    if VFlow.DragFrame and VFlow.DragFrame.applyRegisteredPosition then
+        VFlow.DragFrame.applyRegisteredPosition(container)
+    end
 end
 
 local function EnsureGroupContainer(groupId)
@@ -828,7 +842,6 @@ local function LayoutStandaloneIconGrid(container, cfg, groupId, icons)
         for colIdx, button in ipairs(rowIcons) do
             if VFlow.StyleApply then
                 VFlow.StyleApply.ApplyIconSize(button, w, h)
-                VFlow.StyleApply.ApplyButtonStyleIfStale(button, cfg)
             end
             if MasqueSupport and MasqueSupport:IsActive() and button.Icon then
                 MasqueSupport:RegisterButton(button, button.Icon)
@@ -837,8 +850,7 @@ local function LayoutStandaloneIconGrid(container, cfg, groupId, icons)
             local x = startX + (colIdx - 1) * (w + spacingX)
             local y = -yAccum
 
-            button:ClearAllPoints()
-            button:SetPoint("TOPLEFT", container, "TOPLEFT", x, y)
+            VFlow.StyleLayout.SetPointCached(button, "TOPLEFT", container, "TOPLEFT", x, y)
             button:SetAlpha(1)
 
             UpdateItemStackDisplay(button, button._vf_entry, cfg)
@@ -1136,6 +1148,19 @@ RefreshAllAppendCooldowns = function()
     end
 end
 
+local function RefreshStandaloneCooldownsOnly()
+    for groupId, list in pairs(_standaloneFrameLists) do
+        local cfg = GetConfigForGroupId(groupId)
+        for _, frame in ipairs(list) do
+            if frame and frame._vf_entry and ApplyEntryCooldown then
+                ApplyEntryCooldown(frame, frame._vf_entry)
+                UpdateItemStackDisplay(frame, frame._vf_entry, cfg)
+                ApplyItemZeroCountPresentation(frame, frame._vf_entry, cfg)
+            end
+        end
+    end
+end
+
 local function SyncStandaloneFrameList(container, groupId, cfg, entries)
     local list = _standaloneFrameLists[groupId]
     if not list then
@@ -1256,8 +1281,27 @@ VFlow.ItemGroups = {
     invalidateSpellMap = MarkMapDirty,
     viewerHasAppendEntries = ViewerHasAppendEntries,
     mergeSkillRowsWithAppend = MergeSkillRowsWithAppend,
+    buildViewerRowCells = MergeSkillRowsWithAppend,
     syncAppendFramesForViewer = SyncAllAppendForViewer,
     refreshAppendFrameStack = UpdateAppendItemStackDisplay,
+    refreshAllAppendCooldowns = RefreshAllAppendCooldowns,
+    refreshStandaloneCooldownsOnly = RefreshStandaloneCooldownsOnly,
+    buildSpellMap = RebuildSpellMap,
+    resolveGroupIdForIcon = GetGroupIdForIcon,
+    getConfigForGroupId = GetConfigForGroupId,
+    shouldStandaloneExtract = ShouldStandaloneExtract,
+    shouldAppendToViewer = ShouldAppendToViewer,
+    applyGroupAnchor = ApplyGroupAnchor,
+    forEachStandaloneIcon = function(callback)
+        if type(callback) ~= "function" then
+            return
+        end
+        for _, list in pairs(_standaloneFrameLists) do
+            for _, frame in ipairs(list) do
+                callback(frame)
+            end
+        end
+    end,
 }
 
 if Profiler and Profiler.registerScope then
@@ -1319,16 +1363,28 @@ VFlow.on("PLAYER_ENTERING_WORLD", "ItemGroups", function()
 end)
 
 VFlow.on("SPELL_UPDATE_COOLDOWNS", "ItemGroups", function()
-    ScheduleStandaloneRefresh()
+    if VFlow.RefreshBus and VFlow.RefreshBus.request then
+        VFlow.RefreshBus.request(VFlow.RefreshBus.SCOPES.SKILL_COOLDOWN, { allSkillViewers = true })
+    else
+        ScheduleStandaloneRefresh()
+    end
 end)
 
 VFlow.on("UNIT_SPELLCAST_SUCCEEDED", "ItemGroups_ItemUse", function(_, unitTarget)
     if unitTarget ~= "player" then return end
-    ScheduleStandaloneRefresh()
+    if VFlow.RefreshBus and VFlow.RefreshBus.request then
+        VFlow.RefreshBus.request(VFlow.RefreshBus.SCOPES.SKILL_COOLDOWN, { allSkillViewers = true })
+    else
+        ScheduleStandaloneRefresh()
+    end
 end, "player")
 
 VFlow.on("BAG_UPDATE_DELAYED", "ItemGroups_Bag", function()
-    ScheduleStandaloneRefresh()
+    if VFlow.RefreshBus and VFlow.RefreshBus.request then
+        VFlow.RefreshBus.request(VFlow.RefreshBus.SCOPES.SKILL_COOLDOWN, { allSkillViewers = true })
+    else
+        ScheduleStandaloneRefresh()
+    end
 end)
 
 VFlow.State.watch("isEditMode", "ItemGroups_StandalonePreview", function()
@@ -1367,8 +1423,10 @@ VFlow.on("PLAYER_EQUIPMENT_CHANGED", "ItemGroups", function(_, slotID)
     end
     if needMap then
         MarkMapDirty()
-        if VFlow.RequestCooldownStyleRefresh then
-            VFlow.RequestCooldownStyleRefresh()
+        if VFlow.RefreshBus and VFlow.RefreshBus.requestAllSkillViewers then
+            VFlow.RefreshBus.requestPreset("SKILL_GROUP_MAP")
+        elseif VFlow.RequestSkillRefresh then
+            VFlow.RequestSkillRefresh(VFlow.RefreshBus.PRESETS.SKILL_GROUP_MAP)
         end
     end
     ScheduleStandaloneRefresh()
@@ -1387,8 +1445,10 @@ VFlow.on("SPELLS_CHANGED", "ItemGroups", function()
     end
     if need then
         MarkMapDirty()
-        if VFlow.RequestCooldownStyleRefresh then
-            VFlow.RequestCooldownStyleRefresh()
+        if VFlow.RefreshBus and VFlow.RefreshBus.requestAllSkillViewers then
+            VFlow.RefreshBus.requestPreset("SKILL_GROUP_MAP")
+        elseif VFlow.RequestSkillRefresh then
+            VFlow.RequestSkillRefresh(VFlow.RefreshBus.PRESETS.SKILL_GROUP_MAP)
         end
         ScheduleStandaloneRefresh()
     end
@@ -1402,23 +1462,21 @@ VFlow.Store.watch(MODULE_KEY, "ItemGroups", function(key, value)
         or (key:match("^customGroups%.%d+%.config%.[xy]$") ~= nil)
         or anchorFine
     if xyOnly then
-        local gid
-        if key:sub(1, 8) == "mainGroup" then
-            gid = 0
-        else
-            gid = tonumber(key:match("^customGroups%.(%d+)%."))
-        end
-        if gid ~= nil then
-            local container = _containers[gid]
-            local cfg = GetConfigForGroupId(gid)
-            if container and cfg and NeedsStandaloneContainer(cfg) then
-                ApplyContainerAnchor(container, cfg)
-                if VFlow.DragFrame and VFlow.DragFrame.applyRegisteredPosition then
-                    VFlow.DragFrame.applyRegisteredPosition(container)
-                end
+        if VFlow.RefreshBus and VFlow.RefreshBus.request then
+            local gid
+            if key:sub(1, 8) == "mainGroup" then
+                gid = 0
+            else
+                gid = tonumber(key:match("^customGroups%.(%d+)%."))
             end
+            VFlow.RefreshBus.request(VFlow.RefreshBus.SCOPES.SKILL_GROUP_LAYOUT, {
+                allSkillViewers = true,
+                groupIndex = gid,
+                flags = { reanchorOnly = true },
+            })
+        else
+            ScheduleStandaloneRefresh()
         end
-        ScheduleStandaloneRefresh()
         return
     end
 
@@ -1432,8 +1490,9 @@ VFlow.Store.watch(MODULE_KEY, "ItemGroups", function(key, value)
 
     MarkMapDirty()
     ScheduleStandaloneRefresh()
-    -- 追加行/位置、displayMode、条目等变化需立刻重排 Essential/Utility（CooldownStyle 只监听 Skills）
-    if VFlow.RequestCooldownStyleRefresh then
-        VFlow.RequestCooldownStyleRefresh()
+    if VFlow.RefreshBus and VFlow.RefreshBus.requestAllSkillViewers then
+        VFlow.RefreshBus.requestPreset("SKILL_FULL")
+    elseif VFlow.RequestSkillRefresh then
+        VFlow.RequestSkillRefresh(VFlow.RefreshBus.PRESETS.SKILL_FULL)
     end
 end)

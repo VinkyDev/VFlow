@@ -238,13 +238,29 @@ local function ReleaseGroupContainer(groupIdx)
     _groupContainers[groupIdx] = nil
 end
 
--- 初始化所有容器（用于配置变更时）
-local function InitGroupContainers()
+local function ApplyGroupAnchor(groupIdx)
+    local container = EnsureGroupContainer(groupIdx)
+    local db = VFlow.getDB(MODULE_KEY)
+    local group = db and db.customGroups and db.customGroups[groupIdx]
+    local cfg = group and group.config
+    if not (container and cfg) then
+        return
+    end
+    if VFlow.DragFrame and VFlow.DragFrame.applyRegisteredPosition then
+        VFlow.DragFrame.applyRegisteredPosition(container)
+    else
+        VFlow.ContainerAnchor.ApplyFramePosition(container, cfg, nil)
+    end
+end
+
+local function SyncGroupContainers()
     local db = VFlow.getDB(MODULE_KEY)
     local groups = db and db.customGroups
 
     for groupIdx in pairs(_groupContainers) do
-        ReleaseGroupContainer(groupIdx)
+        if not (groups and groups[groupIdx] and groups[groupIdx].config) then
+            ReleaseGroupContainer(groupIdx)
+        end
     end
 
     if not groups then
@@ -362,10 +378,8 @@ local function LayoutSkillGroups(groupBuckets)
                             end
 
                             for colIdx, button in ipairs(rowIcons) do
-                                -- 应用样式
                                 if VFlow.StyleApply then
                                     VFlow.StyleApply.ApplyIconSize(button, wSnap, hSnap)
-                                    VFlow.StyleApply.ApplyButtonStyleIfStale(button, cfg)
                                 end
                                 if MasqueSupport and MasqueSupport:IsActive() and button.Icon then
                                     MasqueSupport:RegisterButton(button, button.Icon)
@@ -374,8 +388,7 @@ local function LayoutSkillGroups(groupBuckets)
                                 local x = x0 + (colIdx - 1) * strideX
                                 local y = -yAccum
 
-                                button:ClearAllPoints()
-                                button:SetPoint("TOPLEFT", container, "TOPLEFT", x, y)
+                                StyleLayout.SetPointCached(button, "TOPLEFT", container, "TOPLEFT", x, y)
                                 button:SetAlpha(1)
                                 button._vf_cdmKind = "skill"
                             end
@@ -415,10 +428,8 @@ local function LayoutSkillGroups(groupBuckets)
                             local startY = -(maxColH - colContentH) / 2
 
                             for colIdx, button in ipairs(rowIcons) do
-                                -- 应用样式
                                 if VFlow.StyleApply then
                                     VFlow.StyleApply.ApplyIconSize(button, w, h)
-                                    VFlow.StyleApply.ApplyButtonStyleIfStale(button, cfg)
                                 end
                                 if MasqueSupport and MasqueSupport:IsActive() and button.Icon then
                                     MasqueSupport:RegisterButton(button, button.Icon)
@@ -427,8 +438,7 @@ local function LayoutSkillGroups(groupBuckets)
                                 local x = xAccum
                                 local y = startY - (colIdx - 1) * (h + spacingY)
 
-                                button:ClearAllPoints()
-                                button:SetPoint("TOPLEFT", container, "TOPLEFT", x, y)
+                                StyleLayout.SetPointCached(button, "TOPLEFT", container, "TOPLEFT", x, y)
                                 button:SetAlpha(1)
                                 button._vf_cdmKind = "skill"
                             end
@@ -465,7 +475,12 @@ end
 VFlow.SkillGroups = {
     classifyIcons = ClassifyIcons,
     layoutSkillGroups = LayoutSkillGroups,
+    layoutGroupBuckets = LayoutSkillGroups,
     forEachGroupIcon = ForEachGroupIcon,
+    buildGroupSpellMap = RebuildSpellMap,
+    resolveGroupIndexForIcon = GetGroupIdxForIcon,
+    syncContainers = SyncGroupContainers,
+    applyGroupAnchor = ApplyGroupAnchor,
 }
 
 if Profiler and Profiler.registerScope then
@@ -475,9 +490,9 @@ if Profiler and Profiler.registerScope then
         RebuildSpellMap = fn
     end)
     Profiler.registerScope("SG:InitGroupContainers", function()
-        return InitGroupContainers
+        return SyncGroupContainers
     end, function(fn)
-        InitGroupContainers = fn
+        SyncGroupContainers = fn
     end)
 end
 
@@ -496,31 +511,28 @@ end)
 
 -- 监听配置变更
 VFlow.Store.watch(MODULE_KEY, "SkillGroups", function(key, value)
-    -- 如果是customGroups的变化，重新初始化容器
-    if key == "customGroups" or key:find("^customGroups%.%d+$") then
-        InitGroupContainers()
+    _spellMapDirty = true
+    if not (VFlow.RefreshBus and VFlow.RefreshBus.request) then
+        return
     end
 
-    -- 坐标或依附关系变化：只更新容器锚点
-    if key:find("customGroups%.%d+%.config%.") then
+    local scopes = { VFlow.RefreshBus.SCOPES.SKILL_GROUP_MAP, VFlow.RefreshBus.SCOPES.SKILL_GROUP_LAYOUT }
+    local opts = {}
+
+    if key and key:find("^customGroups%.%d+%.config%.") then
         local groupIndex = tonumber(key:match("customGroups%.(%d+)%."))
-        if groupIndex and (
-            key:find("%.x$") or key:find("%.y$")
-            or key:find("%.anchorFrame$") or key:find("%.relativePoint$") or key:find("%.playerAnchorPosition$")
-        ) then
-            local container = _groupContainers[groupIndex]
-            local db = VFlow.getDB(MODULE_KEY)
-            if container and db and db.customGroups[groupIndex] and db.customGroups[groupIndex].config then
-                if VFlow.DragFrame and VFlow.DragFrame.applyRegisteredPosition then
-                    VFlow.DragFrame.applyRegisteredPosition(container)
-                else
-                    VFlow.ContainerAnchor.ApplyFramePosition(container, db.customGroups[groupIndex].config, nil)
-                end
-            end
-            return
+        if groupIndex then
+            opts.groupIndex = groupIndex
         end
     end
 
-    -- 其他配置变化：标记映射表需要重建
-    _spellMapDirty = true
+    if key and (key:find("%.x$") or key:find("%.y$")
+        or key:find("%.anchorFrame$") or key:find("%.relativePoint$")
+        or key:find("%.playerAnchorPosition$")) then
+        opts.flags = { reanchorOnly = true }
+        VFlow.RefreshBus.request(VFlow.RefreshBus.SCOPES.SKILL_GROUP_LAYOUT, opts)
+        return
+    end
+
+    VFlow.RefreshBus.request(scopes, opts)
 end)

@@ -1,15 +1,10 @@
--- 多 Viewer 刷新合并。immediate==false 时同 key 在同一 queueVersion 下只入队一次；true 则每次同步执行（勿在热路径滥用）。
+-- 通用刷新去重队列。immediate==false 时同 key 在同一 queueVersion 下只入队一次；true 则每次同步执行（勿在热路径滥用）。
 
 local VFlow = _G.VFlow
 if not VFlow then return end
 
 local ViewerRefreshQueue = {}
 VFlow.ViewerRefreshQueue = ViewerRefreshQueue
-
-ViewerRefreshQueue.KEY_ESSENTIAL = "EssentialCooldownViewer"
-ViewerRefreshQueue.KEY_UTILITY = "UtilityCooldownViewer"
-ViewerRefreshQueue.KEY_BUFF_ICONS = "BuffIconCooldownViewer"
-ViewerRefreshQueue.KEY_BUFF_BAR = "BuffBarCooldownViewer"
 
 local handlers = {}
 local queue = {}
