@@ -1,6 +1,6 @@
 --[[ Core 依赖：
-  - Core/StyleApply.lua：发光参数缓存、监听本模块并驱动 LibCustomGlow
-  - Core/CooldownStyle.lua：与自定义高亮及 CDM 视觉效果协同
+  - Core/Style/StyleApply.lua：发光参数缓存、监听本模块并驱动 LibCustomGlow
+  - Core/Style/CooldownStyle.lua：与自定义高亮及 CDM 视觉效果协同
 ]]
 
 -- =========================================================

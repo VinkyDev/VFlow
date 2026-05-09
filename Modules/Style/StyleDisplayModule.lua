@@ -1,7 +1,7 @@
 --[[ Core 依赖：
   - Core/VisibilityControl.lua：按本模块条件与作用域控制内置 Viewer、注册帧与资源条显隐
-  - Core/CooldownStyle.lua：与冷却/BUFF 区整体显示逻辑协同
-  - Core/ResourceBars.lua：读 VisibilityControl.ShouldApplyGlobalVisibilityHide("resourceBars")
+  - Core/Style/CooldownStyle.lua：与冷却/BUFF 区整体显示逻辑协同
+  - Core/Resource/ResourceBars.lua：读 VisibilityControl.ShouldApplyGlobalVisibilityHide("resourceBars")
 ]]
 
 -- =========================================================

@@ -1,4 +1,4 @@
---[[ Core 依赖：ClassResourceMap、ResourceStyles、ResourceBars；Infra BarFrameKit、PixelPerfect ]]
+--[[ Core 依赖：Core/Resource/ClassResourceMap.lua、Core/Resource/ResourceStyles.lua、Core/Resource/ResourceBars.lua；Infra BarFrameKit、PixelPerfect ]]
 
 -- =========================================================
 -- SECTION 1: 模块注册

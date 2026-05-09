@@ -1,8 +1,8 @@
 --[[ Core 依赖：
-  - Core/SkillGroups.lua：重要/效能/自定义技能分组布局与容器
-  - Core/CooldownStyle.lua：监听本模块配置并应用冷却管理器样式与布局
-  - Core/StyleApply.lua：消费本模块遮罩颜色并应用技能冷却驱动
-  - Core/SkillScanner.lua：维护 State.trackedSkills（本模块技能列表数据源，只读）
+  - Core/Skill/SkillGroups.lua：重要/效能/自定义技能分组布局与容器
+  - Core/Style/CooldownStyle.lua：监听本模块配置并应用冷却管理器样式与布局
+  - Core/Style/StyleApply.lua：消费本模块遮罩颜色并应用技能冷却驱动
+  - Core/Skill/SkillScanner.lua：维护 State.trackedSkills（本模块技能列表数据源，只读）
 ]]
 
 -- =========================================================

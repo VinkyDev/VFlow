@@ -24,8 +24,8 @@
     <Script file="Core\Skill\SkillPostPass.lua"/>
     <Script file="Core\Style\CooldownStyle.lua"/>
     <Script file="Core\EditModeBridge.lua"/>
-    <Script file="Core\CustomMonitorGroups.lua"/>
-    <Script file="Core\CustomMonitorRuntime.lua"/>
+    <Script file="Core\CustomMonitor\CustomMonitorGroups.lua"/>
+    <Script file="Core\CustomMonitor\CustomMonitorRuntime.lua"/>
     <Script file="Core\VisibilityControl.lua"/>
     <Script file="Core\Minimap.lua"/>
     <Script file="Core\CustomTTS.lua"/>

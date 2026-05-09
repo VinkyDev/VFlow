@@ -1,8 +1,8 @@
 --[[ Core 依赖：
-  - Core/ItemGroups.lua：主组/自定义组/追加到技能条等布局与图标；按组显示条件（VFlow.State）与 hideInCooldownManager
-  - Core/ItemAutoData.lua：手动物品与种族等自动数据（查询）
-  - Core/ItemsManualOrder.lua：entryOrder 归一化（查询/整理）
-  - Core/CooldownStyle.lua：监听 Items 配置并应用样式
+  - Core/Item/ItemGroups.lua：主组/自定义组/追加到技能条等布局与图标；按组显示条件（VFlow.State）与 hideInCooldownManager
+  - Core/Item/ItemAutoData.lua：手动物品与种族等自动数据（查询）
+  - Core/Item/ItemsManualOrder.lua：entryOrder 归一化（查询/整理）
+  - Core/Style/CooldownStyle.lua：监听 Items 配置并应用样式
   例外：新档主组无物品时写入示例物品并落盘（applyMainGroupStarterItemsOnce）。
 ]]
 

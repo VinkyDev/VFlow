@@ -1,7 +1,7 @@
 --[[ Core 依赖：
-  - Core/CustomMonitorGroups.lua：条形容器创建/销毁与 Store 同步
-  - Core/CustomMonitorRuntime.lua：条形态、CD/BUFF 驱动与生命周期
-  - Core/BuffScanner.lua、SkillScanner.lua：State 列表（本页左侧数据源，只读）
+  - Core/CustomMonitor/CustomMonitorGroups.lua：条形容器创建/销毁与 Store 同步
+  - Core/CustomMonitor/CustomMonitorRuntime.lua：条形态、CD/BUFF 驱动与生命周期
+  - Core/Buff/BuffScanner.lua、Core/Skill/SkillScanner.lua：State 列表（本页左侧数据源，只读）
   例外：renderContent 内 State/Store.watch 仅刷新本页双栏 UI，不替代上述 Core 对业务配置的监听。
 ]]
 
