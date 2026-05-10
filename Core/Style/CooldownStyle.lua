@@ -1634,14 +1634,15 @@ end)
 
 local function IsSkillStyleConfigKey(key)
     if not key then return false end
-    return key:find("font")
-        or key:find("border")
-        or key:find("overlay")
-        or key:find("glow")
-        or key:find("keybind")
-        or key:find("zoom")
-        or key:find("color")
-        or key:find("mask")
+    local lowerKey = string.lower(key)
+    return lowerKey:find("font")
+        or lowerKey:find("border")
+        or lowerKey:find("overlay")
+        or lowerKey:find("glow")
+        or lowerKey:find("keybind")
+        or lowerKey:find("zoom")
+        or lowerKey:find("color")
+        or lowerKey:find("mask")
 end
 
 local function IsSkillGroupMapConfigKey(key)
