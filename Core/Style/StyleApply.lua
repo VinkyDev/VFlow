@@ -576,24 +576,21 @@ end
 --- 前向声明：SPELL_UPDATE_COOLDOWN 刷新路径需绑定本函数为 upvalue
 local OnCooldownMaskDriverRefresh
 
-local function HasAnySpellOnlyCooldownRule()
-    local db = GetSharedSettingsDB()
-    local rules = db and db.skillRules
-    if not rules then
-        return false
-    end
-
-    for _, rule in pairs(rules) do
-        if type(rule) == "table" and rule.hideBuffCooldownOverlay == true then
-            return true
-        end
-    end
-
-    return false
-end
-
 local spellOnlyCdEventHooked
 local spellOnlyCdFlushFrame
+local trackedSpellOnlyCooldownButtons = setmetatable({}, { __mode = "k" })
+
+local function TrackSpellOnlyCooldownButton(button, active)
+    if not button then
+        return
+    end
+    if active then
+        trackedSpellOnlyCooldownButtons[button] = true
+    else
+        trackedSpellOnlyCooldownButtons[button] = nil
+    end
+end
+
 local function EnsureSpellOnlyCooldownSpellUpdateFlush()
     if spellOnlyCdEventHooked then return end
     spellOnlyCdEventHooked = true
@@ -601,33 +598,21 @@ local function EnsureSpellOnlyCooldownSpellUpdateFlush()
     spellOnlyCdFlushFrame:Hide()
     spellOnlyCdFlushFrame:SetScript("OnUpdate", function(self)
         self:Hide()
-        if not HasAnySpellOnlyCooldownRule() then return end
-        local SL = VFlow.StyleLayout
-        if not SL or not SL.CollectIcons then return end
-        for _, name in ipairs({ "EssentialCooldownViewer", "UtilityCooldownViewer" }) do
-            local viewer = _G[name]
-            if viewer then
-                local icons = SL.CollectIcons(viewer)
-                for i = 1, #icons do
-                    local b = icons[i]
-                    if b and b._vf_hideBuffCooldownOverlay and IsSkillCooldownManagerIcon(b)
-                        and not IsVFItemAppendSkillSlot(b) then
-                        OnCooldownMaskDriverRefresh(b)
-                    end
-                end
+        if not next(trackedSpellOnlyCooldownButtons) then return end
+        for button in pairs(trackedSpellOnlyCooldownButtons) do
+            if button
+                and button.Icon
+                and button._vf_hideBuffCooldownOverlay
+                and button.IsShown
+                and button:IsShown()
+                and IsSkillCooldownManagerIcon(button)
+                and not IsVFItemAppendSkillSlot(button) then
+                OnCooldownMaskDriverRefresh(button)
             end
-        end
-        if VFlow.SkillGroups and VFlow.SkillGroups.forEachGroupIcon then
-            VFlow.SkillGroups.forEachGroupIcon(function(icon)
-                if icon and icon._vf_hideBuffCooldownOverlay and IsSkillCooldownManagerIcon(icon)
-                    and not IsVFItemAppendSkillSlot(icon) then
-                    OnCooldownMaskDriverRefresh(icon)
-                end
-            end)
         end
     end)
     VFlow.on("SPELL_UPDATE_COOLDOWN", "VFlow.StyleApply.SpellOnlyCd", function()
-        if not HasAnySpellOnlyCooldownRule() then return end
+        if not next(trackedSpellOnlyCooldownButtons) then return end
         spellOnlyCdFlushFrame:Show()
     end)
 end
@@ -682,6 +667,7 @@ function StyleApply.ApplyAuraSwipeColor(button, groupCfg)
     button._vf_cooldownMaskColor = groupCfg.cooldownMaskColor
     button._vf_chargeRechargeMaskColor = groupCfg.chargeRechargeMaskColor
     button._vf_hideBuffCooldownOverlay = SkillWantsSpellOnlyCooldown(button)
+    TrackSpellOnlyCooldownButton(button, button._vf_hideBuffCooldownOverlay == true)
 
     if button._vf_hideBuffCooldownOverlay then
         EnsureSpellOnlyCooldownSpellUpdateFlush()
