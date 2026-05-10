@@ -3,7 +3,7 @@
   - Core/Runtime/Refresh/ViewerRefreshQueue.lua：BUFF 图标刷新合并调度（由 CooldownStyle 注册）
   - Core/Style/CooldownStyle.lua：监听本模块并应用 BUFF 区样式
   - Core/Buff/BuffScanner.lua：维护 State.trackedBuffs（列表数据源，只读）
-  - Core/Buff/ItemBuffMonitor.lua：物品BUFF监控、持续时间解析与列表数据
+  - Core/Buff/ItemBuffMonitor.lua：计时BUFF监控、物品/技能持续时间解析与列表数据
   例外：ensureDefaultPotionsInitialized 在缺省配置时补全默认药水并落盘（档案级一次写入）。
 ]]
 
@@ -113,7 +113,7 @@ local function getDefaultGroupConfig()
     }
 end
 
--- 物品BUFF组的默认配置
+-- 计时BUFF组的默认配置
 local function getTrinketPotionConfig()
     local config = getDefaultGroupConfig()
     config.vertical = true
@@ -124,6 +124,8 @@ local function getTrinketPotionConfig()
     config.autoTrinkets = true
     config.itemIDs = {}
     config.itemDurations = {}
+    config.spellIDs = {}
+    config.spellDurations = {}
     config.defaultPotionsInitialized = false
     config.anchorFrame = "uiparent"
     config.relativePoint = "CENTER"
@@ -483,12 +485,111 @@ end
 
 local function renderTrinketPotionConfig(container, groupConfig)
     local Grid = VFlow.Grid
-    Utils.applyDefaults(groupConfig, getDefaultGroupConfig())
+    Utils.applyDefaults(groupConfig, getTrinketPotionConfig())
 
     -- 初始化临时字段
     if not groupConfig._inputItemID then groupConfig._inputItemID = "" end
-    if not groupConfig._inputDuration then groupConfig._inputDuration = "" end
-    if not groupConfig._showDurationInput then groupConfig._showDurationInput = false end
+    if not groupConfig._inputItemDuration then groupConfig._inputItemDuration = "" end
+    if not groupConfig._inputSpellID then groupConfig._inputSpellID = "" end
+    if not groupConfig._inputSpellDuration then groupConfig._inputSpellDuration = "" end
+
+    local function addManualItem(cfg)
+        local itemIDText = cfg._inputItemID or ""
+        local durationText = cfg._inputItemDuration or ""
+        if itemIDText == "" then
+            print("|cffff0000VFlow:|r " .. L["Please enter item ID"])
+            return
+        end
+
+        local itemID = tonumber(itemIDText)
+        if not itemID then
+            print("|cffff0000VFlow:|r " .. L["Invalid item ID"])
+            return
+        end
+        if cfg.itemIDs[itemID] then
+            print("|cffff0000VFlow:|r " .. L["Item already added"])
+            return
+        end
+
+        local manualDuration = nil
+        if durationText ~= "" then
+            manualDuration = tonumber(durationText)
+            if not manualDuration or manualDuration <= 0 then
+                print("|cffff0000VFlow:|r " .. L["Please enter a valid duration"])
+                return
+            end
+        end
+
+        local resolved = VFlow.ItemBuffMonitor and VFlow.ItemBuffMonitor.resolveItemMonitorEntry
+            and VFlow.ItemBuffMonitor.resolveItemMonitorEntry(itemID, manualDuration)
+        if not resolved then
+            print("|cffff0000VFlow:|r " .. L["Invalid item ID"])
+            return
+        end
+        if not resolved.duration or resolved.duration <= 0 then
+            print("|cffff9900VFlow:|r " .. L["Cannot parse duration automatically, please enter duration"])
+            return
+        end
+
+        cfg.itemIDs[itemID] = true
+        cfg.itemDurations[itemID] = resolved.duration
+        VFlow.Store.set(MODULE_KEY, "trinketPotion.itemIDs", cfg.itemIDs)
+        VFlow.Store.set(MODULE_KEY, "trinketPotion.itemDurations", cfg.itemDurations)
+        cfg._inputItemID = ""
+        cfg._inputItemDuration = ""
+        VFlow.Store.set(MODULE_KEY, "trinketPotion._inputItemID", "")
+        VFlow.Store.set(MODULE_KEY, "trinketPotion._inputItemDuration", "")
+        print("|cff00ff00VFlow:|r " .. string.format(L["Added item %d (duration: %d sec)"], itemID, resolved.duration))
+    end
+
+    local function addManualSpell(cfg)
+        local spellIDText = cfg._inputSpellID or ""
+        local durationText = cfg._inputSpellDuration or ""
+        if spellIDText == "" then
+            print("|cffff0000VFlow:|r " .. L["Please enter spell ID"])
+            return
+        end
+
+        local spellID = tonumber(spellIDText)
+        if not spellID then
+            print("|cffff0000VFlow:|r " .. L["Invalid spell ID"])
+            return
+        end
+        if cfg.spellIDs[spellID] then
+            print("|cffff0000VFlow:|r " .. L["Spell already added"])
+            return
+        end
+
+        local manualDuration = nil
+        if durationText ~= "" then
+            manualDuration = tonumber(durationText)
+            if not manualDuration or manualDuration <= 0 then
+                print("|cffff0000VFlow:|r " .. L["Please enter a valid duration"])
+                return
+            end
+        end
+
+        local resolved = VFlow.ItemBuffMonitor and VFlow.ItemBuffMonitor.resolveSpellMonitorEntry
+            and VFlow.ItemBuffMonitor.resolveSpellMonitorEntry(spellID, manualDuration)
+        if not resolved then
+            print("|cffff0000VFlow:|r " .. L["Invalid spell ID"])
+            return
+        end
+        if not resolved.duration or resolved.duration <= 0 then
+            print("|cffff9900VFlow:|r " .. L["Cannot parse duration automatically, please enter duration"])
+            return
+        end
+
+        cfg.spellIDs[spellID] = true
+        cfg.spellDurations[spellID] = resolved.duration
+        VFlow.Store.set(MODULE_KEY, "trinketPotion.spellIDs", cfg.spellIDs)
+        VFlow.Store.set(MODULE_KEY, "trinketPotion.spellDurations", cfg.spellDurations)
+        cfg._inputSpellID = ""
+        cfg._inputSpellDuration = ""
+        VFlow.Store.set(MODULE_KEY, "trinketPotion._inputSpellID", "")
+        VFlow.Store.set(MODULE_KEY, "trinketPotion._inputSpellDuration", "")
+        print("|cff00ff00VFlow:|r " .. string.format(L["Added spell %d (duration: %d sec)"], spellID, resolved.duration))
+    end
 
     local layout = mergeLayouts(
         -- 标题
@@ -512,7 +613,7 @@ local function renderTrinketPotionConfig(container, groupConfig)
             { type = "spacer", height = 10, cols = 24 },
         },
 
-        -- 物品监控
+        -- 计时来源
         {
             { type = "subtitle", text = L["Item monitor"], cols = 24 },
             { type = "separator", cols = 24 },
@@ -520,137 +621,36 @@ local function renderTrinketPotionConfig(container, groupConfig)
             { type = "spacer", height = 10, cols = 24 },
         },
 
-        -- 物品ID输入区
+        -- 手动物品
         {
             { type = "description", text = L["Manual add item:"], cols = 24 },
             { type = "spacer", height = 5, cols = 24 },
             { type = "input", key = "_inputItemID", label = L["Item ID"], cols = 6, numeric = true, labelOnLeft = true },
+            { type = "input", key = "_inputItemDuration", label = L["Duration (sec)"], cols = 6, numeric = true, labelOnLeft = true },
+            { type = "button", text = L["Add"], cols = 3, onClick = addManualItem },
+            { type = "description", text = L["Optional duration (auto-detect if empty)"], cols = 24 },
+            { type = "spacer", height = 10, cols = 24 },
         },
 
-        -- 添加按钮（当不显示持续时间输入框时显示）
+        -- 手动技能
         {
-            {
-                type = "if",
-                dependsOn = "_showDurationInput",
-                condition = function(cfg) return not cfg._showDurationInput end,
-                children = {
-                    {
-                        type = "button",
-                        text = L["Add"],
-                        cols = 3,
-                        onClick = function(cfg)
-                            local itemIDText = cfg._inputItemID or ""
-                            if itemIDText == "" then
-                                print("|cffff0000VFlow:|r " .. L["Please enter item ID"])
-                                return
-                            end
-
-                            local itemID = tonumber(itemIDText)
-                            if not itemID then
-                                print("|cffff0000VFlow:|r " .. L["Invalid item ID"])
-                                return
-                            end
-
-                            if cfg.itemIDs[itemID] then
-                                print("|cffff0000VFlow:|r " .. L["Item already added"])
-                                return
-                            end
-
-                            -- 尝试解析持续时间
-                            local duration = nil
-                            if VFlow.ItemBuffMonitor then
-                                duration = VFlow.ItemBuffMonitor.parseDurationFromItem(itemID)
-                            end
-
-                            if duration then
-                                cfg.itemIDs[itemID] = true
-                                cfg.itemDurations[itemID] = duration
-                                VFlow.Store.set(MODULE_KEY, "trinketPotion.itemIDs", cfg.itemIDs)
-                                VFlow.Store.set(MODULE_KEY, "trinketPotion.itemDurations", cfg.itemDurations)
-                                cfg._inputItemID = ""
-                                VFlow.Store.set(MODULE_KEY, "trinketPotion._inputItemID", "")
-                                print("|cff00ff00VFlow:|r " .. string.format(L["Added item %d (duration: %d sec)"], itemID, duration))
-                            else
-                                cfg._showDurationInput = true
-                                VFlow.Store.set(MODULE_KEY, "trinketPotion._showDurationInput", true)
-                                print("|cffff9900VFlow:|r " .. L["Cannot parse duration automatically, please enter manually"])
-                            end
-                        end,
-                    },
-                }
-            },
+            { type = "description", text = L["Manual add spell:"], cols = 24 },
+            { type = "spacer", height = 5, cols = 24 },
+            { type = "input", key = "_inputSpellID", label = L["Spell ID"], cols = 6, numeric = true, labelOnLeft = true },
+            { type = "input", key = "_inputSpellDuration", label = L["Duration (sec)"], cols = 6, numeric = true, labelOnLeft = true },
+            { type = "button", text = L["Add"], cols = 3, onClick = addManualSpell },
+            { type = "description", text = L["Optional duration (auto-detect if empty)"], cols = 24 },
         },
 
-        -- 持续时间输入框和确认按钮
-        {
-            {
-                type = "if",
-                dependsOn = "_showDurationInput",
-                condition = function(cfg) return cfg._showDurationInput end,
-                children = {
-                    { type = "input", key = "_inputDuration", label = L["Duration (sec)"], cols = 6, numeric = true },
-                    {
-                        type = "button",
-                        text = L["Confirm"],
-                        cols = 3,
-                        onClick = function(cfg)
-                            local itemIDText = cfg._inputItemID or ""
-                            local durationText = cfg._inputDuration or ""
-
-                            if itemIDText == "" or durationText == "" then
-                                print("|cffff0000VFlow:|r " .. L["Please enter item ID and duration"])
-                                return
-                            end
-
-                            local itemID = tonumber(itemIDText)
-                            local duration = tonumber(durationText)
-
-                            if not itemID or not duration or duration <= 0 then
-                                print("|cffff0000VFlow:|r " .. L["Invalid input"])
-                                return
-                            end
-
-                            cfg.itemIDs[itemID] = true
-                            cfg.itemDurations[itemID] = duration
-                            VFlow.Store.set(MODULE_KEY, "trinketPotion.itemIDs", cfg.itemIDs)
-                            VFlow.Store.set(MODULE_KEY, "trinketPotion.itemDurations", cfg.itemDurations)
-
-                            cfg._inputItemID = ""
-                            cfg._inputDuration = ""
-                            cfg._showDurationInput = false
-                            VFlow.Store.set(MODULE_KEY, "trinketPotion._inputItemID", "")
-                            VFlow.Store.set(MODULE_KEY, "trinketPotion._inputDuration", "")
-                            VFlow.Store.set(MODULE_KEY, "trinketPotion._showDurationInput", false)
-
-                            print("|cff00ff00VFlow:|r " .. string.format(L["Added item %d (duration: %d sec)"], itemID, duration))
-                        end,
-                    },
-                    {
-                        type = "button",
-                        text = L["Cancel"],
-                        cols = 3,
-                        onClick = function(cfg)
-                            cfg._inputItemID = ""
-                            cfg._inputDuration = ""
-                            cfg._showDurationInput = false
-                            VFlow.Store.set(MODULE_KEY, "trinketPotion._inputItemID", "")
-                            VFlow.Store.set(MODULE_KEY, "trinketPotion._inputDuration", "")
-                            VFlow.Store.set(MODULE_KEY, "trinketPotion._showDurationInput", false)
-                        end,
-                    },
-                }
-            },
-        },
-
-        -- 已监控的物品列表
+        -- 已监控的计时项列表
         {
             { type = "spacer", height = 10, cols = 24 },
-            { type = "description", text = L["Monitored items (click to delete):"], cols = 24 },
+            { type = "description", text = L["Monitored timed entries (click to delete):"], cols = 24 },
             { type = "spacer", height = 5, cols = 24 },
             {
                 type = "for",
                 cols = 2,
-                dependsOn = { "autoTrinkets", "itemIDs", "_dataVersion" },
+                dependsOn = { "autoTrinkets", "itemIDs", "itemDurations", "spellIDs", "spellDurations", "_dataVersion" },
                 dataSource = function()
                     local items = {}
 
@@ -665,6 +665,7 @@ local function renderTrinketPotionConfig(container, groupConfig)
                                 icon = itemIcon or itemData.icon or 134400,
                                 duration = itemData.duration or 0,
                                 isAuto = true,
+                            entryType = "item",
                             })
                         end
                     end
@@ -678,6 +679,20 @@ local function renderTrinketPotionConfig(container, groupConfig)
                             icon = itemIcon or 134400,
                             duration = groupConfig.itemDurations[itemID] or 0,
                             isAuto = false,
+                            entryType = "item",
+                        })
+                    end
+
+                    -- 添加手动添加的技能
+                    for spellID in pairs(groupConfig.spellIDs or {}) do
+                        local spellInfo = C_Spell.GetSpellInfo(spellID)
+                        table.insert(items, {
+                            spellID = spellID,
+                            name = (spellInfo and spellInfo.name) or string.format(L["Spell %s"], spellID),
+                            icon = (spellInfo and spellInfo.iconID) or 134400,
+                            duration = groupConfig.spellDurations[spellID] or 0,
+                            isAuto = false,
+                            entryType = "spell",
                         })
                     end
 
@@ -690,7 +705,11 @@ local function renderTrinketPotionConfig(container, groupConfig)
                     size = 40,
                     tooltip = function(itemData)
                         return function(tooltip)
-                            tooltip:SetItemByID(itemData.itemID)
+                            if itemData.entryType == "spell" then
+                                tooltip:SetSpellByID(itemData.spellID)
+                            else
+                                tooltip:SetItemByID(itemData.itemID)
+                            end
                             tooltip:AddLine(" ")
                             tooltip:AddLine(string.format(L["Duration: %d sec"], itemData.duration), 1, 1, 1)
                             tooltip:AddLine(" ")
@@ -707,14 +726,21 @@ local function renderTrinketPotionConfig(container, groupConfig)
                             return
                         end
 
-                        groupConfig.itemIDs[itemData.itemID] = nil
-                        groupConfig.itemDurations[itemData.itemID] = nil
-                        VFlow.Store.set(MODULE_KEY, "trinketPotion.itemIDs", groupConfig.itemIDs)
-                        VFlow.Store.set(MODULE_KEY, "trinketPotion.itemDurations", groupConfig.itemDurations)
+                        if itemData.entryType == "spell" then
+                            groupConfig.spellIDs[itemData.spellID] = nil
+                            groupConfig.spellDurations[itemData.spellID] = nil
+                            VFlow.Store.set(MODULE_KEY, "trinketPotion.spellIDs", groupConfig.spellIDs)
+                            VFlow.Store.set(MODULE_KEY, "trinketPotion.spellDurations", groupConfig.spellDurations)
+                        else
+                            groupConfig.itemIDs[itemData.itemID] = nil
+                            groupConfig.itemDurations[itemData.itemID] = nil
+                            VFlow.Store.set(MODULE_KEY, "trinketPotion.itemIDs", groupConfig.itemIDs)
+                            VFlow.Store.set(MODULE_KEY, "trinketPotion.itemDurations", groupConfig.itemDurations)
+                        end
                     end,
                 }
             },
-            { type = "spacer", height = 20, cols = 24 },
+            { type = "spacer", height = 5, cols = 24 },
         },
 
         -- 基础设置

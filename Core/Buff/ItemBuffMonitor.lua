@@ -1,11 +1,12 @@
 -- =========================================================
 -- SECTION 1: 模块入口
--- ItemBuffMonitor — 物品 BUFF 监控
+-- ItemBuffMonitor — 计时 BUFF 监控
 -- =========================================================
 
 local VFlow = _G.VFlow
 if not VFlow then return end
 
+local L = VFlow.L
 local Profiler = VFlow.Profiler
 local Utils = VFlow.Utils
 
@@ -23,7 +24,7 @@ end
 -- =========================================================
 
 local _container = nil        -- 容器帧
-local _iconPool = {}          -- 图标池 {[spellID] = {frame, icon, cooldown, itemID, duration, isAuto}}
+local _iconPool = {}          -- 图标池 {[spellID] = {frame, icon, cooldown, sourceType, sourceID, duration, isAuto}}
 local _autoDetectedItems = {} -- 自动检测的饰品 {itemID = {spellID, icon, duration}}
 local _scanTooltip = nil      -- 扫描tooltip
 local _scanRetryCount = 0     -- 扫描重试计数
@@ -58,43 +59,67 @@ local function ParseDuration(text)
 end
 
 -- =========================================================
--- SECTION 4: 物品法术信息提取
+-- SECTION 4: 物品/技能法术信息提取
 -- =========================================================
 
-local function GetItemSpellInfo(itemID)
-    if not itemID then return nil, nil end
+local function GetSpellDurationInfo(spellID)
+    if not spellID then return nil, nil end
+
+    local spellInfo = C_Spell.GetSpellInfo(spellID)
+    if not spellInfo then
+        return nil, nil
+    end
+
+    local description = C_Spell.GetSpellDescription(spellID)
+    if description then
+        local duration = ParseDuration(description)
+        if duration then
+            return spellInfo, duration
+        end
+    end
+
+    local tooltipInfo = C_TooltipInfo.GetSpellByID(spellID)
+    if tooltipInfo and tooltipInfo.lines then
+        for _, line in ipairs(tooltipInfo.lines) do
+            if line.leftText then
+                local duration = ParseDuration(line.leftText)
+                if duration then
+                    return spellInfo, duration
+                end
+            end
+        end
+    end
+
+    return spellInfo, nil
+end
+
+local function GetItemMonitorInfo(itemID)
+    if not itemID then return nil end
 
     -- 策略1: 使用C_Spell.GetSpellDescription（最快）
     local spellID = select(2, C_Item.GetItemSpell(itemID))
-    if spellID then
-        local spellInfo = C_Spell.GetSpellInfo(spellID)
-        if spellInfo then
-            local description = C_Spell.GetSpellDescription(spellID)
-            if description then
-                local duration = ParseDuration(description)
-                if duration then
-                    return spellID, duration
-                end
-            end
-        end
+    if not spellID then
+        return nil
     end
 
-    -- 策略2: 使用C_TooltipInfo.GetSpellByID（较准确）
-    if spellID then
-        local tooltipInfo = C_TooltipInfo.GetSpellByID(spellID)
-        if tooltipInfo and tooltipInfo.lines then
-            for _, line in ipairs(tooltipInfo.lines) do
-                if line.leftText then
-                    local duration = ParseDuration(line.leftText)
-                    if duration then
-                        return spellID, duration
-                    end
-                end
-            end
-        end
+    local spellInfo, duration = GetSpellDurationInfo(spellID)
+    if not spellInfo then
+        return nil
     end
 
-    -- 策略3: Tooltip扫描（兼容性最好）
+    local _, _, _, _, _, _, _, _, _, itemIcon = C_Item.GetItemInfo(itemID)
+    if duration then
+        return {
+            spellID = spellID,
+            name = spellInfo.name,
+            icon = itemIcon or spellInfo.iconID or 134400,
+            duration = duration,
+            sourceType = "item",
+            sourceID = itemID,
+        }
+    end
+
+    -- 策略2: Item Tooltip扫描（兼容性最好）
     if not _scanTooltip then
         _scanTooltip = CreateFrame("GameTooltip", "VFlowItemBuffScanTooltip", UIParent, "GameTooltipTemplate")
         _scanTooltip:SetOwner(UIParent, "ANCHOR_NONE")
@@ -108,15 +133,38 @@ local function GetItemSpellInfo(itemID)
         if line then
             local text = line:GetText()
             if text then
-                local duration = ParseDuration(text)
+                duration = ParseDuration(text)
                 if duration then
-                    return spellID, duration
+                    break
                 end
             end
         end
     end
 
-    return spellID, nil
+    return {
+        spellID = spellID,
+        name = spellInfo.name,
+        icon = itemIcon or spellInfo.iconID or 134400,
+        duration = duration,
+        sourceType = "item",
+        sourceID = itemID,
+    }
+end
+
+local function GetSpellMonitorInfo(spellID)
+    local spellInfo, duration = GetSpellDurationInfo(spellID)
+    if not spellInfo then
+        return nil
+    end
+
+    return {
+        spellID = spellID,
+        name = spellInfo.name,
+        icon = spellInfo.iconID or 134400,
+        duration = duration,
+        sourceType = "spell",
+        sourceID = spellID,
+    }
 end
 
 -- =========================================================
@@ -140,7 +188,7 @@ local function InitContainer()
 
     if VFlow.DragFrame then
         VFlow.DragFrame.register(_container, {
-            label = "物品BUFF",
+            label = (L and L["Trinkets & Potions"]) or "计时BUFF",
             menuKey = "buff_trinket_potion",
             getAnchorConfig = function()
                 local d = getBuffsDB()
@@ -200,7 +248,7 @@ local function CreateIconFrame()
     return frame
 end
 
-local function ActivateIcon(spellID, itemID)
+local function ActivateIcon(spellID)
     local poolData = _iconPool[spellID]
     if not poolData then return end
 
@@ -209,10 +257,9 @@ local function ActivateIcon(spellID, itemID)
 
     if not frame or not duration then return end
 
-    -- 获取物品图标
-    local _, _, _, _, _, _, _, _, _, itemIcon = C_Item.GetItemInfo(itemID)
-    if itemIcon then
-        frame.icon:SetTexture(itemIcon)
+    -- 每个 spellID 都统一使用注册时解析出的图标
+    if poolData.icon then
+        frame.icon:SetTexture(poolData.icon)
     end
 
     -- 启动冷却（Duration 对象，避免 SetCooldown 传入不被允许的时间参数）
@@ -238,7 +285,7 @@ local function ActivateIcon(spellID, itemID)
 end
 
 -- =========================================================
--- SECTION 7: 物品扫描
+-- SECTION 7: 计时项扫描
 -- =========================================================
 
 local function ScanItems()
@@ -264,27 +311,26 @@ local function ScanItems()
                 -- 请求加载物品数据
                 C_Item.RequestLoadItemDataByID(itemID)
 
-                local spellID, duration = GetItemSpellInfo(itemID)
-                if spellID then
-                    -- 获取物品图标
-                    local _, _, _, _, _, _, _, _, _, itemIcon = C_Item.GetItemInfo(itemID)
-
+                local itemData = GetItemMonitorInfo(itemID)
+                if itemData then
                     -- 注册到池
-                    _iconPool[spellID] = {
-                        frame = oldPool[spellID] and oldPool[spellID].frame or nil,
-                        itemID = itemID,
-                        duration = duration,
+                    _iconPool[itemData.spellID] = {
+                        frame = oldPool[itemData.spellID] and oldPool[itemData.spellID].frame or nil,
+                        sourceType = itemData.sourceType,
+                        sourceID = itemData.sourceID,
+                        icon = itemData.icon,
+                        duration = itemData.duration,
                         isAuto = true,
                     }
 
                     -- 记录自动检测的物品
                     _autoDetectedItems[itemID] = {
-                        spellID = spellID,
-                        icon = itemIcon or 134400,
-                        duration = duration or 0,
+                        spellID = itemData.spellID,
+                        icon = itemData.icon or 134400,
+                        duration = itemData.duration or 0,
                     }
 
-                    if not duration then
+                    if not itemData.duration then
                         unloadedCount = unloadedCount + 1
                     end
                 else
@@ -299,23 +345,51 @@ local function ScanItems()
         -- 请求加载物品数据
         C_Item.RequestLoadItemDataByID(itemID)
 
-        local spellID, duration = GetItemSpellInfo(itemID)
+        local itemData = GetItemMonitorInfo(itemID)
 
         -- 如果没有解析到持续时间，使用手动设置的持续时间
-        if not duration and config.itemDurations[itemID] then
-            duration = config.itemDurations[itemID]
+        if itemData and not itemData.duration and config.itemDurations[itemID] then
+            itemData.duration = config.itemDurations[itemID]
         end
 
-        if spellID then
+        if itemData then
             -- 注册到池
-            _iconPool[spellID] = {
-                frame = oldPool[spellID] and oldPool[spellID].frame or nil,
-                itemID = itemID,
-                duration = duration,
+            _iconPool[itemData.spellID] = {
+                frame = oldPool[itemData.spellID] and oldPool[itemData.spellID].frame or nil,
+                sourceType = itemData.sourceType,
+                sourceID = itemData.sourceID,
+                icon = itemData.icon,
+                duration = itemData.duration,
                 isAuto = false,
             }
 
-            if not duration then
+            if not itemData.duration then
+                unloadedCount = unloadedCount + 1
+            end
+        else
+            unloadedCount = unloadedCount + 1
+        end
+    end
+
+    -- 扫描手动添加的技能
+    for spellID in pairs(config.spellIDs or {}) do
+        local spellData = GetSpellMonitorInfo(spellID)
+
+        if spellData and not spellData.duration and config.spellDurations[spellID] then
+            spellData.duration = config.spellDurations[spellID]
+        end
+
+        if spellData then
+            _iconPool[spellID] = {
+                frame = oldPool[spellID] and oldPool[spellID].frame or nil,
+                sourceType = spellData.sourceType,
+                sourceID = spellData.sourceID,
+                icon = spellData.icon,
+                duration = spellData.duration,
+                isAuto = false,
+            }
+
+            if not spellData.duration then
                 unloadedCount = unloadedCount + 1
             end
         else
@@ -342,11 +416,8 @@ local function ScanItems()
         end
 
         -- 设置图标纹理（用于编辑模式预览）
-        if poolData.frame and poolData.itemID then
-            local _, _, _, _, _, _, _, _, _, itemIcon = C_Item.GetItemInfo(poolData.itemID)
-            if itemIcon then
-                poolData.frame.icon:SetTexture(itemIcon)
-            end
+        if poolData.frame and poolData.icon then
+            poolData.frame.icon:SetTexture(poolData.icon)
         end
     end
 
@@ -571,7 +642,7 @@ end)
 VFlow.on("UNIT_SPELLCAST_SUCCEEDED", "ItemBuffMonitor", function(event, unit, _, spellID)
     for sid, poolData in pairs(_iconPool) do
         if sid == spellID then
-            ActivateIcon(spellID, poolData.itemID)
+            ActivateIcon(spellID)
             break
         end
     end
@@ -590,10 +661,12 @@ VFlow.Store.watch(MODULE_KEY, "ItemBuffMonitor", function(key, value)
         return
     end
 
-    -- autoTrinkets/itemIDs/itemDurations变化: 重新扫描
+    -- autoTrinkets/itemIDs/itemDurations/spellIDs/spellDurations变化: 重新扫描
     if key == "trinketPotion.autoTrinkets" or
         key == "trinketPotion.itemIDs" or
-        key == "trinketPotion.itemDurations" then
+        key == "trinketPotion.itemDurations" or
+        key == "trinketPotion.spellIDs" or
+        key == "trinketPotion.spellDurations" then
         ScheduleScan()
         return
     end
@@ -614,8 +687,35 @@ end)
 
 VFlow.ItemBuffMonitor = {
     parseDurationFromItem = function(itemID)
-        local _, duration = GetItemSpellInfo(itemID)
-        return duration
+        local itemData = GetItemMonitorInfo(itemID)
+        return itemData and itemData.duration or nil
+    end,
+
+    parseDurationFromSpell = function(spellID)
+        local spellData = GetSpellMonitorInfo(spellID)
+        return spellData and spellData.duration or nil
+    end,
+
+    resolveItemMonitorEntry = function(itemID, manualDuration)
+        local itemData = GetItemMonitorInfo(itemID)
+        if not itemData then
+            return nil
+        end
+        if manualDuration and manualDuration > 0 then
+            itemData.duration = manualDuration
+        end
+        return itemData
+    end,
+
+    resolveSpellMonitorEntry = function(spellID, manualDuration)
+        local spellData = GetSpellMonitorInfo(spellID)
+        if not spellData then
+            return nil
+        end
+        if manualDuration and manualDuration > 0 then
+            spellData.duration = manualDuration
+        end
+        return spellData
     end,
 
     getAutoDetectedItems = function()
