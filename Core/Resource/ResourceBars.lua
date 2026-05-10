@@ -340,6 +340,9 @@ local function OutlineToken(outline)
     if outline == "THICKOUTLINE" then
         return "THICKOUTLINE"
     end
+    if outline == "MONOCHROMEOUTLINE" then
+        return "OUTLINE,MONOCHROME"
+    end
     if outline == "OUTLINE" then
         return "OUTLINE"
     end

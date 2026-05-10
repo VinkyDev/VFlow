@@ -46,6 +46,7 @@ end
 local function getOutlineItems()
     return {
         { L["Outline"], "OUTLINE" },
+        { L["Monochrome outline"], "MONOCHROMEOUTLINE" },
         { L["Thick outline"], "THICKOUTLINE" },
         { L["Shadow"], "SHADOW" },
         { L["None"], "NONE" },

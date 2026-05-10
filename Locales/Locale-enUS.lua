@@ -63,6 +63,7 @@ L["None"] = true
 L["Font size"] = true
 L["Font"] = true
 L["Outline"] = true
+L["Monochrome outline"] = true
 L["Thick outline"] = true
 L["Shadow"] = true
 L["Please select..."] = true

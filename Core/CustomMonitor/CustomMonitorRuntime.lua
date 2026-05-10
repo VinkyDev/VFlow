@@ -45,6 +45,9 @@ local function ResolveFontFlags(outline)
     if outline == "OUTLINE" or outline == "THICKOUTLINE" then
         return outline
     end
+    if outline == "MONOCHROMEOUTLINE" then
+        return "OUTLINE,MONOCHROME"
+    end
     return ""
 end
 

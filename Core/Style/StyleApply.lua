@@ -170,6 +170,8 @@ function StyleApply.ApplyFontStyle(fs, cfg, cachePrefix)
     local requestedFlags = ""
     if outline == "OUTLINE" or outline == "THICKOUTLINE" then
         requestedFlags = outline
+    elseif outline == "MONOCHROMEOUTLINE" then
+        requestedFlags = "OUTLINE,MONOCHROME"
     end
     local sizeKey = prefix .. "_size"
     local fontKey = prefix .. "_font"
