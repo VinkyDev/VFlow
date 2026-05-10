@@ -1,6 +1,7 @@
 <Ui>
     <Script file="Core\Resource\ClassResourceMap.lua"/>
     <Script file="Core\Resource\ResourceStyles.lua"/>
+    <Script file="Core\Resource\WhirlwindTracker.lua"/>
     <Script file="Core\Resource\ResourceBars.lua"/>
     <Script file="Core\Keybind.lua"/>
     <Script file="Core\Style\MasqueSupport.lua"/>

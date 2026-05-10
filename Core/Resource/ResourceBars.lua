@@ -14,12 +14,14 @@ local Utils = VFlow.Utils
 local CR = VFlow.ClassResourceMap
 local CA = VFlow.ContainerAnchor
 local RS = VFlow.ResourceStyles
+local CustomTrackers = VFlow.ResourceCustomTrackers or {}
 local Profiler = VFlow.Profiler
 local BFK = VFlow.BarFrameKit
 local PP = VFlow.PixelPerfect
 local E_PT = _G.Enum and Enum.PowerType
 
 local rb = {}
+local RefreshAll, RefreshValuesOnly
 
 -- =========================================================
 -- SECTION 2: 运行时状态与资源解析
@@ -143,6 +145,21 @@ local function CurrentSpecId()
     return C_SpecializationInfo.GetSpecializationInfo(specIndex)
 end
 
+local function GetCustomResourceTracker(resource)
+    if not resource then
+        return nil
+    end
+    return CustomTrackers[resource]
+end
+
+local function NotifyTrackersOfSharedRuntimeEvent(event)
+    for _, tracker in pairs(CustomTrackers) do
+        if tracker and tracker.OnSharedRuntimeEvent then
+            tracker.OnSharedRuntimeEvent(event)
+        end
+    end
+end
+
 local function ResolveRuntimeResourceToken(resourceToken)
     if not resourceToken then
         return nil
@@ -246,6 +263,10 @@ end
 
 local function GetSecondaryResourceValue(resource)
     if not resource then return nil, nil end
+    local tracker = GetCustomResourceTracker(resource)
+    if tracker and tracker.GetValue then
+        return tracker.GetValue()
+    end
 
     if resource == "STAGGER" then
         local stagger = UnitStagger("player") or 0
@@ -643,6 +664,7 @@ local DISCRETE_SEGMENT_RESOURCES = E_PT and {
     [E_PT.Essence] = true,
     [E_PT.Runes] = true,
     [E_PT.SoulShards] = true,
+    ["WHIRLWIND"] = true,
     ["ICICLES"] = true,
     ["TIP_OF_THE_SPEAR"] = true,
     ["SOUL_FRAGMENTS_VENGEANCE"] = true,
@@ -1278,8 +1300,6 @@ local function UpdateOneSlot(context, isSecondary, skipLayout)
     RememberLastValueState(host, resource, max, cur, style)
 end
 
-local RefreshValuesOnly
-
 local function StartResourceBarValuePoll()
     if resourceBarPollDriver then
         return
@@ -1300,7 +1320,7 @@ local function StartResourceBarValuePoll()
     resourceBarPollDriver = f
 end
 
-local function RefreshAll()
+RefreshAll = function()
     local context = BuildRuntimeContext(nil, true)
     UpdateOneSlot(context, false, false)
     UpdateOneSlot(context, true, false)
@@ -1316,6 +1336,18 @@ local function RefreshVisibilityOnly()
     local context = BuildRuntimeContext(nil, false)
     UpdateOneSlot(context, false, true)
     UpdateOneSlot(context, true, true)
+end
+
+local function RegisterCustomTrackerEvents(registerEvent)
+    for _, tracker in pairs(CustomTrackers) do
+        if tracker and tracker.RegisterEvents then
+            tracker.RegisterEvents(registerEvent, {
+                refreshAll = RefreshAll,
+                refreshValuesOnly = RefreshValuesOnly,
+                markRuntimeContextDirty = MarkRuntimeContextDirty,
+            })
+        end
+    end
 end
 
 --- 双槽均隐藏且非编辑模式时跳过轮询
@@ -1363,7 +1395,8 @@ RefreshValuesOnly = function()
     UpdateOneSlot(context, true, true)
 end
 
-local function HandleLayoutRuntimeEvent()
+local function HandleLayoutRuntimeEvent(event)
+    NotifyTrackersOfSharedRuntimeEvent(event)
     MarkRuntimeContextDirty()
     RefreshAll()
 end
@@ -1402,6 +1435,7 @@ local function RegisterRuntimeEvents()
     registerEvent("PLAYER_SPECIALIZATION_CHANGED", EVENT_OWNER, HandleLayoutRuntimeEvent, "player", "RB:HandleLayoutRuntimeEvent", "count")
     registerEvent("PLAYER_REGEN_ENABLED", EVENT_OWNER, HandleLayoutRuntimeEvent, nil, "RB:HandleLayoutRuntimeEvent", "count")
     registerEvent("PLAYER_REGEN_DISABLED", EVENT_OWNER, HandleLayoutRuntimeEvent, nil, "RB:HandleLayoutRuntimeEvent", "count")
+    RegisterCustomTrackerEvents(registerEvent)
     if select(2, UnitClass("player")) == "DRUID" then
         registerEvent("UPDATE_SHAPESHIFT_FORM", EVENT_OWNER, HandleLayoutRuntimeEvent, nil, "RB:HandleLayoutRuntimeEvent", "count")
     end

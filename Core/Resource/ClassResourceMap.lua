@@ -20,6 +20,7 @@ CR.CUSTOM = {
     SOUL_FRAGMENTS_VENGEANCE = true,
     DEVOURER_SOUL = true,
     TIP_OF_THE_SPEAR = true,
+    WHIRLWIND = true,
 }
 
 local function D()
@@ -89,7 +90,7 @@ end
 local ROWS_BY_CLASS = {
     WARRIOR = {
         row(71, nil, "RAGE", nil),
-        row(72, nil, "RAGE", nil),
+        row(72, nil, "RAGE", "WHIRLWIND"),
         row(73, nil, "RAGE", nil),
     },
     PALADIN = {

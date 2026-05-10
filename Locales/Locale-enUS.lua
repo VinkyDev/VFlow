@@ -538,6 +538,7 @@ L["Shapeshift form #%s"] = true
 L["(none)"] = true
 L["ResType_MANA"] = "Mana"
 L["ResType_RAGE"] = "Rage"
+L["ResType_WHIRLWIND"] = "Whirlwind"
 L["ResType_ENERGY"] = "Energy"
 L["ResType_FOCUS"] = "Focus"
 L["ResType_FURY"] = "Fury"

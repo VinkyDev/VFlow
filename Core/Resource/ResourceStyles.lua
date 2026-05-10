@@ -49,6 +49,7 @@ local resolvedDefaultStyleCache = {}
 RS.ALL_KEYS_ORDERED = {
     "MANA",
     "RAGE",
+    "WHIRLWIND",
     "ENERGY",
     "FOCUS",
     "FURY",
@@ -149,6 +150,7 @@ local DEFAULT_ENTRY_FALLBACK = baseEntry({ r = 0.72, g = 0.74, b = 0.82, a = 1 }
 local DEFAULT_ENTRY = {
     MANA = baseEntry({ r = 0.31, g = 0.85, b = 1.00, a = 1 }, { showPercent = true }),
     RAGE = baseEntry({ r = 0.90, g = 0.29, b = 0.26, a = 1 }),
+    WHIRLWIND = baseEntry({ r = 0.98, g = 0.72, b = 0.26, a = 1 }, { showText = false }),
     ENERGY = baseEntry({ r = 0.98, g = 0.86, b = 0.33, a = 1 }),
     FOCUS = baseEntry({ r = 0.94, g = 0.66, b = 0.33, a = 1 }),
     FURY = baseEntry({ r = 0.73, g = 0.29, b = 0.94, a = 1 }),
