@@ -7,10 +7,11 @@ local VFlow = _G.VFlow
 if not VFlow then return end
 
 local Profiler = VFlow.Profiler
+local ModuleControlConstants = VFlow.ModuleControlConstants
 
-local MODULE_KEY = "VFlow.OtherFeatures"
+local SHARED_SETTINGS_KEY = "VFlow.OtherFeatures"
 
-if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MODULE_KEY) then return end
+if not ModuleControlConstants.CORE_ENABLED then return end
 local onCooldownViewerAlert
 
 -- =========================================================
@@ -149,7 +150,7 @@ local function tryInstallHook()
 end
 
 onCooldownViewerAlert = function(cooldownItem, alert)
-        local db = VFlow.getDBIfReady(MODULE_KEY)
+        local db = VFlow.getDBIfReady(SHARED_SETTINGS_KEY)
         if not db then
             return
         end

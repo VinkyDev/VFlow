@@ -7,6 +7,7 @@ local VFlow = _G.VFlow
 if not VFlow then return end
 
 local Profiler = VFlow.Profiler
+local ModuleRuntimeEnabled = VFlow.ModuleControlConstants.MODULE_RUNTIME_ENABLED
 
 -- =========================================================
 -- SECTION 2: 目标 Viewer 与按钮注入
@@ -26,7 +27,7 @@ local function IsTargetEnabled(target)
     if not target.moduleKey then
         return true
     end
-    return not VFlow.isModuleEnabled or VFlow.isModuleEnabled(target.moduleKey)
+    return ModuleRuntimeEnabled[target.moduleKey] ~= false
 end
 
 local function ResolveButtonTemplate()

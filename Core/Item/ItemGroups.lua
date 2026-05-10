@@ -7,8 +7,9 @@ local VFlow = _G.VFlow
 if not VFlow then return end
 
 local MODULE_KEY = "VFlow.Items"
+local ModuleControlConstants = VFlow.ModuleControlConstants
 
-if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MODULE_KEY) then return end
+if not ModuleControlConstants.ITEMS_ENABLED then return end
 
 -- =========================================================
 -- SECTION 2: 模块状态与刷新调度

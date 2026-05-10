@@ -9,10 +9,11 @@ if not VFlow then return end
 local L = VFlow.L
 local Profiler = VFlow.Profiler
 local Utils = VFlow.Utils
+local ModuleControlConstants = VFlow.ModuleControlConstants
 
 local MODULE_KEY = "VFlow.Buffs"
 
-if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MODULE_KEY) then return end
+if not ModuleControlConstants.CORE_ENABLED then return end
 local MasqueSupport = VFlow.MasqueSupport
 
 local function getBuffsDB()

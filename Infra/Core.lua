@@ -32,12 +32,12 @@ local moduleCatalog = {
     { moduleKey = "VFlow.BuffBar", shortName = "BuffBar", displayName = L["BUFF Bar"], controlKey = "buffBar" },
     { moduleKey = "VFlow.CustomMonitor", shortName = "CustomMonitor", displayName = L["Graphic Monitor"], controlKey = "custom" },
     { moduleKey = "VFlow.Items", shortName = "Items", displayName = L["Extra CD Monitor"], controlKey = "items", requiredControlKeys = { "core" } },
-    { moduleKey = "VFlow.OtherFeatures", shortName = "OtherFeatures", displayName = "特殊设置", controlKey = "core" },
+    { moduleKey = "VFlow.OtherFeatures", shortName = "SharedSettings", displayName = L["Skill/BUFF Settings"], controlKey = "core" },
     { moduleKey = "VFlow.Resources", shortName = "Resources", displayName = L["Resource bar"], controlKey = "resources" },
 }
 
 local moduleControlCatalog = {
-    { controlKey = "core", label = "样式/技能/BUFF/特殊设置", order = 10, moduleKeys = { "VFlow.StyleIcon", "VFlow.StyleGlow", "VFlow.StyleDisplay", "VFlow.Skills", "VFlow.Buffs", "VFlow.OtherFeatures" } },
+    { controlKey = "core", label = L["Style/Skills/BUFF"], order = 10, moduleKeys = { "VFlow.StyleIcon", "VFlow.StyleGlow", "VFlow.StyleDisplay", "VFlow.Skills", "VFlow.Buffs", "VFlow.OtherFeatures" } },
     { controlKey = "buffBar", label = L["BUFF Bar"], order = 20, moduleKeys = { "VFlow.BuffBar" } },
     { controlKey = "custom", label = L["Graphic Monitor"], order = 30, moduleKeys = { "VFlow.CustomMonitor" } },
     { controlKey = "items", label = L["Extra CD Monitor"], order = 40, moduleKeys = { "VFlow.Items" }, dependencies = { "core" } },
@@ -341,7 +341,15 @@ function VFlow.getModuleControlSavedState(controlKey)
 end
 
 function VFlow.isModuleEnabled(moduleKeyOrShortName)
-    local state = VFlow.getModuleRuntimeState(moduleKeyOrShortName)
+    local moduleKey = normalizeModuleKey(moduleKeyOrShortName)
+    if not moduleKey then
+        return false
+    end
+    local constants = VFlow.ModuleControlConstants and VFlow.ModuleControlConstants.MODULE_RUNTIME_ENABLED
+    if constants then
+        return constants[moduleKey] ~= false
+    end
+    local state = VFlow.getModuleRuntimeState(moduleKey)
     return state and state.effective == true or false
 end
 

@@ -14,8 +14,9 @@ if not VFlow then return end
 local L = VFlow.L
 
 local MODULE_KEY = "VFlow.Skills"
+local ModuleControlConstants = VFlow.ModuleControlConstants
 
-if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MODULE_KEY) then return end
+if not ModuleControlConstants.CORE_ENABLED then return end
 
 VFlow.registerModule(MODULE_KEY, {
     name = L["Skill Monitor"],
@@ -202,6 +203,12 @@ end
 
 local mergeLayouts = Utils.mergeLayouts
 
+local function openSkillSettings()
+    if VFlow.MainUI and VFlow.MainUI.openMenu then
+        VFlow.MainUI.openMenu("skill_settings")
+    end
+end
+
 -- 自定义组：技能选择器
 local function buildCustomSkillSelector(groupConfig, options)
     return {
@@ -367,23 +374,10 @@ local function renderGroupConfig(container, groupConfig, groupName, options)
             {
                 type = "interactiveText",
                 cols = 24,
-                text = L["Use {Special Settings} -> {Skills} to configure {Hide buff remaining time overlay} per skill."],
+                text = L["Use {Skill Settings} to configure {Hide buff remaining time overlay} per skill."],
                 links = {
-                    [L["Special Settings"]] = function()
-                        if VFlow.MainUI and VFlow.MainUI.openMenu then
-                            VFlow.MainUI.openMenu("other_skill")
-                        end
-                    end,
-                    [L["Skills"]] = function()
-                        if VFlow.MainUI and VFlow.MainUI.openMenu then
-                            VFlow.MainUI.openMenu("other_skill")
-                        end
-                    end,
-                    [L["Hide buff remaining time overlay"]] = function()
-                        if VFlow.MainUI and VFlow.MainUI.openMenu then
-                            VFlow.MainUI.openMenu("other_skill")
-                        end
-                    end,
+                    [L["Skill Settings"]] = openSkillSettings,
+                    [L["Hide buff remaining time overlay"]] = openSkillSettings,
                 },
             },
             { type = "colorPicker", key = "cooldownMaskColor", label = L["Normal cooldown mask color"], hasAlpha = true, cols = 12 },
@@ -498,7 +492,15 @@ local function renderGroupConfig(container, groupConfig, groupName, options)
 end
 
 local function renderContent(container, menuKey)
-    if menuKey == "skill_important" then
+    if menuKey == "skill_settings" then
+        local sharedSettings = VFlow.Modules and VFlow.Modules.SharedSettings
+        if sharedSettings and sharedSettings.renderSkillSettings then
+            sharedSettings.renderSkillSettings(container)
+        else
+            local title = VFlow.UI.title(container, L["Skill Settings"])
+            title:SetPoint("TOPLEFT", 10, -10)
+        end
+    elseif menuKey == "skill_important" then
         renderGroupConfig(container, db.importantSkills, L["Important Skill Group"])
     elseif menuKey == "skill_efficiency" then
         renderGroupConfig(container, db.efficiencySkills, L["Efficiency Skill Group"])

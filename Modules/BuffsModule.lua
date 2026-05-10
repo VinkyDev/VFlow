@@ -16,8 +16,9 @@ if not VFlow then return end
 local L = VFlow.L
 
 local MODULE_KEY = "VFlow.Buffs"
+local ModuleControlConstants = VFlow.ModuleControlConstants
 
-if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MODULE_KEY) then return end
+if not ModuleControlConstants.CORE_ENABLED then return end
 
 VFlow.registerModule(MODULE_KEY, {
     name = L["BUFF Monitor"],
@@ -880,7 +881,15 @@ local function renderTrinketPotionConfig(container, groupConfig)
 end
 
 local function renderContent(container, menuKey)
-    if menuKey == "buff_monitor" then
+    if menuKey == "buff_settings" then
+        local sharedSettings = VFlow.Modules and VFlow.Modules.SharedSettings
+        if sharedSettings and sharedSettings.renderBuffSettings then
+            sharedSettings.renderBuffSettings(container)
+        else
+            local title = VFlow.UI.title(container, L["BUFF Settings"])
+            title:SetPoint("TOPLEFT", 10, -10)
+        end
+    elseif menuKey == "buff_monitor" then
         renderGroupConfig(container, db.buffMonitor, L["Main BUFF Group"], {
             showVerticalLayoutOption = false
         })

@@ -14,8 +14,9 @@ if not VFlow then return end
 local L = VFlow.L
 
 local MODULE_KEY = "VFlow.CustomMonitor"
+local ModuleControlConstants = VFlow.ModuleControlConstants
 
-if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MODULE_KEY) then return end
+if not ModuleControlConstants.CUSTOM_ENABLED then return end
 
 VFlow.registerModule(MODULE_KEY, {
     name = L["Graphic Monitor"],

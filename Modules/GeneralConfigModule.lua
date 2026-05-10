@@ -12,8 +12,6 @@ if not VFlow then return end
 local L = VFlow.L
 
 local MODULE_KEY = "VFlow.GeneralConfig"
-
-if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MODULE_KEY) then return end
 local EXPORT_PREFIX = "VFLOWCFG1:"
 local DEFAULT_PROFILE = "default"
 
@@ -34,8 +32,8 @@ local pageState = {
     selectedProfile = DEFAULT_PROFILE,
     newProfileName = "",
     copySourceProfile = DEFAULT_PROFILE,
-    moduleExportScope = "*",
-    moduleImportScope = "*",
+    controlExportScope = "*",
+    controlImportScope = "*",
     exportText = "",
     importText = "",
 }
@@ -73,15 +71,63 @@ local function getProfileDropdownItems()
     return items
 end
 
-local function getModuleDropdownItems()
-    local items = { { L["All modules"], "*" } }
-    if not VFlow.Store or not VFlow.Store.listModules then
-        return items
+local function collectModuleControls()
+    local items = {}
+    local catalog = VFlow.getModuleControlCatalog and VFlow.getModuleControlCatalog() or {}
+    for _, info in ipairs(catalog) do
+        items[#items + 1] = info
     end
-    for _, moduleKey in ipairs(VFlow.Store.listModules()) do
-        table.insert(items, { moduleKey, moduleKey })
+    table.sort(items, function(a, b)
+        return (a.order or 0) < (b.order or 0)
+    end)
+    return items
+end
+
+local function getControlDropdownItems()
+    local items = { { L["All modules"], "*" } }
+    for _, info in ipairs(collectModuleControls()) do
+        items[#items + 1] = { info.label, info.controlKey }
     end
     return items
+end
+
+local function getControlInfo(scope)
+    if scope == "*" or not VFlow.getModuleControlInfo then
+        return nil
+    end
+    return VFlow.getModuleControlInfo(scope)
+end
+
+local function getScopeModuleKeys(scope, profile)
+    if scope == "*" then
+        if not VFlow.Store or not VFlow.Store.listModules then
+            return {}
+        end
+        return VFlow.Store.listModules(profile)
+    end
+
+    local info = getControlInfo(scope)
+    if not info then
+        return {}
+    end
+
+    local moduleKeys = {}
+    local seen = {}
+    for _, moduleKey in ipairs(info.moduleKeys or {}) do
+        if not seen[moduleKey] then
+            seen[moduleKey] = true
+            moduleKeys[#moduleKeys + 1] = moduleKey
+        end
+    end
+    return moduleKeys
+end
+
+local function getScopeLabel(scope)
+    if scope == "*" then
+        return L["All modules"]
+    end
+    local info = getControlInfo(scope)
+    return info and info.label or tostring(scope)
 end
 
 local function normalizeSelection(value, items, fallback)
@@ -98,17 +144,10 @@ local function buildExportPayload(scope)
     if not VFlow.Store or not VFlow.Store.getModuleData then
         return nil, L["Store unavailable"]
     end
-    if scope == "*" then
-        for _, moduleKey in ipairs(VFlow.Store.listModules()) do
-            local data = VFlow.Store.getModuleData(moduleKey)
-            if type(data) == "table" then
-                modules[moduleKey] = data
-            end
-        end
-    else
-        local data = VFlow.Store.getModuleData(scope)
+    for _, moduleKey in ipairs(getScopeModuleKeys(scope)) do
+        local data = VFlow.Store.getModuleData(moduleKey)
         if type(data) == "table" then
-            modules[scope] = data
+            modules[moduleKey] = data
         end
     end
     local hasModule = false
@@ -117,13 +156,15 @@ local function buildExportPayload(scope)
         break
     end
     if not hasModule then
-        return nil, L["No exportable module data for current selection"]
+        return nil, L["No exportable config data for current selection"]
     end
     return {
         magic = "VFLOWCFG",
         version = 1,
         profile = VFlow.Store.getCurrentProfile(),
         scope = scope,
+        scopeType = (scope == "*") and "all" or "control",
+        scopeLabel = getScopeLabel(scope),
         time = time(),
         modules = modules,
     }
@@ -192,17 +233,21 @@ local function applyImportPayload(payload, scope)
             end
         end
     else
-        local data = payload.modules[scope]
-        if type(data) ~= "table" then
-            return false, 0, L["Import pack does not contain target module"]
+        for _, moduleKey in ipairs(getScopeModuleKeys(scope)) do
+            local data = payload.modules[moduleKey]
+            if type(data) == "table" then
+                local ok = VFlow.Store.setModuleData(moduleKey, data)
+                if ok then
+                    applied = applied + 1
+                end
+            end
         end
-        local ok = VFlow.Store.setModuleData(scope, data)
-        if ok then
-            applied = 1
+        if applied == 0 then
+            return false, 0, L["Import pack does not contain target module"]
         end
     end
     if applied == 0 then
-        return false, 0, L["No module imported successfully"]
+        return false, 0, L["No config data imported successfully"]
     end
     return true, applied
 end
@@ -256,11 +301,11 @@ local function renderContent(container, _menuKey)
     local currentProfile = VFlow.Store and VFlow.Store.getCurrentProfile and VFlow.Store.getCurrentProfile() or
         DEFAULT_PROFILE
     local profileItems = getProfileDropdownItems()
-    local moduleItems = getModuleDropdownItems()
+    local controlItems = getControlDropdownItems()
     pageState.selectedProfile = normalizeSelection(pageState.selectedProfile, profileItems, currentProfile)
     pageState.copySourceProfile = normalizeSelection(pageState.copySourceProfile, profileItems, currentProfile)
-    pageState.moduleExportScope = normalizeSelection(pageState.moduleExportScope, moduleItems, "*")
-    pageState.moduleImportScope = normalizeSelection(pageState.moduleImportScope, moduleItems, "*")
+    pageState.controlExportScope = normalizeSelection(pageState.controlExportScope, controlItems, "*")
+    pageState.controlImportScope = normalizeSelection(pageState.controlImportScope, controlItems, "*")
 
     local layout = {
         { type = "title", text = L["Config Management"], cols = 24 },
@@ -341,18 +386,18 @@ local function renderContent(container, _menuKey)
                     print("|cffff0000VFlow:|r " .. string.format(L["Copy config failed: %s"], tostring(err)))
                     return
                 end
-                notifyAndRefresh(container, string.format(L["Config synced to current, module count: %s"], tostring(copied)))
+                notifyAndRefresh(container, string.format(L["Config synced to current, config entries updated: %s"], tostring(copied)))
             end
         },
         { type = "separator", cols = 24 },
         { type = "subtitle", text = L["Export"], cols = 24 },
-        { type = "dropdown", key = "moduleExportScope", label = L["Export scope"], cols = 12, items = moduleItems, labelOnLeft = true },
+        { type = "dropdown", key = "controlExportScope", label = L["Export scope"], cols = 12, items = controlItems, labelOnLeft = true },
         {
             type = "button",
             text = L["Generate export string"],
             cols = 12,
             onClick = function(cfg)
-                local payload, payloadErr = buildExportPayload(cfg.moduleExportScope)
+                local payload, payloadErr = buildExportPayload(cfg.controlExportScope)
                 if not payload then
                     print("|cffff0000VFlow:|r " .. tostring(payloadErr))
                     return
@@ -372,7 +417,7 @@ local function renderContent(container, _menuKey)
         { type = "input", key = "exportText", label = L["Export string"], cols = 24 },
         { type = "separator", cols = 24 },
         { type = "subtitle", text = L["Import"], cols = 24 },
-        { type = "dropdown", key = "moduleImportScope", label = L["Import scope"], cols = 12, items = moduleItems, labelOnLeft = true },
+        { type = "dropdown", key = "controlImportScope", label = L["Import scope"], cols = 12, items = controlItems, labelOnLeft = true },
         {
             type = "button",
             text = L["Execute import"],
@@ -383,12 +428,12 @@ local function renderContent(container, _menuKey)
                     print("|cffff0000VFlow:|r " .. tostring(decodeErr))
                     return
                 end
-                local ok, count, applyErr = applyImportPayload(payload, cfg.moduleImportScope)
+                local ok, count, applyErr = applyImportPayload(payload, cfg.controlImportScope)
                 if not ok then
                     print("|cffff0000VFlow:|r " .. tostring(applyErr))
                     return
                 end
-                notifyAndRefresh(container, string.format(L["Import complete, modules updated: %s"], tostring(count)))
+                notifyAndRefresh(container, string.format(L["Import complete, config entries updated: %s"], tostring(count)))
             end
         },
         { type = "input", key = "importText", label = L["Import string"], cols = 24 },

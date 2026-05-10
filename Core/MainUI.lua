@@ -187,6 +187,7 @@ local menuItems = {
         key = "skills",
         label = L["Skills"],
         children = {
+            { key = "skill_settings", label = L["Skill Settings"], module = "Skills" },
             { key = "skill_important", label = L["Important Skill Group"], module = "Skills" },
             { key = "skill_efficiency", label = L["Efficiency Skill Group"], module = "Skills" },
             -- 自定义技能组会动态添加
@@ -197,6 +198,7 @@ local menuItems = {
         key = "buffs",
         label = L["BUFF"],
         children = {
+            { key = "buff_settings", label = L["BUFF Settings"], module = "Buffs" },
             { key = "buff_monitor", label = L["Main BUFF Group"], module = "Buffs" },
             { key = "buff_bar", label = L["BUFF Bar"], module = "BuffBar" },
             { key = "buff_trinket_potion", label = L["Trinkets & Potions"], module = "Buffs" },
@@ -231,15 +233,6 @@ local menuItems = {
             -- 自定义物品组会动态添加
         }
     },
-    {
-        type = "category",
-        key = "other",
-        label = L["Special Settings"],
-        children = {
-            { key = "other_skill", label = L["Skills"], module = "OtherFeatures" },
-            { key = "other_buff", label = L["BUFF"], module = "OtherFeatures" },
-        }
-    },
 }
 
 -- =========================================================
@@ -252,16 +245,13 @@ local showContent
 local showAddGroupInput
 local loadCustomGroups
 local renderModuleControlContent
+local ModuleRuntimeEnabled = VFlow.ModuleControlConstants.MODULE_RUNTIME_ENABLED
 
 local function isModuleVisible(moduleName)
-    if not moduleName or not VFlow.getModuleInfo or not VFlow.isModuleEnabled then
+    if not moduleName then
         return true
     end
-    local info = VFlow.getModuleInfo(moduleName)
-    if not info then
-        return true
-    end
-    return VFlow.isModuleEnabled(info.moduleKey)
+    return ModuleRuntimeEnabled[moduleName] ~= false
 end
 
 local function getVisibleChildren(category)
@@ -312,11 +302,13 @@ local function disposeRightPanelContent()
 end
 
 local STATIC_SKILL_CHILDREN = {
+    { key = "skill_settings", label = L["Skill Settings"], module = "Skills" },
     { key = "skill_important", label = L["Important Skill Group"], module = "Skills" },
     { key = "skill_efficiency", label = L["Efficiency Skill Group"], module = "Skills" },
 }
 
 local STATIC_BUFF_CHILDREN = {
+    { key = "buff_settings", label = L["BUFF Settings"], module = "Buffs" },
     { key = "buff_monitor", label = L["Main BUFF Group"], module = "Buffs" },
     { key = "buff_bar", label = L["BUFF Bar"], module = "BuffBar" },
     { key = "buff_trinket_potion", label = L["Trinkets & Potions"], module = "Buffs" },
@@ -1062,6 +1054,9 @@ end
 -- =========================================================
 
 showContent = function(menuKey, moduleName)
+    if not moduleName then
+        moduleName = findModuleByMenuKey(menuKey)
+    end
     currentMenuKey = menuKey
     updateMenuSelection()
 

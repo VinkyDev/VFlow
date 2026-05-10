@@ -21,8 +21,6 @@ end
 
 local MINIMAP_MODULE_KEY = "VFlow.GeneralHome"
 
-if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MINIMAP_MODULE_KEY) then return end
-
 local broker = ldb:NewDataObject("VFlow", {
     type = "launcher",
     text = "VFlow",

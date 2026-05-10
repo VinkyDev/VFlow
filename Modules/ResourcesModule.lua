@@ -9,8 +9,9 @@ if not VFlow then return end
 local L = VFlow.L
 
 local MODULE_KEY = "VFlow.Resources"
+local ModuleControlConstants = VFlow.ModuleControlConstants
 
-if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MODULE_KEY) then return end
+if not ModuleControlConstants.RESOURCES_ENABLED then return end
 
 VFlow.registerModule(MODULE_KEY, {
     name = L["Resource bar"],

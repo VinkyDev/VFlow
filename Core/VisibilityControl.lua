@@ -11,8 +11,9 @@ end
 local Profiler = VFlow.Profiler
 
 local MODULE_KEY = "VFlow.StyleDisplay"
+local ModuleControlConstants = VFlow.ModuleControlConstants
 
-if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MODULE_KEY) then return end
+if not ModuleControlConstants.CORE_ENABLED then return end
 
 local VisibilityControl = {}
 VFlow.VisibilityControl = VisibilityControl

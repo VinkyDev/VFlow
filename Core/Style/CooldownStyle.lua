@@ -7,6 +7,7 @@ local VFlow = _G.VFlow
 if not VFlow then return end
 
 local Utils = VFlow.Utils
+local ModuleControlConstants = VFlow.ModuleControlConstants
 
 local StyleApply = VFlow.StyleApply
 local StyleLayout = VFlow.StyleLayout
@@ -37,8 +38,11 @@ local viewerPhaseRegistered = false
 local MAX_BUFF_READY_RETRIES = 20
 local MAX_BUFFBAR_READY_RETRIES = 20
 local skillRefreshPending = false
-local function isModuleRuntimeEnabled(moduleKey)
-    return not VFlow.isModuleEnabled or VFlow.isModuleEnabled(moduleKey)
+local CORE_ENABLED = ModuleControlConstants.CORE_ENABLED
+local BUFF_BAR_ENABLED = ModuleControlConstants.BUFF_BAR_ENABLED
+
+if not (CORE_ENABLED or BUFF_BAR_ENABLED) then
+    return
 end
 
 -- =========================================================
@@ -67,12 +71,12 @@ local _cachedBuffBarDB
 local function InvalidateDBCache()
     local store = VFlow and VFlow.Store
     if not store or not store.getModuleRef then return end
-    _cachedBuffsDB = isModuleRuntimeEnabled("VFlow.Buffs") and store.getModuleRef("VFlow.Buffs") or nil
-    _cachedBuffBarDB = isModuleRuntimeEnabled("VFlow.BuffBar") and store.getModuleRef("VFlow.BuffBar") or nil
+    _cachedBuffsDB = CORE_ENABLED and store.getModuleRef("VFlow.Buffs") or nil
+    _cachedBuffBarDB = BUFF_BAR_ENABLED and store.getModuleRef("VFlow.BuffBar") or nil
 end
 
 local function GetBuffViewerAndConfig()
-    if not isModuleRuntimeEnabled("VFlow.Buffs") then
+    if not CORE_ENABLED then
         return nil, nil
     end
     local viewer = _G.BuffIconCooldownViewer
@@ -81,7 +85,7 @@ local function GetBuffViewerAndConfig()
 end
 
 local function GetBuffBarViewerAndConfig()
-    if not isModuleRuntimeEnabled("VFlow.BuffBar") then
+    if not BUFF_BAR_ENABLED then
         return nil, nil
     end
     local viewer = _G.BuffBarCooldownViewer
@@ -142,28 +146,23 @@ local function CollectBuffBarFrames(viewer)
 end
 
 -- =========================================================
--- SECTION 4: 自定义高亮（OtherFeatures / StyleGlow）
+-- SECTION 4: 自定义高亮（SharedSettings / StyleGlow）
 -- =========================================================
 
-local OTHER_FEATURES_KEY = "VFlow.OtherFeatures"
+local SHARED_SETTINGS_KEY = "VFlow.OtherFeatures"
 
-local function GetOtherFeaturesDB()
-    if not isModuleRuntimeEnabled(OTHER_FEATURES_KEY) then
+local function GetSharedSettingsDB()
+    if not CORE_ENABLED then
         return nil
     end
     local store = VFlow.Store
     if not store or not store.getModuleRef then return nil end
-    return store.getModuleRef(OTHER_FEATURES_KEY)
+    return store.getModuleRef(SHARED_SETTINGS_KEY)
 end
 
-local function NormalizeOtherFeaturesHighlightSource(src)
-    if src == "buff" then return "buff" end
-    return "skill"
-end
-
-local function GetOtherFeaturesHighlightRule(spellID)
+local function GetSharedSettingsHighlightRule(spellID)
     if not spellID then return nil end
-    local db = GetOtherFeaturesDB()
+    local db = GetSharedSettingsDB()
     if not db then return nil end
     local rules = db.highlightRules
     if not rules then return nil end
@@ -173,8 +172,8 @@ local function GetOtherFeaturesHighlightRule(spellID)
 end
 
 --- 默认 true（与模块 defaults 一致）；仅当显式为 false 时脱战也高亮
-local function OtherFeaturesHighlightOnlyInCombat()
-    local db = GetOtherFeaturesDB()
+local function SharedSettingsHighlightOnlyInCombat()
+    local db = GetSharedSettingsDB()
     if not db then return true end
     return db.highlightOnlyInCombat ~= false
 end
@@ -275,10 +274,13 @@ local function BuffIconAppearsActive(frame)
 end
 
 local function UpdateCustomHighlightForFrame(frame)
+    if not CORE_ENABLED then
+        return
+    end
     if not StyleApply or not StyleApply.ShowCustomGlow or not StyleApply.HideCustomGlow then return end
     local kind = GetCdmFrameKind(frame)
     local spellID = ResolveHighlightSpellID(frame)
-    local rule = spellID and GetOtherFeaturesHighlightRule(spellID)
+    local rule = spellID and GetSharedSettingsHighlightRule(spellID)
     local wantGlow = false
     if rule and HighlightRuleMatchesKind(rule, kind) then
         if kind == "skill" then
@@ -287,7 +289,7 @@ local function UpdateCustomHighlightForFrame(frame)
             wantGlow = BuffIconAppearsActive(frame)
         end
     end
-    if wantGlow and OtherFeaturesHighlightOnlyInCombat() and not IsPlayerInCombatForCustomHighlight() then
+    if wantGlow and SharedSettingsHighlightOnlyInCombat() and not IsPlayerInCombatForCustomHighlight() then
         wantGlow = false
     end
     if wantGlow then
@@ -321,12 +323,18 @@ end
 customHLFlushFrame:SetScript("OnUpdate", customHLFlushOnUpdate)
 
 local function RequestCustomHighlightUpdate(frame)
+    if not CORE_ENABLED then
+        return
+    end
     if not frame then return end
     pendingCustomHLFrames[frame] = true
     customHLFlushFrame:Show()
 end
 
 local function EnsureCustomHighlightHooks(frame)
+    if not CORE_ENABLED then
+        return
+    end
     if not frame or frame._vf_customHLHooked then return end
     frame._vf_customHLHooked = true
     local cd = frame.Cooldown
@@ -366,6 +374,9 @@ local function EnsureCustomHighlightHooks(frame)
 end
 
 local function TouchCustomHighlight(frame)
+    if not CORE_ENABLED then
+        return
+    end
     if not frame or not frame.Icon then return end
     EnsureCustomHighlightHooks(frame)
     RequestCustomHighlightUpdate(frame)
@@ -373,6 +384,9 @@ end
 
 --- @param icons? table 若已在同次刷新中 CollectIcons，传入可避免二次收集
 local function ScanCooldownViewerIcons(viewer, icons)
+    if not CORE_ENABLED then
+        return
+    end
     if not viewer then return end
     local list = icons or StyleLayout.CollectIcons(viewer)
     for i = 1, #list do
@@ -397,6 +411,9 @@ local function ScanBuffGroupCustomHighlights()
 end
 
 local function RefreshAllOtherFeatureHighlights()
+    if not CORE_ENABLED then
+        return
+    end
     ScanCooldownViewerIcons(_G.EssentialCooldownViewer)
     ScanCooldownViewerIcons(_G.UtilityCooldownViewer)
     ScanCooldownViewerIcons(_G.BuffIconCooldownViewer)
@@ -404,12 +421,14 @@ local function RefreshAllOtherFeatureHighlights()
     ScanBuffGroupCustomHighlights()
 end
 
-VFlow.on("PLAYER_REGEN_ENABLED", "VFlow.CustomHL.OutOfCombat", function()
-    RefreshAllOtherFeatureHighlights()
-end)
-VFlow.on("PLAYER_REGEN_DISABLED", "VFlow.CustomHL.InCombat", function()
-    RefreshAllOtherFeatureHighlights()
-end)
+if CORE_ENABLED then
+    VFlow.on("PLAYER_REGEN_ENABLED", "VFlow.CustomHL.OutOfCombat", function()
+        RefreshAllOtherFeatureHighlights()
+    end)
+    VFlow.on("PLAYER_REGEN_DISABLED", "VFlow.CustomHL.InCombat", function()
+        RefreshAllOtherFeatureHighlights()
+    end)
+end
 
 local function IsSafeEqual(v, expected)
     if type(v) == "number" and issecretvalue and issecretvalue(v) then
@@ -437,6 +456,9 @@ end
 -- =========================================================
 
 local function QueueBuffBarRefresh(opt)
+    if not BUFF_BAR_ENABLED then
+        return
+    end
     opt = opt or {}
     local viewer = _G.BuffBarCooldownViewer
     if viewer and viewer._vf_refreshing then
@@ -796,6 +818,9 @@ end
 local _lastLayoutNotifyEssWidth, _lastLayoutNotifyUtilWidth
 
 local function GetSkillsDB()
+    if not CORE_ENABLED then
+        return nil
+    end
     local get = VFlow and VFlow.Store and VFlow.Store.getModuleRef
     return get and get("VFlow.Skills")
 end
@@ -844,10 +869,16 @@ local function EnsureSkillViewModels(context)
 end
 
 local function RunSkillDataPhase(context)
+    if not CORE_ENABLED then
+        return
+    end
     EnsureSkillViewModels(context)
 end
 
 local function RunSkillLayoutPhase(context)
+    if not CORE_ENABLED then
+        return
+    end
     EnsureSkillViewModels(context)
     context.viewerLayoutResults = context.viewerLayoutResults or {}
     wipe(context.viewerLayoutResults)
@@ -863,18 +894,27 @@ local function RunSkillLayoutPhase(context)
 end
 
 local function RunSkillGroupLayoutPhase(context)
+    if not CORE_ENABLED then
+        return
+    end
     if SkillGroupLayoutPass and SkillGroupLayoutPass.Layout then
         SkillGroupLayoutPass.Layout(context)
     end
 end
 
 local function RunSkillStylePhase(context)
+    if not CORE_ENABLED then
+        return
+    end
     if SkillStylePass and SkillStylePass.Apply then
         SkillStylePass.Apply(context)
     end
 end
 
 local function RunSkillCooldownOnlyPhase()
+    if not CORE_ENABLED then
+        return
+    end
     if SkillStylePass and SkillStylePass.RefreshCooldownOnly then
         SkillStylePass.RefreshCooldownOnly()
     end
@@ -896,6 +936,9 @@ local function ConsumeSkillViewerWidthChange(force)
 end
 
 local function NotifySkillViewerLayoutDependents(force)
+    if not CORE_ENABLED then
+        return
+    end
     if not ConsumeSkillViewerWidthChange(force) then
         return
     end
@@ -961,21 +1004,33 @@ local function RegisterViewerRefreshPhases()
         RunSkillCooldownOnlyPhase()
     end)
     RefreshBus.register(RefreshBus.SCOPES.BUFF_LAYOUT, "CooldownStyle_BuffLayout", function(context)
+        if not CORE_ENABLED then
+            return
+        end
         if context.dirtyViewers and context.dirtyViewers[QK_BUFF_ICONS] then
             DoBuffRefresh(0)
         end
     end)
     RefreshBus.register(RefreshBus.SCOPES.BUFFBAR_LAYOUT, "CooldownStyle_BuffBarLayout", function(context)
+        if not BUFF_BAR_ENABLED then
+            return
+        end
         if context.dirtyViewers and context.dirtyViewers[QK_BUFF_BAR] then
             DoBuffBarRefresh(0)
         end
     end)
     RefreshBus.register(RefreshBus.SCOPES.HIGHLIGHT, "CooldownStyle_Highlight", function(context)
+        if not CORE_ENABLED then
+            return
+        end
         if SkillPostPass and SkillPostPass.RunHighlights then
             SkillPostPass.RunHighlights(context)
         end
     end)
     RefreshBus.register(RefreshBus.SCOPES.DEPENDENT_LAYOUT, "CooldownStyle_Dependents", function(context)
+        if not CORE_ENABLED then
+            return
+        end
         if SkillPostPass and SkillPostPass.RunDependents then
             SkillPostPass.RunDependents(context)
         end
@@ -991,6 +1046,9 @@ local function CopyRequestOpts(opts)
 end
 
 local function RequestSkillRefresh(scopeOrScopes, opts)
+    if not CORE_ENABLED then
+        return
+    end
     if not (RefreshBus and RefreshBus.requestAllSkillViewers) then
         return
     end
@@ -1022,7 +1080,24 @@ local function RequestNamedViewers(scopeOrScopes, viewerNames, opts)
     if not (RefreshBus and RefreshBus.requestViewers) then
         return
     end
-    RefreshBus.requestViewers(scopeOrScopes, viewerNames, opts or {})
+    local filtered = {}
+    for _, viewerName in ipairs(viewerNames or {}) do
+        if viewerName == QK_BUFF_ICONS then
+            if CORE_ENABLED then
+                filtered[#filtered + 1] = viewerName
+            end
+        elseif viewerName == QK_BUFF_BAR then
+            if BUFF_BAR_ENABLED then
+                filtered[#filtered + 1] = viewerName
+            end
+        else
+            filtered[#filtered + 1] = viewerName
+        end
+    end
+    if not filtered[1] then
+        return
+    end
+    RefreshBus.requestViewers(scopeOrScopes, filtered, opts or {})
 end
 
 VFlow.RequestSkillRefresh = RequestSkillRefresh
@@ -1381,13 +1456,15 @@ if Profiler and Profiler.registerScope then
 end
 
 local function RequestInitialViewerRefresh()
-    RequestSkillRefresh(RefreshBus.PRESETS.SKILL_FULL, {
-        flags = { forceDependentLayout = true },
-    })
+    if CORE_ENABLED then
+        RequestSkillRefresh(RefreshBus.PRESETS.SKILL_FULL, {
+            flags = { forceDependentLayout = true },
+        })
+    end
 
     local get = VFlow and VFlow.Store and VFlow.Store.getModuleRef
-    local buffsDB = get and get("VFlow.Buffs")
-    local buffBarDB = get and get("VFlow.BuffBar")
+    local buffsDB = CORE_ENABLED and get and get("VFlow.Buffs") or nil
+    local buffBarDB = BUFF_BAR_ENABLED and get and get("VFlow.BuffBar") or nil
 
     if buffsDB and buffsDB.buffMonitor then
         RequestBuffRefresh()
@@ -1399,6 +1476,9 @@ local function RequestInitialViewerRefresh()
 end
 
 local function RequestKeybindStyleRefresh(delay)
+    if not CORE_ENABLED then
+        return
+    end
     BumpButtonStyleVersion()
     RequestDelayedSkillRefresh(delay, RefreshBus.PRESETS.SKILL_STYLE)
 end
@@ -1501,12 +1581,12 @@ SetupHooks = function()
         })
     end
 
-    if isModuleRuntimeEnabled("VFlow.Skills") then
+    if CORE_ENABLED then
         registerSkillViewer(QK_ESSENTIAL, false)
         registerSkillViewer(QK_UTILITY, true)
     end
 
-    if isModuleRuntimeEnabled("VFlow.Buffs") then
+    if CORE_ENABLED then
         ViewerRuntime.register({
             name = QK_BUFF_ICONS,
             lockViewerScale = true,
@@ -1559,7 +1639,7 @@ SetupHooks = function()
         end
     end
 
-    if isModuleRuntimeEnabled("VFlow.BuffBar") then
+    if BUFF_BAR_ENABLED then
         ViewerRuntime.register({
             name = QK_BUFF_BAR,
             lockViewerScale = false,
@@ -1605,7 +1685,7 @@ SetupHooks = function()
         })
     end
 
-    if isModuleRuntimeEnabled("VFlow.Skills") and EventRegistry then
+    if CORE_ENABLED and EventRegistry then
         EventRegistry:RegisterCallback("CooldownViewerSettings.OnDataChanged", function()
             RequestDelayedSkillRefresh(0.2, RefreshBus.PRESETS.SKILL_FULL)
         end)
@@ -1620,6 +1700,9 @@ end
 -- =========================================================
 
 VFlow.on("PLAYER_ENTERING_WORLD", "VFlow.SkillStyle", function()
+    if not (CORE_ENABLED or BUFF_BAR_ENABLED) then
+        return
+    end
     InvalidateDBCache()
     BumpButtonStyleVersion()
     BumpBuffBarStyleVersion()
@@ -1652,7 +1735,7 @@ local function IsSkillGroupMapConfigKey(key)
         or key:find("%.hideInCooldownManager$")
 end
 
-if isModuleRuntimeEnabled("VFlow.Skills") then
+if CORE_ENABLED then
     VFlow.Store.watch("VFlow.Skills", "CooldownStyle_Skills", function(key, value)
         if key:find("^customGroups%.%d+%.config%.")
             and (key:find("%.x$") or key:find("%.y$")
@@ -1683,7 +1766,7 @@ if isModuleRuntimeEnabled("VFlow.Skills") then
     end)
 end
 
-if isModuleRuntimeEnabled("VFlow.Buffs") then
+if CORE_ENABLED then
     VFlow.Store.watch("VFlow.Buffs", "CooldownStyle_Buffs", function(key, value)
         InvalidateDBCache()
         if key:find("%.x$") or key:find("%.y$")
@@ -1696,7 +1779,7 @@ if isModuleRuntimeEnabled("VFlow.Buffs") then
     end)
 end
 
-if isModuleRuntimeEnabled("VFlow.BuffBar") then
+if BUFF_BAR_ENABLED then
     VFlow.Store.watch("VFlow.BuffBar", "CooldownStyle_BuffBar", function(key, value)
         InvalidateDBCache()
         BumpButtonStyleVersion()
@@ -1706,7 +1789,7 @@ if isModuleRuntimeEnabled("VFlow.BuffBar") then
     end)
 end
 
-if isModuleRuntimeEnabled("VFlow.CustomMonitor") then
+if CORE_ENABLED then
     VFlow.Store.watch("VFlow.CustomMonitor", "CooldownStyle_CustomMonitor", function(key, value)
         if key:find("%.hideInCooldownManager$") then
             RequestSkillRefresh(RefreshBus.PRESETS.SKILL_LAYOUT)
@@ -1714,8 +1797,8 @@ if isModuleRuntimeEnabled("VFlow.CustomMonitor") then
     end)
 end
 
-if isModuleRuntimeEnabled("VFlow.OtherFeatures") then
-    VFlow.Store.watch("VFlow.OtherFeatures", "CooldownStyle_OtherHL", function(key, _)
+if CORE_ENABLED then
+    VFlow.Store.watch("VFlow.OtherFeatures", "CooldownStyle_SharedSettingsHL", function(key, _)
         if not key then return end
         if key == "skillRules" or key:find("^skillRules%.") then
             BumpButtonStyleVersion()
@@ -1732,7 +1815,7 @@ if isModuleRuntimeEnabled("VFlow.OtherFeatures") then
     end)
 end
 
-if isModuleRuntimeEnabled("VFlow.StyleIcon") then
+if CORE_ENABLED then
     VFlow.Store.watch("VFlow.StyleIcon", "CooldownStyle_StyleIcon", function(key, value)
         BumpButtonStyleVersion()
         BumpBuffBarStyleVersion()

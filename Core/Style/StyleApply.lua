@@ -8,14 +8,13 @@ if not VFlow then return end
 
 local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
 local PixelPerfect = VFlow.PixelPerfect
+local ModuleControlConstants = VFlow.ModuleControlConstants
 local StyleApply = {}
 VFlow.StyleApply = StyleApply
 
 local abs = math.abs
 local Profiler = VFlow.Profiler
-local function isModuleRuntimeEnabled(moduleKey)
-    return not VFlow.isModuleEnabled or VFlow.isModuleEnabled(moduleKey)
-end
+local CORE_ENABLED = ModuleControlConstants.CORE_ENABLED
 
 -- =========================================================
 -- SECTION 2: 工具函数
@@ -87,7 +86,7 @@ local function RefreshStyleCache()
     if lastRefreshedVersion == styleCacheVersion then return end
     lastRefreshedVersion = styleCacheVersion
 
-    if not isModuleRuntimeEnabled("VFlow.StyleIcon") then
+    if not CORE_ENABLED then
         ResetStyleCache()
         return
     end
@@ -346,7 +345,7 @@ end
 
 --- StyleIcon.hideIconGCD
 local function StyleIconWantsHideGcdSwipe()
-    if not isModuleRuntimeEnabled("VFlow.StyleIcon") then
+    if not CORE_ENABLED then
         return false
     end
     local db = VFlow.Store and VFlow.Store.getModuleRef and VFlow.Store.getModuleRef("VFlow.StyleIcon")
@@ -355,8 +354,8 @@ end
 
 local SPELL_ONLY_GCD_SPELL_ID = 61304
 
-local function GetOtherFeaturesDB()
-    if not isModuleRuntimeEnabled("VFlow.OtherFeatures") then
+local function GetSharedSettingsDB()
+    if not CORE_ENABLED then
         return nil
     end
     local get = VFlow.Store and VFlow.Store.getModuleRef
@@ -366,12 +365,12 @@ local function GetOtherFeaturesDB()
     return get("VFlow.OtherFeatures")
 end
 
-local function GetOtherFeaturesSkillRule(spellID)
+local function GetSharedSettingsSkillRule(spellID)
     if not spellID then
         return nil
     end
 
-    local db = GetOtherFeaturesDB()
+    local db = GetSharedSettingsDB()
     local rules = db and db.skillRules
     if not rules then
         return nil
@@ -395,7 +394,7 @@ local function SkillWantsSpellOnlyCooldown(button)
         return false
     end
 
-    return GetOtherFeaturesSkillRule(spellID) ~= nil
+    return GetSharedSettingsSkillRule(spellID) ~= nil
 end
 
 --- 仅用于「仅技能冷却」图标灰度；不依赖 cdInfo.isActive（关联 BUFF 续时间时 isActive 可能抖动导致闪灰）
@@ -578,7 +577,7 @@ end
 local OnCooldownMaskDriverRefresh
 
 local function HasAnySpellOnlyCooldownRule()
-    local db = GetOtherFeaturesDB()
+    local db = GetSharedSettingsDB()
     local rules = db and db.skillRules
     if not rules then
         return false
@@ -946,7 +945,7 @@ local hideGcdFlushFrame = CreateFrame("Frame")
 hideGcdFlushFrame:Hide()
 
 local function HideIconGcdOptionEnabled()
-    if not isModuleRuntimeEnabled("VFlow.StyleIcon") then
+    if not CORE_ENABLED then
         return false
     end
     local db = VFlow.Store and VFlow.Store.getModuleRef and VFlow.Store.getModuleRef("VFlow.StyleIcon")
@@ -1279,7 +1278,7 @@ function StyleApply.RefreshActiveCustomGlows()
 end
 
 function StyleApply.RefreshGlowCache()
-    if not isModuleRuntimeEnabled("VFlow.StyleGlow") then
+    if not CORE_ENABLED then
         glowCache.type = "proc"
         glowCache.useCustomColor = false
         glowCache.color = nil
@@ -1414,7 +1413,7 @@ end
 -- SECTION 12: Store 监听与初始化
 -- =========================================================
 
-if isModuleRuntimeEnabled("VFlow.StyleGlow") then
+if CORE_ENABLED then
     VFlow.Store.watch("VFlow.StyleGlow", "StyleApply_Glow", function()
         StyleApply.RefreshGlowCache()
     end)
@@ -1426,7 +1425,7 @@ if isModuleRuntimeEnabled("VFlow.StyleGlow") then
     end)
 end
 
-if isModuleRuntimeEnabled("VFlow.StyleIcon") then
+if CORE_ENABLED then
     VFlow.Store.watch("VFlow.StyleIcon", "StyleApply_Style", function()
         StyleApply.InvalidateStyleCache()
     end)

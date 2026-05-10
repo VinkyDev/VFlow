@@ -1,5 +1,6 @@
 <Ui>
     <Script file="Infra\Core.lua"/>
+    <Script file="Infra\ModuleControlConstants.lua"/>
     <Script file="Infra\State.lua"/>
     <Script file="Infra\Store.lua"/>
     <Script file="Infra\Pool.lua"/>

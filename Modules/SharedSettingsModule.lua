@@ -15,15 +15,16 @@ if not VFlow then return end
 local L = VFlow.L
 
 local MODULE_KEY = "VFlow.OtherFeatures"
+local ModuleControlConstants = VFlow.ModuleControlConstants
 
-if VFlow.isModuleEnabled and not VFlow.isModuleEnabled(MODULE_KEY) then return end
+if not ModuleControlConstants.CORE_ENABLED then return end
 local Grid = VFlow.Grid
 local Utils = VFlow.Utils
 local mergeLayouts = Utils.mergeLayouts
 
 VFlow.registerModule(MODULE_KEY, {
-    name = "特殊设置",
-    description = "技能与BUFF的自定义播报、高亮和技能遮罩层",
+    name = L["Skill/BUFF Settings"],
+    description = L["Custom announce, highlight, and overlay settings for skills and BUFFs"],
 })
 
 -- =========================================================
@@ -448,7 +449,6 @@ end
 
 local SOURCE_SPECS = {
     skill = {
-        menuKey = "other_skill",
         title = L["Skills"],
         introText = L
         ["Tracked spell or BUFF must be shown in {cooldown manager} first. {Scan Skills} or {Scan BUFFs} to refresh the list."],
@@ -458,7 +458,6 @@ local SOURCE_SPECS = {
         stateKeys = { "trackedSkills", "trackedUtilitySkills" },
     },
     buff = {
-        menuKey = "other_buff",
         title = L["BUFF"],
         introText = L
         ["Tracked spell or BUFF must be shown in {cooldown manager} first. {Scan Skills} or {Scan BUFFs} to refresh the list."],
@@ -498,15 +497,15 @@ local function buildIconTemplate(sourceKind)
             return function(tip)
                 tip:SetSpellByID(data.spellID)
                 if hasTtsConfig(data.spellID) then
-                    tip:AddLine("|cff33dd55已配置自定义播报|r", 1, 1, 1, true)
+                    tip:AddLine("|cff33dd55" .. L["Announce configured"] .. "|r", 1, 1, 1, true)
                 end
                 if hasHighlightConfig(data.spellID, sourceKind) then
-                    tip:AddLine("|cff33dd55已配置自定义高亮|r", 1, 1, 1, true)
+                    tip:AddLine("|cff33dd55" .. L["Highlight configured"] .. "|r", 1, 1, 1, true)
                 end
                 if normalizeSource(sourceKind) == "skill" and hasSkillMaskConfig(data.spellID) then
-                    tip:AddLine("|cff33dd55已配置隐藏增益剩余时间遮罩层|r", 1, 1, 1, true)
+                    tip:AddLine("|cff33dd55" .. L["Hide buff remaining time overlay configured"] .. "|r", 1, 1, 1, true)
                 end
-                tip:AddLine("|cff00ff00点击进行设置|r", 1, 1, 1, true)
+                tip:AddLine("|cff00ff00" .. L["Click to configure"] .. "|r", 1, 1, 1, true)
             end
         end,
         onClick = function(data)
@@ -645,11 +644,6 @@ local function buildHighlightSectionLayout(sourceKind)
             label = L["Highlight only in combat"],
             cols = 12,
         },
-        {
-            type = "description",
-            cols = 24,
-            text = "|cff888888" .. L["Highlight style matches Style → Glow"] .. "|r",
-        },
     }
 end
 
@@ -692,7 +686,7 @@ local function buildEntityPageLayout(sourceKind)
         {
             type = "description",
             cols = 24,
-            text = "|cff3399ff■|r 当前选中  |cff33dd55■|r 已有播报或高亮配置",
+            text = "|cff3399ff■|r " .. L["Current selection"] .. "  |cff33dd55■|r " .. L["Configured"],
         },
         { type = "spacer",    height = 8, cols = 24 },
         { type = "separator", cols = 24 },
@@ -746,9 +740,9 @@ local function buildEntityPageLayout(sourceKind)
             end,
             children = mergeLayouts(
                 buildSelectedItemLayout(sourceKind),
+                buildHighlightSectionLayout(sourceKind),
                 buildTtsSectionLayout(),
-                normalizeSource(sourceKind) == "skill" and buildSkillMaskSectionLayout(),
-                buildHighlightSectionLayout(sourceKind)
+                normalizeSource(sourceKind) == "skill" and buildSkillMaskSectionLayout()
             ),
         },
     }
@@ -757,12 +751,12 @@ local function buildEntityPageLayout(sourceKind)
 end
 
 -- =========================================================
--- SECTION 6: 渲染入口
+-- SECTION 6: 共享渲染接口
 -- =========================================================
 
 local function bindStateRefresh(container, sourceKind)
     local spec = getSourceSpec(sourceKind)
-    local ownerPrefix = "OtherFeatures." .. sourceKind .. "." .. tostring(container)
+    local ownerPrefix = "SharedSettings." .. sourceKind .. "." .. tostring(container)
     local watchEntries = {}
 
     local pendingInitialCallbacks = #spec.stateKeys
@@ -801,12 +795,12 @@ local function renderEntityPage(container, sourceKind)
     bindStateRefresh(container, sourceKind)
 end
 
-local function renderContent(container, menuKey)
-    if menuKey == "other_skill" then
-        renderEntityPage(container, "skill")
-    elseif menuKey == "other_buff" then
-        renderEntityPage(container, "buff")
-    end
+local function renderSkillSettings(container)
+    renderEntityPage(container, "skill")
+end
+
+local function renderBuffSettings(container)
+    renderEntityPage(container, "buff")
 end
 
 -- =========================================================
@@ -817,6 +811,7 @@ if not VFlow.Modules then
     VFlow.Modules = {}
 end
 
-VFlow.Modules.OtherFeatures = {
-    renderContent = renderContent,
+VFlow.Modules.SharedSettings = {
+    renderSkillSettings = renderSkillSettings,
+    renderBuffSettings = renderBuffSettings,
 }
