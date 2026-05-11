@@ -1295,6 +1295,20 @@ VFlow.ItemGroups = {
     shouldStandaloneExtract = ShouldStandaloneExtract,
     shouldAppendToViewer = ShouldAppendToViewer,
     applyGroupAnchor = ApplyGroupAnchor,
+    forEachAppendFrame = function(viewerName, callback)
+        if type(callback) ~= "function" then
+            return
+        end
+        for vk, byGroup in pairs(_appendFrameLists) do
+            if viewerName == nil or vk == viewerName then
+                for groupId, list in pairs(byGroup) do
+                    for _, frame in ipairs(list) do
+                        callback(frame, groupId, vk)
+                    end
+                end
+            end
+        end
+    end,
     forEachStandaloneIcon = function(callback)
         if type(callback) ~= "function" then
             return

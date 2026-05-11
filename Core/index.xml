@@ -5,6 +5,7 @@
     <Script file="Core\Resource\ResourceBars.lua"/>
     <Script file="Core\Keybind.lua"/>
     <Script file="Core\Style\MasqueSupport.lua"/>
+    <Script file="Core\Runtime\Watchers\SpellStateWatcher.lua"/>
     <Script file="Core\Style\StyleApply.lua"/>
     <Script file="Core\Style\StyleLayout.lua"/>
     <Script file="Core\Runtime\Refresh\ViewerRefreshQueue.lua"/>

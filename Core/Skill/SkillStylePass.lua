@@ -7,6 +7,7 @@ local VFlow = _G.VFlow
 if not VFlow then return end
 
 local StyleApply = VFlow.StyleApply
+local StyleLayout = VFlow.StyleLayout
 local MasqueSupport = VFlow.MasqueSupport
 local Profiler = VFlow.Profiler
 
@@ -58,11 +59,55 @@ local function getItemGroupConfigForFrame(frame)
     return VFlow.ItemGroups and VFlow.ItemGroups.getConfigForGroupId and VFlow.ItemGroups.getConfigForGroupId(groupId) or nil
 end
 
+local function getSkillViewerConfig(viewerName)
+    local db = VFlow.getDB("VFlow.Skills")
+    if not db then
+        return nil
+    end
+    if viewerName == "EssentialCooldownViewer" then
+        return db.importantSkills
+    end
+    if viewerName == "UtilityCooldownViewer" then
+        return db.efficiencySkills
+    end
+    return nil
+end
+
+local function applyCurrentViewerStyles(context)
+    if not (context and context.dirtySkillViewers and StyleLayout and StyleLayout.CollectIcons) then
+        return
+    end
+    for viewerName in pairs(context.dirtySkillViewers) do
+        local viewer = _G[viewerName]
+        local cfg = getSkillViewerConfig(viewerName)
+        if viewer and cfg then
+            local icons = StyleLayout.CollectIcons(viewer)
+            for i = 1, #icons do
+                applyFrameStyle(icons[i], cfg, false)
+            end
+        end
+    end
+end
+
+local function applyCurrentAppendStyles(context)
+    local itemGroups = VFlow.ItemGroups
+    if not (context and context.dirtySkillViewers and itemGroups and itemGroups.forEachAppendFrame) then
+        return
+    end
+    for viewerName in pairs(context.dirtySkillViewers) do
+        itemGroups.forEachAppendFrame(viewerName, function(frame, groupId)
+            local cfg = itemGroups.getConfigForGroupId and itemGroups.getConfigForGroupId(groupId) or nil
+            applyFrameStyle(frame, cfg, true, frame and frame._vf_entry)
+        end)
+    end
+end
+
 function SkillStylePass.Apply(context)
     if not context then
         return
     end
 
+    local hasLayoutResults = context.viewerLayoutResults and #context.viewerLayoutResults > 0
     for _, layoutResult in ipairs(context.viewerLayoutResults or {}) do
         for _, row in ipairs(layoutResult.rowCells or {}) do
             for _, cell in ipairs(row) do
@@ -71,7 +116,23 @@ function SkillStylePass.Apply(context)
         end
     end
 
-    if VFlow.SkillGroups and VFlow.SkillGroups.forEachGroupIcon then
+    if not hasLayoutResults then
+        applyCurrentViewerStyles(context)
+        applyCurrentAppendStyles(context)
+    end
+
+    if context.skillGroupBuckets then
+        local db = VFlow.getDB("VFlow.Skills")
+        for groupIndex, bucket in pairs(context.skillGroupBuckets) do
+            local group = db and db.customGroups and db.customGroups[groupIndex]
+            local cfg = group and group.config
+            if cfg then
+                for _, frame in ipairs(bucket) do
+                    applyFrameStyle(frame, cfg, false)
+                end
+            end
+        end
+    elseif VFlow.SkillGroups and VFlow.SkillGroups.forEachGroupIcon then
         VFlow.SkillGroups.forEachGroupIcon(function(frame)
             local cfg = getSkillGroupConfigForFrame(frame)
             applyFrameStyle(frame, cfg, false)

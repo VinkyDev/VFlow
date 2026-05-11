@@ -38,6 +38,7 @@ local viewerPhaseRegistered = false
 local MAX_BUFF_READY_RETRIES = 20
 local MAX_BUFFBAR_READY_RETRIES = 20
 local skillRefreshPending = false
+local specDrivenSkillRefreshPending = false
 local CORE_ENABLED = ModuleControlConstants.CORE_ENABLED
 local BUFF_BAR_ENABLED = ModuleControlConstants.BUFF_BAR_ENABLED
 
@@ -209,6 +210,10 @@ local function ResolveHighlightSpellID(frame)
     return nil
 end
 
+local function GetSpellStateWatcher()
+    return VFlow.SpellStateWatcher
+end
+
 local function InferCdmKindFromParent(frame)
     local p = frame and frame:GetParent()
     if not p then return nil end
@@ -331,41 +336,77 @@ local function RequestCustomHighlightUpdate(frame)
     customHLFlushFrame:Show()
 end
 
+local function EnsureCustomHighlightWatchOwner(frame)
+    if not frame then
+        return nil
+    end
+    if not frame._vf_customHLWatchOwner then
+        frame._vf_customHLWatchOwner = { frame = frame }
+    end
+    return frame._vf_customHLWatchOwner
+end
+
+local function ReleaseCustomHighlightWatcher(frame)
+    if not frame or not frame._vf_customHLWatchedSpellID then
+        return
+    end
+    local watcher = GetSpellStateWatcher()
+    local ownerKey = frame._vf_customHLWatchOwner
+    if watcher and ownerKey then
+        watcher.unwatch(ownerKey, frame._vf_customHLWatchedSpellID)
+    end
+    frame._vf_customHLWatchedSpellID = nil
+end
+
+local function SyncCustomHighlightWatcher(frame)
+    if not CORE_ENABLED or not frame or not frame.Icon then
+        return
+    end
+
+    local kind = GetCdmFrameKind(frame)
+    local isShown = frame.IsShown and frame:IsShown()
+    local spellID = isShown and ResolveHighlightSpellID(frame) or nil
+    local rule = spellID and GetSharedSettingsHighlightRule(spellID)
+    local shouldWatch = isShown and rule and HighlightRuleMatchesKind(rule, kind)
+
+    if shouldWatch and spellID == frame._vf_customHLWatchedSpellID then
+        return
+    end
+
+    ReleaseCustomHighlightWatcher(frame)
+    if not shouldWatch or not spellID then
+        return
+    end
+
+    local watcher = GetSpellStateWatcher()
+    if not watcher then
+        return
+    end
+
+    local ownerKey = EnsureCustomHighlightWatchOwner(frame)
+    if watcher.watch(ownerKey, spellID, function()
+        RequestCustomHighlightUpdate(frame)
+    end) then
+        frame._vf_customHLWatchedSpellID = spellID
+    end
+end
+
 local function EnsureCustomHighlightHooks(frame)
     if not CORE_ENABLED then
         return
     end
     if not frame or frame._vf_customHLHooked then return end
     frame._vf_customHLHooked = true
-    local cd = frame.Cooldown
-    if cd and hooksecurefunc then
-        if cd.SetCooldown then
-            hooksecurefunc(cd, "SetCooldown", function()
-                RequestCustomHighlightUpdate(frame)
-            end)
-        end
-        if cd.SetCooldownFromDurationObject then
-            hooksecurefunc(cd, "SetCooldownFromDurationObject", function()
-                RequestCustomHighlightUpdate(frame)
-            end)
-        end
-        if cd.Clear then
-            hooksecurefunc(cd, "Clear", function()
-                RequestCustomHighlightUpdate(frame)
-            end)
-        end
-        if cd.HookScript then
-            cd:HookScript("OnCooldownDone", function()
-                RequestCustomHighlightUpdate(frame)
-            end)
-        end
-    end
     if frame.HookScript then
         frame:HookScript("OnShow", function(self)
+            SyncCustomHighlightWatcher(self)
             RequestCustomHighlightUpdate(self)
         end)
         frame:HookScript("OnHide", function(self)
             pendingCustomHLFrames[self] = nil
+            pendingCustomHLBatch1[self] = nil
+            pendingCustomHLBatch2[self] = nil
+            ReleaseCustomHighlightWatcher(self)
             if StyleApply and StyleApply.HideCustomGlow then
                 StyleApply.HideCustomGlow(self)
             end
@@ -379,6 +420,7 @@ local function TouchCustomHighlight(frame)
     end
     if not frame or not frame.Icon then return end
     EnsureCustomHighlightHooks(frame)
+    SyncCustomHighlightWatcher(frame)
     RequestCustomHighlightUpdate(frame)
 end
 
@@ -1475,6 +1517,20 @@ local function RequestInitialViewerRefresh()
     end
 end
 
+local function RequestSpecDrivenSkillRefresh()
+    if not CORE_ENABLED or specDrivenSkillRefreshPending then
+        return
+    end
+    specDrivenSkillRefreshPending = true
+    -- 专精切换时，CDM/档案绑定可能在当前事件帧后才稳定；延后一小拍再重排可避免依赖宽度读到临时值。
+    C_Timer.After(0.1, function()
+        specDrivenSkillRefreshPending = false
+        RequestSkillRefresh(RefreshBus.PRESETS.SKILL_FULL, {
+            flags = { forceDependentLayout = true },
+        })
+    end)
+end
+
 local function RequestKeybindStyleRefresh(delay)
     if not CORE_ENABLED then
         return
@@ -1529,6 +1585,12 @@ SetupHooks = function()
             frame._vf_skillCDHooked = true
             hooksecurefunc(frame, "OnCooldownIDSet", function(self)
                 StyleLayout.InvalidateCooldownViewerInfoCache(self)
+                if StyleApply and StyleApply.InvalidateButtonStyle then
+                    StyleApply.InvalidateButtonStyle(self)
+                end
+                if StyleApply and StyleApply.SyncSpellOnlyCooldownWatcher then
+                    StyleApply.SyncSpellOnlyCooldownWatcher(self)
+                end
                 TouchCustomHighlight(self)
             end)
         end
@@ -1709,6 +1771,10 @@ VFlow.on("PLAYER_ENTERING_WORLD", "VFlow.SkillStyle", function()
     if ViewerRefreshQueue then ViewerRefreshQueue.bumpVersion() end
     SetupHooks()
     C_Timer.After(0.5, RequestInitialViewerRefresh)
+end)
+
+VFlow.on("PLAYER_SPECIALIZATION_CHANGED", "VFlow.SkillStyle.SpecRefresh", function()
+    RequestSpecDrivenSkillRefresh()
 end)
 
 -- =========================================================

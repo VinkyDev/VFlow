@@ -38,17 +38,38 @@ local function SafeSetShadow(fs, enabled)
     end
 end
 
-local function EnsureHideZeroTextHook(fs)
+local function EnsureHideZeroTextHook(button, fs)
     if not fs or fs._vf_hideZeroTextHooked then return end
-    if not hooksecurefunc or not fs.SetText then return end
-    hooksecurefunc(fs, "SetText", function(self, value)
-        if type(value) ~= "number" then return end
-        local text = C_StringUtil and C_StringUtil.TruncateWhenZero and C_StringUtil.TruncateWhenZero(value)
-        if text == nil then
-            text = (value == 0) and "" or tostring(value)
-        end
-        self:SetText(text)
-    end)
+    -- 这里不能改写 Blizzard FontString:SetText；那会把 CooldownViewer 的 secret
+    -- 值链路整体拖进 taint。对 ChargeCount 走更上游的纯视觉后处理：
+    -- RefreshSpellChargeInfo 已经算好了 cooldownChargesCount，这里只用
+    -- C_StringUtil.TruncateWhenZero 做 0 -> "" 格式化，不比较 secret 值。
+    if button
+        and button.ChargeCount
+        and button.ChargeCount.Current == fs
+        and not button._vf_hideZeroChargeHooked
+        and hooksecurefunc
+        and C_StringUtil
+        and C_StringUtil.TruncateWhenZero
+        and type(button.RefreshSpellChargeInfo) == "function" then
+        button._vf_hideZeroChargeHooked = true
+        hooksecurefunc(button, "RefreshSpellChargeInfo", function(self)
+            local chargeFS = self and self.ChargeCount and self.ChargeCount.Current
+            local chargeCount = self and self.cooldownChargesCount
+            if not chargeFS or chargeCount == nil then
+                return
+            end
+            chargeFS:SetText(C_StringUtil.TruncateWhenZero(chargeCount))
+        end)
+    end
+    if button
+        and button.ChargeCount
+        and button.ChargeCount.Current == fs
+        and C_StringUtil
+        and C_StringUtil.TruncateWhenZero
+        and button.cooldownChargesCount ~= nil then
+        fs:SetText(C_StringUtil.TruncateWhenZero(button.cooldownChargesCount))
+    end
     fs._vf_hideZeroTextHooked = true
 end
 
@@ -143,7 +164,7 @@ function StyleApply.GetStackFontString(button)
         fs = button.ChargeCount.Current
     end
     if fs then
-        EnsureHideZeroTextHook(fs)
+        EnsureHideZeroTextHook(button, fs)
     end
     return fs
 end
@@ -397,38 +418,66 @@ local function SkillWantsSpellOnlyCooldown(button)
     return GetSharedSettingsSkillRule(spellID) ~= nil
 end
 
+local function BuildSpellOnlyCooldownState(button)
+    if not button or not IsSkillCooldownManagerIcon(button) or IsVFItemAppendSkillSlot(button) then
+        return nil
+    end
+
+    local spellID = GetSpellIDForSpellOnlyCooldown(button)
+    if not spellID then
+        return nil
+    end
+
+    local state = {
+        spellID = spellID,
+        isOnGCD = button.isOnGCD == true,
+        hasChargeSource = type(button.HasVisualDataSource_Charges) == "function"
+            and button:HasVisualDataSource_Charges(),
+    }
+
+    if state.hasChargeSource and C_Spell and C_Spell.GetSpellChargeDuration then
+        local okCh, chargeDurObj = pcall(C_Spell.GetSpellChargeDuration, spellID)
+        if okCh then
+            state.chargeDurObj = chargeDurObj
+        end
+    end
+
+    if C_Spell and C_Spell.GetSpellCooldownDuration then
+        local okD, durObj = pcall(C_Spell.GetSpellCooldownDuration, spellID)
+        if okD then
+            state.durObj = durObj
+        end
+    end
+
+    if C_Spell and C_Spell.GetSpellCooldown then
+        local okI, cdInfo = pcall(C_Spell.GetSpellCooldown, spellID)
+        if okI and type(cdInfo) == "table" then
+            state.cdInfo = cdInfo
+        end
+    end
+
+    state.apiGcdOnly = state.cdInfo and state.cdInfo.isOnGCD == true or false
+    state.chargeRechargeActive = state.hasChargeSource and state.chargeDurObj ~= nil
+    return state
+end
+
 --- 仅用于「仅技能冷却」图标灰度；不依赖 cdInfo.isActive（关联 BUFF 续时间时 isActive 可能抖动导致闪灰）
-local function ComputeSpellOnlyTargetDesaturation(button)
+local function ComputeSpellOnlyTargetDesaturation(button, state)
     if not button._vf_hideBuffCooldownOverlay or not IsSkillCooldownManagerIcon(button)
         or IsVFItemAppendSkillSlot(button) then
         return 0
     end
-    local spellID = GetSpellIDForSpellOnlyCooldown(button)
-    if not spellID then return 0 end
-
-    local hasChargeSource = type(button.HasVisualDataSource_Charges) == "function"
-        and button:HasVisualDataSource_Charges()
-
-    local durObj
-    if C_Spell and C_Spell.GetSpellCooldownDuration then
-        local okD, d = pcall(C_Spell.GetSpellCooldownDuration, spellID)
-        if okD then durObj = d end
-    end
-
-    local cdInfo
-    if C_Spell and C_Spell.GetSpellCooldown then
-        local okI, inf = pcall(C_Spell.GetSpellCooldown, spellID)
-        if okI and type(inf) == "table" then
-            cdInfo = inf
-        end
-    end
-
-    if cdInfo and cdInfo.isOnGCD == true then
+    state = state or BuildSpellOnlyCooldownState(button)
+    if not state then
         return 0
-    elseif durObj and not hasChargeSource and durObj.EvaluateRemainingDuration then
+    end
+
+    if state.apiGcdOnly then
+        return 0
+    elseif state.durObj and not state.hasChargeSource and state.durObj.EvaluateRemainingDuration then
         local curve = GetSpellOnlyDesatCurve()
         if curve then
-            local okEv, v = pcall(durObj.EvaluateRemainingDuration, durObj, curve, 0)
+            local okEv, v = pcall(state.durObj.EvaluateRemainingDuration, state.durObj, curve, 0)
             return (okEv and v) or 0
         end
         return 1
@@ -436,86 +485,25 @@ local function ComputeSpellOnlyTargetDesaturation(button)
     return 0
 end
 
---- BUFF 续杯/刷新时暴雪会改 SetDesaturation，需在之后按技能 CD 再对齐
-local function EnsureSpellOnlyDesaturationHook(button)
-    if button._vf_spellOnlyDesatHooked or IsVFItemAppendSkillSlot(button) then return end
-    local tex = button.Icon
-    if not tex or not hooksecurefunc then return end
-    button._vf_spellOnlyDesatHooked = true
-
-    local function reconcile()
-        if button._vf_spellOnlyDesatApplying then return end
-        if not button._vf_hideBuffCooldownOverlay or not IsSkillCooldownManagerIcon(button)
-            or IsVFItemAppendSkillSlot(button) then
-            return
-        end
-        local want = ComputeSpellOnlyTargetDesaturation(button)
-        button._vf_spellOnlyDesatApplying = true
-        if tex.SetDesaturation then
-            pcall(tex.SetDesaturation, tex, want)
-        end
-        button._vf_spellOnlyDesatApplying = false
-    end
-
-    if tex.SetDesaturation then
-        hooksecurefunc(tex, "SetDesaturation", function(t, v)
-            if button._vf_spellOnlyDesatApplying then return end
-            if IsVFItemAppendSkillSlot(button) then return end
-            if not button._vf_hideBuffCooldownOverlay or not IsSkillCooldownManagerIcon(button) then return end
-            local want = ComputeSpellOnlyTargetDesaturation(button)
-            if math.abs((v or 0) - want) < 0.001 then return end
-            button._vf_spellOnlyDesatApplying = true
-            pcall(t.SetDesaturation, t, want)
-            button._vf_spellOnlyDesatApplying = false
-        end)
-    end
-    if tex.SetDesaturated then
-        hooksecurefunc(tex, "SetDesaturated", function()
-            if button._vf_spellOnlyDesatApplying then return end
-            if IsVFItemAppendSkillSlot(button) then return end
-            reconcile()
-        end)
-    end
+local function GetSpellStateWatcher()
+    return VFlow.SpellStateWatcher
 end
 
 --- SetUseAuraDisplayTime(false) + DurationObject；仅在 isOnGCD 且无 durObj 时 Clear，避免误清整块遮罩与读秒
-local function ApplySpellOnlyCooldownDisplay(button)
+local function ApplySpellOnlyCooldownDisplay(button, state)
     if IsVFItemAppendSkillSlot(button) then return end
     if not button._vf_hideBuffCooldownOverlay then return end
     if not IsSkillCooldownManagerIcon(button) then return end
     local cd = button.Cooldown
     if not cd then return end
 
-    local spellID = GetSpellIDForSpellOnlyCooldown(button)
-    if not spellID then return end
+    state = state or BuildSpellOnlyCooldownState(button)
+    if not state then return end
 
-    local isOnGCD = button.isOnGCD == true
     local tex = button.Icon
 
-    local hasChargeSource = type(button.HasVisualDataSource_Charges) == "function"
-        and button:HasVisualDataSource_Charges()
-    local chargeDurObj
-    if hasChargeSource and C_Spell and C_Spell.GetSpellChargeDuration then
-        local okCh, c = pcall(C_Spell.GetSpellChargeDuration, spellID)
-        if okCh then chargeDurObj = c end
-    end
-
-    local durObj
-    if C_Spell and C_Spell.GetSpellCooldownDuration then
-        local okD, d = pcall(C_Spell.GetSpellCooldownDuration, spellID)
-        if okD then durObj = d end
-    end
-
-    local cdInfo
-    if C_Spell and C_Spell.GetSpellCooldown then
-        local okI, inf = pcall(C_Spell.GetSpellCooldown, spellID)
-        if okI and type(inf) == "table" then
-            cdInfo = inf
-        end
-    end
-
     if tex and tex.SetDesaturation then
-        local want = ComputeSpellOnlyTargetDesaturation(button)
+        local want = ComputeSpellOnlyTargetDesaturation(button, state)
         button._vf_spellOnlyDesatApplying = true
         pcall(tex.SetDesaturation, tex, want)
         button._vf_spellOnlyDesatApplying = false
@@ -526,16 +514,15 @@ local function ApplySpellOnlyCooldownDisplay(button)
     end
 
     -- 技能/充能 CD 与仅 GCD 分离；仅 GCD 时用全局 GCD 法术（61304）的 DurationObject 画圈
-    local apiGcdOnly = cdInfo and cdInfo.isOnGCD == true
-    local wantGcdRing = isOnGCD or apiGcdOnly
+    local wantGcdRing = state.isOnGCD or state.apiGcdOnly
     local appliedSpellCd = false
 
-    if hasChargeSource and chargeDurObj and cd.SetCooldownFromDurationObject then
-        pcall(cd.SetCooldownFromDurationObject, cd, chargeDurObj, true)
+    if state.hasChargeSource and state.chargeDurObj and cd.SetCooldownFromDurationObject then
+        pcall(cd.SetCooldownFromDurationObject, cd, state.chargeDurObj, true)
         if cd.SetDrawSwipe then pcall(cd.SetDrawSwipe, cd, true) end
         appliedSpellCd = true
-    elseif durObj and cd.SetCooldownFromDurationObject and not apiGcdOnly then
-        pcall(cd.SetCooldownFromDurationObject, cd, durObj, true)
+    elseif state.durObj and cd.SetCooldownFromDurationObject and not state.apiGcdOnly then
+        pcall(cd.SetCooldownFromDurationObject, cd, state.durObj, true)
         if cd.SetDrawSwipe then pcall(cd.SetDrawSwipe, cd, true) end
         appliedSpellCd = true
     end
@@ -575,71 +562,145 @@ end
 
 --- 前向声明：SPELL_UPDATE_COOLDOWN 刷新路径需绑定本函数为 upvalue
 local OnCooldownMaskDriverRefresh
+local ApplyCooldownMaskSwipeNow
 
-local spellOnlyCdEventHooked
-local spellOnlyCdFlushFrame
-local trackedSpellOnlyCooldownButtons = setmetatable({}, { __mode = "k" })
+local pendingSpellOnlyButtons = setmetatable({}, { __mode = "k" })
+local spellOnlyCooldownFlushFrame = CreateFrame("Frame")
+spellOnlyCooldownFlushFrame:Hide()
+local RequestSpellOnlyCooldownRefresh
 
-local function TrackSpellOnlyCooldownButton(button, active)
+local function EnsureSpellOnlyWatchOwner(button)
+    if not button then
+        return nil
+    end
+    if not button._vf_spellWatchOwner then
+        button._vf_spellWatchOwner = { button = button }
+    end
+    return button._vf_spellWatchOwner
+end
+
+local function ReleaseSpellOnlyCooldownWatcher(button)
+    if not button or not button._vf_watchedSpellID then
+        return
+    end
+    local watcher = GetSpellStateWatcher()
+    local ownerKey = button._vf_spellWatchOwner
+    if watcher and ownerKey then
+        watcher.unwatch(ownerKey, button._vf_watchedSpellID)
+    end
+    button._vf_watchedSpellID = nil
+end
+
+RequestSpellOnlyCooldownRefresh = function(button)
+    if not button or not button.Icon then
+        return
+    end
+    pendingSpellOnlyButtons[button] = true
+    spellOnlyCooldownFlushFrame:Show()
+end
+
+-- Blizzard 在增益驱动的 Refresh* 链路里仍会重写 Cooldown 的显示时间与遮罩色。
+-- 这里保留极轻量 hook：不做任何 C_Spell 查询，只同步把颜色压回正确值，
+-- 再合帧排一次完整 spell-only 刷新，避免出现 buffMask / cooldownMask 来回闪。
+local function EnsureSpellOnlyRefreshHooks(button)
+    if not button or button._vf_spellOnlyRefreshHooked or not hooksecurefunc then
+        return
+    end
+    button._vf_spellOnlyRefreshHooked = true
+
+    local function reconcileAfterSystemRefresh(self)
+        if not self
+            or not self._vf_hideBuffCooldownOverlay
+            or not IsSkillCooldownManagerIcon(self)
+            or IsVFItemAppendSkillSlot(self) then
+            return
+        end
+        ApplyCooldownMaskSwipeNow(self, self._vf_spellOnlyChargeRechargeActive == true)
+        RequestSpellOnlyCooldownRefresh(self)
+    end
+
+    if type(button.RefreshSpellCooldownInfo) == "function" then
+        hooksecurefunc(button, "RefreshSpellCooldownInfo", reconcileAfterSystemRefresh)
+    end
+    if type(button.RefreshCooldownInfo) == "function" then
+        hooksecurefunc(button, "RefreshCooldownInfo", reconcileAfterSystemRefresh)
+    end
+end
+
+local function SyncSpellOnlyCooldownWatcher(button)
     if not button then
         return
     end
-    if active then
-        trackedSpellOnlyCooldownButtons[button] = true
-    else
-        trackedSpellOnlyCooldownButtons[button] = nil
+
+    local shouldWatch = button._vf_hideBuffCooldownOverlay == true
+        and not IsVFItemAppendSkillSlot(button)
+        and IsSkillCooldownManagerIcon(button)
+        and button.IsShown
+        and button:IsShown()
+
+    local spellID = shouldWatch and GetSpellIDForSpellOnlyCooldown(button) or nil
+    if spellID == button._vf_watchedSpellID then
+        return
+    end
+
+    ReleaseSpellOnlyCooldownWatcher(button)
+    if not spellID then
+        return
+    end
+
+    local watcher = GetSpellStateWatcher()
+    if not watcher then
+        return
+    end
+
+    local ownerKey = EnsureSpellOnlyWatchOwner(button)
+    if watcher.watch(ownerKey, spellID, function()
+        RequestSpellOnlyCooldownRefresh(button)
+    end) then
+        button._vf_watchedSpellID = spellID
     end
 end
 
-local function EnsureSpellOnlyCooldownSpellUpdateFlush()
-    if spellOnlyCdEventHooked then return end
-    spellOnlyCdEventHooked = true
-    spellOnlyCdFlushFrame = CreateFrame("Frame")
-    spellOnlyCdFlushFrame:Hide()
-    spellOnlyCdFlushFrame:SetScript("OnUpdate", function(self)
-        self:Hide()
-        if not next(trackedSpellOnlyCooldownButtons) then return end
-        for button in pairs(trackedSpellOnlyCooldownButtons) do
-            if button
-                and button.Icon
-                and button._vf_hideBuffCooldownOverlay
-                and button.IsShown
-                and button:IsShown()
-                and IsSkillCooldownManagerIcon(button)
-                and not IsVFItemAppendSkillSlot(button) then
-                OnCooldownMaskDriverRefresh(button)
-            end
-        end
+local function EnsureSpellOnlyLifecycleHooks(button)
+    if not button or button._vf_spellOnlyLifecycleHooked or not button.HookScript then
+        return
+    end
+    button._vf_spellOnlyLifecycleHooked = true
+    button:HookScript("OnShow", function(self)
+        SyncSpellOnlyCooldownWatcher(self)
+        RequestSpellOnlyCooldownRefresh(self)
     end)
-    VFlow.on("SPELL_UPDATE_COOLDOWN", "VFlow.StyleApply.SpellOnlyCd", function()
-        if not next(trackedSpellOnlyCooldownButtons) then return end
-        spellOnlyCdFlushFrame:Show()
+    button:HookScript("OnHide", function(self)
+        pendingSpellOnlyButtons[self] = nil
+        ReleaseSpellOnlyCooldownWatcher(self)
     end)
 end
+
+spellOnlyCooldownFlushFrame:SetScript("OnUpdate", function(self)
+    self:Hide()
+    local batch = pendingSpellOnlyButtons
+    pendingSpellOnlyButtons = setmetatable({}, { __mode = "k" })
+    for button in pairs(batch) do
+        if button
+            and button.Icon
+            and button._vf_hideBuffCooldownOverlay
+            and button.IsShown
+            and button:IsShown()
+            and IsSkillCooldownManagerIcon(button)
+            and not IsVFItemAppendSkillSlot(button) then
+            OnCooldownMaskDriverRefresh(button)
+        end
+    end
+end)
 
 --- 技能监视器上主 Cooldown 是否正在显示「充能恢复」扇形（与充能层数恢复中的 DurationObject 一致）
-local function SkillButtonChargeRechargeSwipeActive(button)
-    if not button or not IsSkillCooldownManagerIcon(button) or IsVFItemAppendSkillSlot(button) then
-        return false
-    end
-    if type(button.HasVisualDataSource_Charges) ~= "function" or not button:HasVisualDataSource_Charges() then
-        return false
-    end
-    local spellID = GetSpellIDForSpellOnlyCooldown(button)
-    if not spellID then
-        spellID = GetButtonSpellIDForGcd(button)
-    end
-    if not spellID or not C_Spell.GetSpellChargeDuration then return false end
-    local ok, dur = pcall(C_Spell.GetSpellChargeDuration, spellID)
-    return ok and dur ~= nil
-end
-
-local function ApplyCooldownMaskSwipeNow(self)
+ApplyCooldownMaskSwipeNow = function(self, state)
     local cd = self.Cooldown
     if not cd or not cd.SetSwipeColor then return end
     local hideBuff = self._vf_hideBuffCooldownOverlay and IsSkillCooldownManagerIcon(self)
     local color
-    if self._vf_hideBuffCooldownOverlay and IsSkillCooldownManagerIcon(self) and SkillButtonChargeRechargeSwipeActive(self) then
+    if self._vf_hideBuffCooldownOverlay and IsSkillCooldownManagerIcon(self)
+        and state == true then
         color = self._vf_chargeRechargeMaskColor or self._vf_cooldownMaskColor
     elseif hideBuff then
         color = self._vf_cooldownMaskColor
@@ -654,10 +715,17 @@ local function ApplyCooldownMaskSwipeNow(self)
 end
 
 OnCooldownMaskDriverRefresh = function(self)
+    local state
+    local chargeRechargeActive = false
     if self._vf_hideBuffCooldownOverlay and IsSkillCooldownManagerIcon(self) and not IsVFItemAppendSkillSlot(self) then
-        ApplySpellOnlyCooldownDisplay(self)
+        state = BuildSpellOnlyCooldownState(self)
+        ApplySpellOnlyCooldownDisplay(self, state)
+        chargeRechargeActive = state and state.chargeRechargeActive == true
+        self._vf_spellOnlyChargeRechargeActive = chargeRechargeActive
+    else
+        self._vf_spellOnlyChargeRechargeActive = nil
     end
-    ApplyCooldownMaskSwipeNow(self)
+    ApplyCooldownMaskSwipeNow(self, chargeRechargeActive)
 end
 
 function StyleApply.ApplyAuraSwipeColor(button, groupCfg)
@@ -667,25 +735,19 @@ function StyleApply.ApplyAuraSwipeColor(button, groupCfg)
     button._vf_cooldownMaskColor = groupCfg.cooldownMaskColor
     button._vf_chargeRechargeMaskColor = groupCfg.chargeRechargeMaskColor
     button._vf_hideBuffCooldownOverlay = SkillWantsSpellOnlyCooldown(button)
-    TrackSpellOnlyCooldownButton(button, button._vf_hideBuffCooldownOverlay == true)
 
     if button._vf_hideBuffCooldownOverlay then
-        EnsureSpellOnlyCooldownSpellUpdateFlush()
-        EnsureSpellOnlyDesaturationHook(button)
+        EnsureSpellOnlyLifecycleHooks(button)
+        EnsureSpellOnlyRefreshHooks(button)
+        SyncSpellOnlyCooldownWatcher(button)
+    else
+        pendingSpellOnlyButtons[button] = nil
+        button._vf_spellOnlyChargeRechargeActive = nil
+        ReleaseSpellOnlyCooldownWatcher(button)
     end
-
-    if not button._vf_refreshColorHooked then
-        button._vf_refreshColorHooked = true
-        if button.RefreshSpellCooldownInfo then
-            hooksecurefunc(button, "RefreshSpellCooldownInfo", OnCooldownMaskDriverRefresh)
-        end
-        if button.RefreshCooldownInfo then
-            hooksecurefunc(button, "RefreshCooldownInfo", OnCooldownMaskDriverRefresh)
-        end
-    end
-
-    OnCooldownMaskDriverRefresh(button)
 end
+
+StyleApply.SyncSpellOnlyCooldownWatcher = SyncSpellOnlyCooldownWatcher
 
 -- =========================================================
 -- SECTION 8: ApplyButtonStyle（组配置总入口）
@@ -725,29 +787,31 @@ function StyleApply.ApplyButtonStyle(button, cfg)
 
     if cfg.buffMaskColor or cfg.cooldownMaskColor or cfg.chargeRechargeMaskColor then
         StyleApply.ApplyAuraSwipeColor(button, cfg)
+        OnCooldownMaskDriverRefresh(button)
     end
 
     -- 全局美化
     StyleApply.ApplyBeautify(button, cfg)
+end
 
-    if button._vf_refreshColorHooked then
-        OnCooldownMaskDriverRefresh(button)
+function StyleApply.InvalidateButtonStyle(button)
+    if not button then
+        return
     end
+    button._vf_btnStyleVer = nil
+    button._vf_spellMaskKey = nil
 end
 
 --- 全局样式版本（VFlow._buttonStyleVersion）未变则跳过，避免热路径重复跑字体/美化
---- 调用方须先按需 ApplyIconSize；配置变更由 CooldownStyle BumpButtonStyleVersion 驱动
+--- 调用方须先按需 ApplyIconSize；配置变更或 cooldownID 变化时由上层失效按钮缓存
 function StyleApply.ApplyButtonStyleIfStale(button, cfg)
     if not button or not cfg then return end
     local ver = VFlow._buttonStyleVersion or 0
-    local spellID = GetSpellIDForSpellOnlyCooldown(button) or 0
-    local spellMaskKey = tostring(spellID) .. ":" .. (SkillWantsSpellOnlyCooldown(button) and "1" or "0")
-    if button._vf_btnStyleVer == ver and button._vf_spellMaskKey == spellMaskKey then
+    if button._vf_btnStyleVer == ver then
         return
     end
     StyleApply.ApplyButtonStyle(button, cfg)
     button._vf_btnStyleVer = ver
-    button._vf_spellMaskKey = spellMaskKey
 end
 
 -- =========================================================
@@ -1369,6 +1433,10 @@ end
 
 if Profiler and Profiler.registerTableCount then
     Profiler.registerTableCount(StyleApply, "ApplyIconSize", "SA:ApplyIconSize")
+    Profiler.registerTableCount(StyleApply, "ShowGlow", "SA:ShowGlow")
+    Profiler.registerTableCount(StyleApply, "HideGlow", "SA:HideGlow")
+    Profiler.registerTableCount(StyleApply, "ShowCustomGlow", "SA:ShowCustomGlow")
+    Profiler.registerTableCount(StyleApply, "HideCustomGlow", "SA:HideCustomGlow")
 end
 
 if Profiler and Profiler.registerTableScope then
