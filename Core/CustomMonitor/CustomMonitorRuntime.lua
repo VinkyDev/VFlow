@@ -127,6 +127,7 @@ local _buffProbeBars      = {}
 local _buffWatchedBars    = {
     player = {},
     pet = {},
+    target = {},
 }
 local _tickBars           = {}
 local _tickBarCount       = 0
@@ -213,50 +214,7 @@ local function GetOrCreateShadowCooldown(barFrame)
 end
 
 -- =========================================================
--- SECTION 7: Arc Detector（堆叠层数 secret value 解码）
--- 原理：为每个阈值 i 创建不可见 StatusBar，SetMinMaxValues(i-1, i)。
---       SetValue(secretStacks) 后引擎内部比较决定是否填充纹理。
---       遍历 IsShown() 即可还原出整数层数。
--- =========================================================
-
-local function GetArcDetector(barFrame, threshold)
-    barFrame._arcDetectors = barFrame._arcDetectors or {}
-    local det = barFrame._arcDetectors[threshold]
-    if det then return det end
-    det = CreateFrame("StatusBar", nil, barFrame)
-    det:SetSize(1, 1)
-    det:SetPoint("BOTTOMLEFT", barFrame, "BOTTOMLEFT", 0, 0)
-    det:SetAlpha(0)
-    det:SetStatusBarTexture(BFK and BFK.DEFAULT_BAR_TEXTURE or "Interface\\Buttons\\WHITE8X8")
-    det:SetMinMaxValues(threshold - 1, threshold)
-    det:EnableMouse(false)
-    if BFK then BFK.ConfigureStatusBar(det) end
-    barFrame._arcDetectors[threshold] = det
-    return det
-end
-
-local function FeedArcDetectors(barFrame, secretValue, maxVal)
-    for i = 1, maxVal do
-        GetArcDetector(barFrame, i):SetValue(secretValue)
-    end
-end
-
-local function GetExactCount(barFrame, maxVal)
-    if not barFrame._arcDetectors then return 0 end
-    local count = 0
-    for i = 1, maxVal do
-        local det = barFrame._arcDetectors[i]
-        if det and det:GetStatusBarTexture():IsShown() then
-            count = i
-        else
-            break
-        end
-    end
-    return count
-end
-
--- =========================================================
--- SECTION 8: CDM 帧扫描 & spellID→cooldownID 映射
+-- SECTION 7: CDM 帧扫描 & spellID→cooldownID 映射
 -- =========================================================
 
 local function HasAuraInstanceID(value)
@@ -671,13 +629,14 @@ local function ClearAllHooks()
     wipe(_buffProbeBars)
     wipe(_buffWatchedBars.player)
     wipe(_buffWatchedBars.pet)
+    wipe(_buffWatchedBars.target)
     for _, barFrame in pairs(_activeBuffBars) do
         barFrame._hookedCDMFrame = nil
     end
 end
 
 -- =========================================================
--- SECTION 10: StatusBar 分段创建（共用）
+-- SECTION 9: StatusBar 分段创建（共用）
 -- =========================================================
 
 local function colKey(c)
@@ -1730,20 +1689,7 @@ UpdateStackBar = function(barFrame, spellID, barKey)
 
     local isSecret = issecretvalue and issecretvalue(stacks)
 
-    if showGraphics and isSecret then
-        SetStackSegmentsValue(barFrame, stacks)
-        FeedArcDetectors(barFrame, stacks, maxStacks)
-        local resolved = GetExactCount(barFrame, maxStacks)
-        if type(resolved) == "number" then
-            barFrame._lastKnownStacks = resolved
-        end
-    elseif showGraphics then
-        if barFrame._arcDetectors then
-            for i = 1, maxStacks do
-                local det = barFrame._arcDetectors[i]
-                if det then det:SetValue(0) end
-            end
-        end
+    if showGraphics then
         SetStackSegmentsValue(barFrame, stacks)
     end
 
@@ -1861,7 +1807,6 @@ local function CreateBarFrame(spellID, cfg, container)
     barFrame._segments             = {}
     barFrame._segBGs               = {}
     barFrame._thresholdOverlays    = {}
-    barFrame._arcDetectors         = nil
     barFrame._shadowCooldown       = nil
     -- 技能冷却/充能
     barFrame._cachedChargeInfo     = nil
@@ -1970,13 +1915,14 @@ local function RemoveBuffFromDispatchIndex(barFrame)
     _buffProbeBars[spellID] = nil
     _buffWatchedBars.player[spellID] = nil
     _buffWatchedBars.pet[spellID] = nil
+    _buffWatchedBars.target[spellID] = nil
 end
 
 local function SyncBuffDispatchIndex(barFrame)
     if not barFrame or barFrame._storeKey ~= "buffs" then return end
     RemoveBuffFromDispatchIndex(barFrame)
     local unit = barFrame._trackedUnit
-    if barFrame._lastKnownActive and (unit == "player" or unit == "pet") then
+    if barFrame._lastKnownActive and unit and _buffWatchedBars[unit] then
         _buffWatchedBars[unit][barFrame._spellID] = barFrame
     else
         _buffProbeBars[barFrame._spellID] = barFrame
@@ -2190,7 +2136,7 @@ local function EnsureBar(storeKey, spellID, cfg, container)
 end
 
 -- =========================================================
--- SECTION 16: 事件驱动调度
+-- SECTION 15: 事件驱动调度
 -- =========================================================
 
 local function RefreshVisibilitySensitiveBars()
@@ -2207,7 +2153,7 @@ VFlow.State.watch("inPetBattle", "CustomMonitorRuntime_Vis", RefreshVisibilitySe
 VFlow.State.watch("hasTarget", "CustomMonitorRuntime_Vis", RefreshVisibilitySensitiveBars)
 
 -- =========================================================
--- SECTION 17: 事件响应
+-- SECTION 16: 事件响应
 -- =========================================================
 
 VFlow.on("PLAYER_ENTERING_WORLD", "CustomMonitorRuntime", function()
@@ -2274,14 +2220,14 @@ VFlow.on("SPELL_UPDATE_CHARGES", "CustomMonitorRuntime", function()
 end)
 
 VFlow.on("UNIT_AURA", "CustomMonitorRuntime", function(_, unit)
-    if unit ~= "player" and unit ~= "pet" then
+    if unit ~= "player" and unit ~= "pet" and unit ~= "target" then
         return
     end
     RefreshBuffBarsForUnit(unit)
-end, "player,pet")
+end, "player,pet,target")
 
 -- =========================================================
--- SECTION 18: 公共接口（由 CustomMonitorGroups 调用）
+-- SECTION 17: 公共接口（由 CustomMonitorGroups 调用）
 -- =========================================================
 
 if Profiler and Profiler.registerCount then
