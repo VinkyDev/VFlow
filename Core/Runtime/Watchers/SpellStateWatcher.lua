@@ -6,8 +6,6 @@
 local VFlow = _G.VFlow
 if not VFlow then return end
 
-local Profiler = VFlow.Profiler
-
 local SpellStateWatcher = {}
 VFlow.SpellStateWatcher = SpellStateWatcher
 
@@ -215,18 +213,4 @@ function SpellStateWatcher.unwatchAll(ownerKey)
     for i = 1, #spellIDs do
         SpellStateWatcher.unwatch(ownerKey, spellIDs[i])
     end
-end
-
-if Profiler and Profiler.registerScope then
-    Profiler.registerScope("SSW:Dispatch", function()
-        return dispatchSpellChanges
-    end, function(fn)
-        dispatchSpellChanges = fn
-    end)
-end
-
-if Profiler and Profiler.registerTableCount then
-    Profiler.registerTableCount(SpellStateWatcher, "watch", "SSW:Watch")
-    Profiler.registerTableCount(SpellStateWatcher, "unwatch", "SSW:Unwatch")
-    Profiler.registerTableCount(SpellStateWatcher, "unwatchAll", "SSW:UnwatchAll")
 end

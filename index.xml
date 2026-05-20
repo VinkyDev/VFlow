@@ -24,5 +24,7 @@
     <Script file="Modules\ResourcesModule.lua" />
 
     <!-- 主UI入口 -->
+    <Script file="Core\MainUIMenu.lua" />
+    <Script file="Core\MainUIModuleControl.lua" />
     <Script file="Core\MainUI.lua" />
 </Ui>

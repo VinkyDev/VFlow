@@ -6,7 +6,6 @@
 local VFlow = _G.VFlow
 if not VFlow then return end
 
-local Profiler = VFlow.Profiler
 local ModuleRuntimeEnabled = VFlow.ModuleControlConstants.MODULE_RUNTIME_ENABLED
 
 -- =========================================================
@@ -211,14 +210,6 @@ local function HideNonCheckboxSettings(dialog, systemFrame)
     end
     if container.Layout then container:Layout() end
     if dialog.Layout then dialog:Layout() end
-end
-
-if Profiler and Profiler.registerScope then
-    Profiler.registerScope("EMB:HideNonCheckboxSettings", function()
-        return HideNonCheckboxSettings
-    end, function(fn)
-        HideNonCheckboxSettings = fn
-    end)
 end
 
 local function HookEditModeDialog()

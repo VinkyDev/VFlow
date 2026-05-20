@@ -6,7 +6,6 @@
 local VFlow = _G.VFlow
 if not VFlow then return end
 
-local Profiler = VFlow.Profiler
 local carriedItemResolveCache = {}
 
 local function InvalidateCarriedItemResolveCache()
@@ -175,21 +174,6 @@ VFlow.ItemAutoData = {
     resolveManualCarriedItemID = resolveManualCarriedItemID,
     resolveManualInventoryItem = resolveManualInventoryItem,
 }
-
-if Profiler and Profiler.registerScope then
-    Profiler.registerScope("IAD:collectRacialSpellIDs", function()
-        return collectRacialSpellIDs
-    end, function(fn)
-        collectRacialSpellIDs = fn
-        VFlow.ItemAutoData.collectRacialSpellIDs = fn
-    end)
-    Profiler.registerScope("IAD:resolveManualCarriedItemID", function()
-        return resolveManualCarriedItemID
-    end, function(fn)
-        resolveManualCarriedItemID = fn
-        VFlow.ItemAutoData.resolveManualCarriedItemID = fn
-    end)
-end
 
 VFlow.on("UNIT_INVENTORY_CHANGED", "ItemAutoData.CarriedCacheInv", InvalidateCarriedItemResolveCache)
 VFlow.on("PLAYER_EQUIPMENT_CHANGED", "ItemAutoData.CarriedCacheEq", InvalidateCarriedItemResolveCache)

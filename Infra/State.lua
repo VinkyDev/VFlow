@@ -130,31 +130,6 @@ setmetatable(State, {
 })
 
 -- =========================================================
--- 调试工具
--- =========================================================
-
---- 打印所有状态监听器
-function State.debugWatchers()
-    print("|cff00ff00VFlow调试:|r 状态监听器:")
-    for stateKey, watchers in pairs(stateWatchers) do
-        local count = 0
-        for _ in pairs(watchers) do count = count + 1 end
-        print("  ", stateKey, "->", count, "个监听器")
-        for owner, _ in pairs(watchers) do
-            print("    ", "owner:", owner)
-        end
-    end
-end
-
---- 打印所有状态值
-function State.debugValues()
-    print("|cff00ff00VFlow调试:|r 当前状态值:")
-    for key, value in pairs(stateData) do
-        print("  ", key, "=", tostring(value))
-    end
-end
-
--- =========================================================
 -- 玩家状态管理
 -- =========================================================
 

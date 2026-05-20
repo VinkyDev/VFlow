@@ -9,11 +9,11 @@ if not VFlow then return end
 local StyleLayout = {}
 VFlow.StyleLayout = StyleLayout
 
+local FD = VFlow.FD
 local Utils = VFlow.Utils
 
 local floor = math.floor
 local abs = math.abs
-local Profiler = VFlow.Profiler
 
 -- 池活动数量（优先 API，避免每帧全量 Enumerate）
 local function PoolActiveCount(pool)
@@ -33,38 +33,41 @@ end
 
 StyleLayout.PoolActiveCount = PoolActiveCount
 
---- 池/子级数量变化时清空 CollectIcons 等缓存（CooldownStyle 在 Acquire/Release 等时机调用）
+--- 池/子级数量变化时清空 CollectIcons 等缓存（StyleEngine 在 Acquire/Release 等时机调用）
 function StyleLayout.InvalidateCollectIconsCache(viewer)
     if not viewer then return end
-    viewer._vf_sl_icons = nil
-    viewer._vf_sl_cn = nil
-    viewer._vf_sl_pn = nil
+    local fd = FD(viewer)
+    fd.sl_icons = nil
+    fd.sl_cn = nil
+    fd.sl_pn = nil
 end
 
 --- CooldownViewer 帧上 cooldownID → info 的轻量缓存（分类/高亮链路同一帧内会多次读）
---- cooldownID 变化时须失效：CooldownStyle 在 OnCooldownIDSet 等路径调用 InvalidateCooldownViewerInfoCache
+--- cooldownID 变化时须失效：StyleEngine 在 OnCooldownIDSet 等路径调用 InvalidateCooldownViewerInfoCache
 function StyleLayout.InvalidateCooldownViewerInfoCache(icon)
     if not icon then return end
-    icon._vf_cv_infoCacheId = nil
-    icon._vf_cv_infoCache = nil
+    local fd = FD(icon)
+    fd.cv_infoCacheId = nil
+    fd.cv_infoCache = nil
 end
 
 function StyleLayout.GetCachedCooldownViewerInfo(icon)
     if not icon or not icon.cooldownID then return nil end
+    local fd = FD(icon)
     local cid = icon.cooldownID
-    if icon._vf_cv_infoCacheId == cid and icon._vf_cv_infoCache ~= nil then
-        local cached = icon._vf_cv_infoCache
+    if fd.cv_infoCacheId == cid and fd.cv_infoCache ~= nil then
+        local cached = fd.cv_infoCache
         if cached == false then return nil end
         return cached
     end
     if not (C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo) then
-        icon._vf_cv_infoCacheId = cid
-        icon._vf_cv_infoCache = false
+        fd.cv_infoCacheId = cid
+        fd.cv_infoCache = false
         return nil
     end
     local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cid)
-    icon._vf_cv_infoCacheId = cid
-    icon._vf_cv_infoCache = info or false
+    fd.cv_infoCacheId = cid
+    fd.cv_infoCache = info or false
     return info
 end
 
@@ -93,8 +96,9 @@ function StyleLayout.CollectIcons(viewer)
 
     local childN = select("#", viewer:GetChildren())
     local poolN = PoolActiveCount(viewer.itemFramePool)
-    local cached = viewer._vf_sl_icons
-    if cached and viewer._vf_sl_cn == childN and viewer._vf_sl_pn == poolN then
+    local fd = FD(viewer)
+    local cached = fd.sl_icons
+    if cached and fd.sl_cn == childN and fd.sl_pn == poolN then
         return cached
     end
 
@@ -102,7 +106,7 @@ function StyleLayout.CollectIcons(viewer)
     local seen = {}
 
     for _, ch in ipairs({ viewer:GetChildren() }) do
-        if ch and ch.Icon and not ch._vf_itemAppendFrame then
+        if ch and ch.Icon and not FD(ch).itemAppendFrame then
             seen[ch] = true
             icons[#icons + 1] = ch
         end
@@ -110,16 +114,16 @@ function StyleLayout.CollectIcons(viewer)
 
     if viewer.itemFramePool then
         for frame in viewer.itemFramePool:EnumerateActive() do
-            if frame and frame.Icon and not seen[frame] and not frame._vf_itemAppendFrame then
+            if frame and frame.Icon and not seen[frame] and not FD(frame).itemAppendFrame then
                 icons[#icons + 1] = frame
             end
         end
     end
 
     Utils.sortByLayoutIndex(icons)
-    viewer._vf_sl_icons = icons
-    viewer._vf_sl_cn = childN
-    viewer._vf_sl_pn = poolN
+    fd.sl_icons = icons
+    fd.sl_cn = childN
+    fd.sl_pn = poolN
     return icons
 end
 
@@ -187,11 +191,4 @@ function StyleLayout.UpdateViewerSizeToMatchIcons(viewer, icons)
     if curW and curH and (abs(curW - targetW) >= 1 or abs(curH - targetH) >= 1) then
         viewer:SetSize(targetW, targetH)
     end
-end
-
-if Profiler and Profiler.registerTableScope then
-    Profiler.registerTableScope(StyleLayout, "CollectIcons", "SL:CollectIcons")
-    Profiler.registerTableScope(StyleLayout, "FilterVisible", "SL:FilterVisible")
-    Profiler.registerTableScope(StyleLayout, "BuildRows", "SL:BuildRows")
-    Profiler.registerTableScope(StyleLayout, "UpdateViewerSizeToMatchIcons", "SL:UpdateViewerSizeToMatchIcons")
 end

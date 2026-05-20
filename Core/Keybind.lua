@@ -6,8 +6,6 @@
 local VFlow = _G.VFlow
 if not VFlow then return end
 
-local Profiler = VFlow.Profiler
-
 local Keybind = {}
 VFlow.Keybind = Keybind
 
@@ -289,14 +287,6 @@ local function BuildSpellToKeyMap()
 
     spellToKeyCache = formattedMap
     return formattedMap
-end
-
-if Profiler and Profiler.registerScope then
-    Profiler.registerScope("KB:BuildSpellToKeyMap", function()
-        return BuildSpellToKeyMap
-    end, function(fn)
-        BuildSpellToKeyMap = fn
-    end)
 end
 
 -- =========================================================

@@ -6,7 +6,6 @@
 local VFlow = _G.VFlow
 if not VFlow then return end
 
-local Profiler = VFlow.Profiler
 local ModuleControlConstants = VFlow.ModuleControlConstants
 
 local MODULE_KEY = "VFlow.CustomMonitor"
@@ -14,6 +13,7 @@ local MODULE_KEY = "VFlow.CustomMonitor"
 if not ModuleControlConstants.CUSTOM_ENABLED then return end
 local PP = VFlow.PixelPerfect  -- 完美像素工具
 local Utils = VFlow.Utils
+local FD = VFlow.FD
 
 -- =========================================================
 -- SECTION 2: 常量与模块状态
@@ -190,7 +190,7 @@ local function createBarContainer(storeKey, spellID, cfg)
         VFlow.DragFrame.applyRegisteredPosition(container)
     end
 
-    container._vf_outerSig = outerContainerSignature(cfg)
+    FD(container).outerSig = outerContainerSignature(cfg)
     return container
 end
 
@@ -272,7 +272,7 @@ local function syncStore(storeKey, store)
                 local cont = _containers[storeKey][spellID]
                 if cont then
                     local sig = outerContainerSignature(cfg)
-                    if cont._vf_outerSig ~= sig then
+                    if FD(cont).outerSig ~= sig then
                         ensureContainer(storeKey, spellID, cfg)
                     elseif VFlow.CustomMonitorRuntime and VFlow.CustomMonitorRuntime.syncBarConfig then
                         VFlow.CustomMonitorRuntime.syncBarConfig(storeKey, spellID, cfg)
@@ -293,21 +293,6 @@ local function syncAll()
     for _, storeKey in ipairs({ "skills", "buffs" }) do
         syncStore(storeKey, db[storeKey] or {})
     end
-end
-
-if Profiler and Profiler.registerScope then
-    Profiler.registerScope(function(storeKey)
-        return "CMG:syncStore:" .. tostring(storeKey)
-    end, function()
-        return syncStore
-    end, function(fn)
-        syncStore = fn
-    end)
-    Profiler.registerScope("CMG:syncAll", function()
-        return syncAll
-    end, function(fn)
-        syncAll = fn
-    end)
 end
 
 -- =========================================================
@@ -458,7 +443,7 @@ VFlow.Store.watch(MODULE_KEY, "CustomMonitorGroups", function(key, value)
             local sig = outerContainerSignature(cfg)
             if not cont then
                 ensureContainer(storeKey, spellID, cfg)
-            elseif cont._vf_outerSig ~= sig then
+            elseif FD(cont).outerSig ~= sig then
                 ensureContainer(storeKey, spellID, cfg)
             elseif VFlow.CustomMonitorRuntime and VFlow.CustomMonitorRuntime.syncBarConfig then
                 VFlow.CustomMonitorRuntime.syncBarConfig(storeKey, spellID, cfg)
@@ -474,7 +459,7 @@ VFlow.Store.watch(MODULE_KEY, "CustomMonitorGroups", function(key, value)
         local sig = outerContainerSignature(cfg)
         if not cont then
             ensureContainer(storeKey, spellID, cfg)
-        elseif cont._vf_outerSig ~= sig then
+        elseif FD(cont).outerSig ~= sig then
             ensureContainer(storeKey, spellID, cfg)
         elseif VFlow.CustomMonitorRuntime and VFlow.CustomMonitorRuntime.syncBarConfig then
             VFlow.CustomMonitorRuntime.syncBarConfig(storeKey, spellID, cfg)

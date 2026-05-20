@@ -6,8 +6,6 @@
 local VFlow = _G.VFlow
 if not VFlow then return end
 
-local Profiler = VFlow.Profiler
-
 local SkillGroupLayoutPass = {}
 VFlow.SkillGroupLayoutPass = SkillGroupLayoutPass
 
@@ -43,10 +41,3 @@ function SkillGroupLayoutPass.Layout(context)
     end
 end
 
-if Profiler and Profiler.registerScope then
-    Profiler.registerScope("SKG:LayoutGroup", function()
-        return SkillGroupLayoutPass.Layout
-    end, function(fn)
-        SkillGroupLayoutPass.Layout = fn
-    end)
-end

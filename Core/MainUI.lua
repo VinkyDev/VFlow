@@ -1,34 +1,33 @@
 -- =========================================================
 -- SECTION 1: 模块入口
--- MainUI — 设置主界面
+-- MainUI — 设置主界面（框架创建、内容路由、公共 API）
 -- =========================================================
 
 local VFlow = _G.VFlow
 if not VFlow then return end
 local L = VFlow.L
 
+VFlow._mainUI = VFlow._mainUI or {}
+local Shared = VFlow._mainUI
+
 -- =========================================================
--- SECTION 2: 主框架与菜单状态
+-- SECTION 2: 主框架与局部状态
 -- =========================================================
 
 local mainFrame
 local leftMenu
 local rightPanel
-local currentMenuKey
 local menuScrollFrame
 local menuContent
 local systemEditBtn
 local internalEditBtn
-local collapsedCategories = {}
-local clampMainFramePartiallyVisible
-local MODULE_CONTROL_MENU_KEY = "overview_modules"
 
--- 菜单按钮缓存
-local menuButtons = {}
 local UI = VFlow.UI
 local uiStyle = UI and UI.style or {}
 local colors = uiStyle.colors or {}
 local icons = uiStyle.icons or {}
+
+local MODULE_CONTROL_MENU_KEY = Shared.MODULE_CONTROL_MENU_KEY
 
 local function getColor(name, fallback)
     return colors[name] or fallback
@@ -46,6 +45,10 @@ local function applyFlatBackdrop(frame, bgName, borderName, alpha)
     frame:SetBackdropColor(bg[1], bg[2], bg[3], alpha or bg[4])
     frame:SetBackdropBorderColor(border[1], border[2], border[3], border[4])
 end
+
+-- =========================================================
+-- SECTION 3: 编辑模式按钮视觉
+-- =========================================================
 
 local function updateInternalEditButtonVisual()
     if not internalEditBtn then return end
@@ -89,7 +92,11 @@ local function updateSystemEditButtonVisual()
     end
 end
 
-clampMainFramePartiallyVisible = function()
+-- =========================================================
+-- SECTION 4: 框架位置修正
+-- =========================================================
+
+local function clampMainFramePartiallyVisible()
     if not mainFrame or not mainFrame:IsShown() then return end
     local left = mainFrame:GetLeft()
     local right = mainFrame:GetRight()
@@ -124,155 +131,9 @@ clampMainFramePartiallyVisible = function()
     mainFrame:SetPoint(point or "CENTER", relativeTo or UIParent, relativePoint or "CENTER", (xOfs or 0) + dx, (yOfs or 0) + dy)
 end
 
-local function setSingleLineEllipsizedText(fontString, value)
-    if not fontString then return end
-    local text = tostring(value or "")
-    fontString:SetWordWrap(false)
-    fontString:SetMaxLines(1)
-    fontString:SetText(text)
-    local maxWidth = fontString:GetWidth() or 0
-    if maxWidth <= 0 then
-        return
-    end
-    if fontString:GetStringWidth() <= maxWidth then
-        return
-    end
-    local chars = {}
-    for ch in text:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
-        chars[#chars + 1] = ch
-    end
-    if #chars == 0 then
-        return
-    end
-    local low, high = 1, #chars
-    local best = "..."
-    while low <= high do
-        local mid = math.floor((low + high) / 2)
-        local candidate = table.concat(chars, "", 1, mid) .. "..."
-        fontString:SetText(candidate)
-        if fontString:GetStringWidth() <= maxWidth then
-            best = candidate
-            low = mid + 1
-        else
-            high = mid - 1
-        end
-    end
-    fontString:SetText(best)
-end
-
--- 菜单项定义
-local menuItems = {
-    {
-        type = "category",
-        key = "overview",
-        label = L["Overview"],
-        children = {
-            { key = "general_home", label = L["Home"], module = "GeneralHome" },
-            { key = "overview_config", label = L["Config"], module = "GeneralConfig" },
-            { key = MODULE_CONTROL_MENU_KEY, label = L["Modules"], module = nil },
-        }
-    },
-    {
-        type = "category",
-        key = "style",
-        label = L["Style"],
-        children = {
-            { key = "style_icon", label = L["Icon"], module = "StyleIcon" },
-            { key = "style_glow", label = L["Glow"], module = "StyleGlow" },
-            { key = "style_display", label = L["Display"], module = "StyleDisplay" },
-        }
-    },
-    {
-        type = "category",
-        key = "skills",
-        label = L["Skills"],
-        children = {
-            { key = "skill_settings", label = L["Skill Settings"], module = "Skills" },
-            { key = "skill_important", label = L["Important Skill Group"], module = "Skills" },
-            { key = "skill_efficiency", label = L["Efficiency Skill Group"], module = "Skills" },
-            -- 自定义技能组会动态添加
-        }
-    },
-    {
-        type = "category",
-        key = "buffs",
-        label = L["BUFF"],
-        children = {
-            { key = "buff_settings", label = L["BUFF Settings"], module = "Buffs" },
-            { key = "buff_monitor", label = L["Main BUFF Group"], module = "Buffs" },
-            { key = "buff_bar", label = L["BUFF Bar"], module = "BuffBar" },
-            { key = "buff_trinket_potion", label = L["Trinkets & Potions"], module = "Buffs" },
-            -- 自定义BUFF组会动态添加
-        }
-    },
-    {
-        type = "category",
-        key = "custom",
-        label = L["Graphic Monitor"],
-        children = {
-            { key = "custom_spell", label = L["Skill Monitor"], module = "CustomMonitor" },
-            { key = "custom_buff", label = L["BUFF Monitor"], module = "CustomMonitor" },
-        }
-    },
-    {
-        type = "category",
-        key = "resources",
-        label = L["Resource bar"],
-        children = {
-            { key = "resource_styles", label = L["General resource appearance"], module = "Resources" },
-            { key = "resource_primary", label = L["Primary resource bar"], module = "Resources" },
-            { key = "resource_secondary", label = L["Secondary resource bar"], module = "Resources" },
-        }
-    },
-    {
-        type = "category",
-        key = "items",
-        label = L["Extra CD Monitor"],
-        children = {
-            { key = "item_monitor", label = L["Main Group"], module = "Items" },
-            -- 自定义物品组会动态添加
-        }
-    },
-}
-
 -- =========================================================
--- SECTION 3: 前置声明与菜单数据
+-- SECTION 5: 右侧内容管理
 -- =========================================================
-
-local renderMenu
-local updateMenuSelection
-local showContent
-local showAddGroupInput
-local loadCustomGroups
-local renderModuleControlContent
-local ModuleRuntimeEnabled = VFlow.ModuleControlConstants.MODULE_RUNTIME_ENABLED
-
-local function isModuleVisible(moduleName)
-    if not moduleName then
-        return true
-    end
-    return ModuleRuntimeEnabled[moduleName] ~= false
-end
-
-local function getVisibleChildren(category)
-    local visible = {}
-    for _, item in ipairs(category.children or {}) do
-        if item.key == MODULE_CONTROL_MENU_KEY or isModuleVisible(item.module) then
-            visible[#visible + 1] = item
-        end
-    end
-    return visible
-end
-
-local function getFirstAvailableMenuTarget()
-    for _, category in ipairs(menuItems) do
-        local visibleChildren = getVisibleChildren(category)
-        if visibleChildren[1] then
-            return visibleChildren[1].key, visibleChildren[1].module
-        end
-    end
-    return MODULE_CONTROL_MENU_KEY, nil
-end
 
 local function disposeRightPanelContent()
     if not rightPanel or not rightPanel.content then
@@ -285,14 +146,14 @@ local function disposeRightPanelContent()
     if content._vfOnDispose then
         local ok, err = pcall(content._vfOnDispose, content)
         if not ok then
-            print("|cffff0000VFlow错误:|r 右侧内容释放失败:", err)
+            print("|cffff0000VFlow\233\148\153\232\175\175:|r \229\143\179\228\190\167\229\134\133\229\174\185\233\135\138\230\148\190\229\164\177\232\180\165:", err)
         end
     end
 
     if VFlow.Grid and VFlow.Grid.clear then
         local ok, err = pcall(VFlow.Grid.clear, content)
         if not ok then
-            print("|cffff0000VFlow错误:|r 右侧布局清理失败:", err)
+            print("|cffff0000VFlow\233\148\153\232\175\175:|r \229\143\179\228\190\167\229\184\131\229\177\128\230\184\133\231\144\134\229\164\177\232\180\165:", err)
         end
     end
 
@@ -301,764 +162,12 @@ local function disposeRightPanelContent()
     content:SetParent(nil)
 end
 
-local STATIC_SKILL_CHILDREN = {
-    { key = "skill_settings", label = L["Skill Settings"], module = "Skills" },
-    { key = "skill_important", label = L["Important Skill Group"], module = "Skills" },
-    { key = "skill_efficiency", label = L["Efficiency Skill Group"], module = "Skills" },
-}
-
-local STATIC_BUFF_CHILDREN = {
-    { key = "buff_settings", label = L["BUFF Settings"], module = "Buffs" },
-    { key = "buff_monitor", label = L["Main BUFF Group"], module = "Buffs" },
-    { key = "buff_bar", label = L["BUFF Bar"], module = "BuffBar" },
-    { key = "buff_trinket_potion", label = L["Trinkets & Potions"], module = "Buffs" },
-}
-
-local STATIC_ITEM_CHILDREN = {
-    { key = "item_monitor", label = L["Main Group"], module = "Items" },
-}
-
-local function cloneChildren(items)
-    local copied = {}
-    for i, item in ipairs(items) do
-        copied[i] = {
-            key = item.key,
-            label = item.label,
-            module = item.module,
-        }
-    end
-    return copied
-end
-
-local function findModuleByMenuKey(menuKey)
-    if not menuKey then
-        return nil
-    end
-    if menuKey == MODULE_CONTROL_MENU_KEY then
-        return nil
-    end
-    for _, category in ipairs(menuItems) do
-        for _, item in ipairs(getVisibleChildren(category)) do
-            if item.key == menuKey then
-                return item.module
-            end
-        end
-    end
-    return nil
-end
-
-local function getCustomGroupsForCategory(categoryKey)
-    if categoryKey == "skills" and isModuleVisible("Skills") and VFlow.Modules.Skills and VFlow.Modules.Skills.getCustomGroups then
-        return VFlow.Modules.Skills.getCustomGroups(), "skill_custom_"
-    end
-    if categoryKey == "buffs" and isModuleVisible("Buffs") and VFlow.Modules.Buffs and VFlow.Modules.Buffs.getCustomGroups then
-        return VFlow.Modules.Buffs.getCustomGroups(), "buff_custom_"
-    end
-    if categoryKey == "items" and isModuleVisible("Items") and VFlow.Modules.Items and VFlow.Modules.Items.getCustomGroups then
-        return VFlow.Modules.Items.getCustomGroups(), "item_custom_"
-    end
-    return nil, nil
-end
-
-local function getModuleForCategory(categoryKey)
-    if categoryKey == "skills" and isModuleVisible("Skills") then
-        return VFlow.Modules.Skills
-    end
-    if categoryKey == "buffs" and isModuleVisible("Buffs") then
-        return VFlow.Modules.Buffs
-    end
-    if categoryKey == "items" and isModuleVisible("Items") then
-        return VFlow.Modules.Items
-    end
-    return nil
-end
-
--- =========================================================
--- SECTION 4: 加载自定义组到菜单
--- =========================================================
-
-loadCustomGroups = function()
-    -- 查找索引
-    local skillsIndex, buffsIndex, itemsIndex
-    for i, item in ipairs(menuItems) do
-        if item.key == "skills" then skillsIndex = i end
-        if item.key == "buffs" then buffsIndex = i end
-        if item.key == "items" then itemsIndex = i end
-    end
-
-    if skillsIndex then
-        menuItems[skillsIndex].children = cloneChildren(STATIC_SKILL_CHILDREN)
-        local skillGroups, skillPrefix = getCustomGroupsForCategory("skills")
-        if skillGroups and skillPrefix then
-            for i, group in ipairs(skillGroups) do
-                table.insert(menuItems[skillsIndex].children, {
-                    key = skillPrefix .. i,
-                    label = group.name,
-                    module = "Skills",
-                    isCustom = true,
-                    customIndex = i
-                })
-            end
-        end
-    end
-
-    if buffsIndex then
-        menuItems[buffsIndex].children = cloneChildren(STATIC_BUFF_CHILDREN)
-        local buffGroups, buffPrefix = getCustomGroupsForCategory("buffs")
-        if buffGroups and buffPrefix then
-            for i, group in ipairs(buffGroups) do
-                table.insert(menuItems[buffsIndex].children, {
-                    key = buffPrefix .. i,
-                    label = group.name,
-                    module = "Buffs",
-                    isCustom = true,
-                    customIndex = i
-                })
-            end
-        end
-    end
-
-    if itemsIndex then
-        menuItems[itemsIndex].children = {}
-        local mainLabel = L["Main Group"]
-        if VFlow.getDBIfReady then
-            local idb = VFlow.getDBIfReady("VFlow.Items")
-            if idb and idb.mainGroup and type(idb.mainGroup.groupName) == "string" and idb.mainGroup.groupName ~= "" then
-                mainLabel = idb.mainGroup.groupName
-            end
-        end
-        menuItems[itemsIndex].children[1] = {
-            key = "item_monitor",
-            label = mainLabel,
-            module = "Items",
-            mainGroupRename = true,
-        }
-        local itemGroups, itemPrefix = getCustomGroupsForCategory("items")
-        if itemGroups and itemPrefix then
-            for i, group in ipairs(itemGroups) do
-                table.insert(menuItems[itemsIndex].children, {
-                    key = itemPrefix .. i,
-                    label = group.name,
-                    module = "Items",
-                    isCustom = true,
-                    customIndex = i,
-                })
-            end
-        end
-    end
-end
-
--- =========================================================
--- SECTION 5: 渲染左侧菜单
--- =========================================================
-
-renderMenu = function()
-    loadCustomGroups()
-
-    -- 清空旧按钮
-    for _, btn in ipairs(menuButtons) do
-        btn:Hide()
-        btn:SetParent(nil)
-    end
-    menuButtons = {}
-
-    local parent = menuContent or leftMenu
-    local yOffset = -12
-
-    for _, category in ipairs(menuItems) do
-        local visibleChildren = getVisibleChildren(category)
-        local canAddCustomGroup = (category.key == "skills" or category.key == "buffs" or category.key == "items")
-            and getModuleForCategory(category.key) ~= nil
-        if #visibleChildren > 0 or canAddCustomGroup then
-            local categoryBtn = CreateFrame("Button", nil, parent)
-            categoryBtn:SetSize(172, 28)
-            categoryBtn:SetPoint("TOPLEFT", 4, yOffset)
-            categoryBtn.categoryKey = category.key
-
-            categoryBtn.hover = categoryBtn:CreateTexture(nil, "BACKGROUND")
-            categoryBtn.hover:SetAllPoints()
-            local hover = getColor("hover", { 0.22, 0.22, 0.22, 1 })
-            categoryBtn.hover:SetColorTexture(hover[1], hover[2], hover[3], 0)
-
-            categoryBtn.icon = categoryBtn:CreateTexture(nil, "OVERLAY")
-            categoryBtn.icon:SetSize(16, 16)
-            categoryBtn.icon:SetPoint("LEFT", 4, 0)
-
-            local collapsed = collapsedCategories[category.key] == true
-            categoryBtn.icon:SetTexture(collapsed and
-            (icons.collapse or "Interface\\AddOns\\VFlow\\Assets\\Icons\\chevron_right") or
-            (icons.expand or "Interface\\AddOns\\VFlow\\Assets\\Icons\\expand_more"))
-
-            local categoryLabel = categoryBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-            categoryLabel:SetPoint("LEFT", 24, 0)
-            categoryLabel:SetJustifyH("LEFT")
-            categoryLabel:SetText(category.label)
-            local text = getColor("text", { 0.9, 0.9, 0.9, 1 })
-            categoryLabel:SetTextColor(text[1], text[2], text[3], 0.95)
-            categoryBtn.text = categoryLabel
-
-            categoryBtn:SetScript("OnClick", function(self)
-                collapsedCategories[self.categoryKey] = not (collapsedCategories[self.categoryKey] == true)
-                renderMenu()
-            end)
-            categoryBtn:SetScript("OnEnter", function(self)
-                local hc = getColor("hover", { 0.22, 0.22, 0.22, 1 })
-                self.hover:SetColorTexture(hc[1], hc[2], hc[3], 0.22)
-            end)
-            categoryBtn:SetScript("OnLeave", function(self)
-                local hc = getColor("hover", { 0.22, 0.22, 0.22, 1 })
-                self.hover:SetColorTexture(hc[1], hc[2], hc[3], 0)
-            end)
-
-            table.insert(menuButtons, categoryBtn)
-            yOffset = yOffset - 28
-
-            if collapsedCategories[category.key] ~= true then
-                local primary = getColor("primary", { 0.2, 0.6, 1, 1 })
-                for _, item in ipairs(visibleChildren) do
-                    local btn = CreateFrame("Button", nil, parent)
-                    btn:SetSize(172, 26)
-                    btn:SetPoint("TOPLEFT", 4, yOffset)
-
-                btn.indicator = btn:CreateTexture(nil, "OVERLAY")
-                btn.indicator:SetPoint("TOPLEFT", 0, -2)
-                btn.indicator:SetPoint("BOTTOMLEFT", 0, 2)
-                btn.indicator:SetWidth(2)
-                btn.indicator:SetColorTexture(primary[1], primary[2], primary[3], 1)
-                btn.indicator:Hide()
-
-                btn.hover = btn:CreateTexture(nil, "BACKGROUND")
-                btn.hover:SetAllPoints()
-                btn.hover:SetColorTexture(primary[1], primary[2], primary[3], 0)
-
-                local text = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-                text:SetPoint("LEFT", 34, 0)
-                if item.isCustom then
-                    text:SetPoint("RIGHT", -40, 0)
-                elseif item.mainGroupRename then
-                    text:SetPoint("RIGHT", -22, 0)
-                end
-                text:SetJustifyH("LEFT")
-                text:SetWordWrap(false)
-                local textC = getColor("text", { 0.9, 0.9, 0.9, 1 })
-                text:SetTextColor(textC[1], textC[2], textC[3], 0.9)
-                btn.text = text
-                if item.isCustom or item.mainGroupRename then
-                    setSingleLineEllipsizedText(text, item.label)
-                else
-                    text:SetText(item.label)
-                end
-
-                btn:SetScript("OnClick", function()
-                    showContent(item.key, item.module)
-                    updateMenuSelection()
-                end)
-
-                btn:SetScript("OnEnter", function(self)
-                    if currentMenuKey ~= item.key then
-                        self.hover:SetColorTexture(primary[1], primary[2], primary[3], 0.12)
-                    end
-                end)
-                btn:SetScript("OnLeave", function(self)
-                    if currentMenuKey ~= item.key then
-                        self.hover:SetColorTexture(primary[1], primary[2], primary[3], 0)
-                    end
-                end)
-
-                btn.itemKey = item.key
-                table.insert(menuButtons, btn)
-
-                if item.isCustom or item.mainGroupRename then
-                    local iconColor = getColor("textDim", { 0.7, 0.7, 0.7, 1 })
-
-                    local editBtn = CreateFrame("Button", nil, btn)
-                    editBtn:SetSize(14, 14)
-                    editBtn:SetPoint("RIGHT", item.mainGroupRename and -6 or -22, 0)
-                    local editIcon = editBtn:CreateTexture(nil, "OVERLAY")
-                    editIcon:SetAllPoints()
-                    editIcon:SetTexture("Interface\\AddOns\\VFlow\\Assets\\Icons\\edit")
-                    editIcon:SetVertexColor(iconColor[1], iconColor[2], iconColor[3], 0.9)
-                    editBtn:SetScript("OnClick", function()
-                        showAddGroupInput(btn, category.key, {
-                            mode = "edit",
-                            itemKey = item.key,
-                            customIndex = item.customIndex,
-                            initialValue = item.label,
-                            mainGroupRename = item.mainGroupRename == true,
-                        })
-                    end)
-                    editBtn:SetScript("OnEnter", function()
-                        editIcon:SetVertexColor(1, 1, 1, 1)
-                    end)
-                    editBtn:SetScript("OnLeave", function()
-                        editIcon:SetVertexColor(iconColor[1], iconColor[2], iconColor[3], 0.9)
-                    end)
-                end
-
-                if item.isCustom then
-                    local iconColor = getColor("textDim", { 0.7, 0.7, 0.7, 1 })
-
-                    local deleteBtn = CreateFrame("Button", nil, btn)
-                    deleteBtn:SetSize(14, 14)
-                    deleteBtn:SetPoint("RIGHT", -6, 0)
-                    local deleteIcon = deleteBtn:CreateTexture(nil, "OVERLAY")
-                    deleteIcon:SetAllPoints()
-                    deleteIcon:SetTexture("Interface\\AddOns\\VFlow\\Assets\\Icons\\delete")
-                    deleteIcon:SetVertexColor(iconColor[1], iconColor[2], iconColor[3], 0.9)
-                    deleteBtn:SetScript("OnClick", function()
-                        UI.dialog(UIParent, L["Delete group"], L["Delete group confirm"], function()
-                            local groups = getCustomGroupsForCategory(category.key)
-                            local moduleKey = nil
-                            if category.key == "skills" then
-                                moduleKey = "VFlow.Skills"
-                            elseif category.key == "buffs" then
-                                moduleKey = "VFlow.Buffs"
-                            elseif category.key == "items" then
-                                moduleKey = "VFlow.Items"
-                            end
-                            if groups and item.customIndex and groups[item.customIndex] then
-                                table.remove(groups, item.customIndex)
-                                if moduleKey and VFlow.Store and VFlow.Store.set then
-                                    VFlow.Store.set(moduleKey, "customGroups", groups)
-                                end
-                            end
-                            if category.key == "items" then
-                                if VFlow.ItemGroups and VFlow.ItemGroups.invalidateSpellMap then
-                                    VFlow.ItemGroups.invalidateSpellMap()
-                                end
-                                if VFlow.RequestSkillRefresh and VFlow.RefreshBus and VFlow.RefreshBus.PRESETS then
-                                    VFlow.RequestSkillRefresh(VFlow.RefreshBus.PRESETS.SKILL_GROUP_MAP)
-                                end
-                            end
-                            loadCustomGroups()
-                            if currentMenuKey == item.key then
-                                local fallbackKey = "general_home"
-                                local fallbackModule = "GeneralHome"
-                                if category.key == "skills" then
-                                    fallbackKey = "skill_important"
-                                    fallbackModule = "Skills"
-                                elseif category.key == "buffs" then
-                                    fallbackKey = "buff_monitor"
-                                    fallbackModule = "Buffs"
-                                elseif category.key == "items" then
-                                    fallbackKey = "item_monitor"
-                                    fallbackModule = "Items"
-                                end
-                                showContent(fallbackKey, fallbackModule)
-                            end
-                            renderMenu()
-                        end, nil, {
-                            destructive = true,
-                            confirmText = L["Delete"],
-                            cancelText = L["Cancel"],
-                            closeOnOutside = false,
-                        })
-                    end)
-                    deleteBtn:SetScript("OnEnter", function()
-                        deleteIcon:SetVertexColor(1, 1, 1, 1)
-                    end)
-                    deleteBtn:SetScript("OnLeave", function()
-                        deleteIcon:SetVertexColor(iconColor[1], iconColor[2], iconColor[3], 0.9)
-                    end)
-                end
-
-                    yOffset = yOffset - 28
-                end
-
-                if canAddCustomGroup then
-                    local addBtn = CreateFrame("Button", nil, parent)
-                    addBtn:SetSize(172, 26)
-                    addBtn:SetPoint("TOPLEFT", 4, yOffset)
-
-                addBtn.hover = addBtn:CreateTexture(nil, "BACKGROUND")
-                addBtn.hover:SetAllPoints()
-                local neutral = getColor("text", { 0.9, 0.9, 0.9, 1 })
-                addBtn.hover:SetColorTexture(neutral[1], neutral[2], neutral[3], 0)
-
-                local addText = addBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-                addText:SetPoint("LEFT", 46, 0)
-                local labelText = L["New"]
-                if category.key == "skills" then
-                    labelText = labelText .. L["Skill group"]
-                elseif category.key == "buffs" then
-                    labelText = labelText .. L["BUFF group"]
-                elseif category.key == "items" then
-                    labelText = labelText .. L["Sub group"]
-                end
-                addText:SetText(labelText)
-                addText:SetTextColor(neutral[1], neutral[2], neutral[3], 0.6)
-                addBtn.text = addText
-
-                local addIcon = addBtn:CreateTexture(nil, "OVERLAY")
-                addIcon:SetSize(14, 14)
-                addIcon:SetPoint("LEFT", 28, 0)
-                addIcon:SetTexture("Interface\\AddOns\\VFlow\\Assets\\Icons\\add")
-                addIcon:SetVertexColor(neutral[1], neutral[2], neutral[3], 0.6)
-
-                addBtn:SetScript("OnClick", function()
-                    showAddGroupInput(addBtn, category.key)
-                end)
-                addBtn:SetScript("OnEnter", function(self)
-                    self.hover:SetColorTexture(neutral[1], neutral[2], neutral[3], 0.1)
-                end)
-                addBtn:SetScript("OnLeave", function(self)
-                    self.hover:SetColorTexture(neutral[1], neutral[2], neutral[3], 0)
-                end)
-
-                    table.insert(menuButtons, addBtn)
-                    yOffset = yOffset - 30
-                end
-
-                yOffset = yOffset - 8
-            end
-        end
-    end
-
-    if menuContent and leftMenu then
-        local contentHeight = math.max(-yOffset + 8, leftMenu:GetHeight() - 8)
-        menuContent:SetHeight(contentHeight)
-        if UI and UI.updateScrollFrameState and menuScrollFrame then
-            UI.updateScrollFrameState(menuScrollFrame, contentHeight, leftMenu:GetHeight() - 8)
-        end
-    end
-
-    updateMenuSelection()
-end
-
--- =========================================================
--- SECTION 6: 添加/重命名分组输入
--- =========================================================
-
-showAddGroupInput = function(btn, categoryKey, opts)
-    opts = opts or {}
-    local isEdit = opts.mode == "edit"
-    -- 隐藏按钮
-    btn:Hide()
-
-    -- 创建输入框
-    local inputFrame = CreateFrame("Frame", nil, menuContent or leftMenu, "BackdropTemplate")
-    inputFrame:SetSize(btn:GetWidth(), btn:GetHeight())
-    inputFrame:SetPoint("TOPLEFT", btn, "TOPLEFT")
-    applyFlatBackdrop(inputFrame, "element", "primary")
-
-    local editBox = CreateFrame("EditBox", nil, inputFrame)
-    editBox:SetPoint("LEFT", 5, 0)
-    editBox:SetPoint("RIGHT", -5, 0)
-    editBox:SetHeight(20)
-    editBox:SetFontObject("GameFontHighlightSmall")
-    editBox:SetAutoFocus(false)
-    editBox:SetMaxLetters(20)
-    editBox:SetTextInsets(2, 2, 0, 0)
-
-    local placeholder = inputFrame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    placeholder:SetPoint("LEFT", editBox, "LEFT", 2, 0)
-    placeholder:SetPoint("RIGHT", editBox, "RIGHT", -2, 0)
-    placeholder:SetJustifyH("LEFT")
-    placeholder:SetText(isEdit and L["Please enter new group name"] or L["Please enter group name"])
-    local dim = getColor("textDim", { 0.7, 0.7, 0.7, 1 })
-    placeholder:SetTextColor(dim[1], dim[2], dim[3], 0.85)
-
-    local function updatePlaceholder()
-        if editBox:GetText() ~= "" then
-            placeholder:Hide()
-        else
-            placeholder:Show()
-        end
-    end
-    updatePlaceholder()
-
-    -- 确认添加
-    local function confirmAdd()
-        local groupName = editBox:GetText():trim()
-        if groupName == "" then
-            inputFrame:Hide()
-            btn:Show()
-            return
-        end
-
-        if isEdit then
-            if opts.mainGroupRename and categoryKey == "items" then
-                if groupName ~= "" and VFlow.Store and VFlow.Store.set then
-                    VFlow.Store.set("VFlow.Items", "mainGroup.groupName", groupName)
-                end
-            else
-                local groups = getCustomGroupsForCategory(categoryKey)
-                if groups and opts.customIndex and groups[opts.customIndex] then
-                    groups[opts.customIndex].name = groupName
-                end
-            end
-        else
-            local module = getModuleForCategory(categoryKey)
-            if module and module.addCustomGroup then
-                module.addCustomGroup(groupName)
-            end
-        end
-
-        loadCustomGroups()
-        inputFrame:Hide()
-        renderMenu()
-        if isEdit and opts.mainGroupRename and currentMenuKey == "item_monitor" then
-            showContent("item_monitor", "Items")
-        end
-        if isEdit and opts.itemKey and currentMenuKey == opts.itemKey then
-            updateMenuSelection()
-        end
-
-        print("|cff00ff00VFlow:|r " .. (isEdit and L["Group updated:"] or L["Group created:"]), groupName)
-    end
-
-    editBox:SetScript("OnEnterPressed", confirmAdd)
-    editBox:SetScript("OnTextChanged", updatePlaceholder)
-    editBox:SetScript("OnEditFocusGained", updatePlaceholder)
-    editBox:SetScript("OnEscapePressed", function()
-        inputFrame:Hide()
-        btn:Show()
-    end)
-    editBox:SetScript("OnEditFocusLost", function()
-        updatePlaceholder()
-        C_Timer.After(0.1, function()
-            if inputFrame:IsShown() then
-                inputFrame:Hide()
-                btn:Show()
-            end
-        end)
-    end)
-    C_Timer.After(0, function()
-        if inputFrame:IsShown() then
-            if opts.initialValue then
-                editBox:SetText(opts.initialValue)
-                editBox:HighlightText()
-            end
-            editBox:SetFocus()
-            updatePlaceholder()
-        end
-    end)
-end
-
--- =========================================================
--- SECTION 7: 模块控制页
--- =========================================================
-
-local function formatControlNames(controlKeys)
-    local names = {}
-    for _, controlKey in ipairs(controlKeys or {}) do
-        local info = VFlow.getModuleControlInfo and VFlow.getModuleControlInfo(controlKey)
-        names[#names + 1] = info and info.label or tostring(controlKey)
-    end
-    return table.concat(names, "、")
-end
-
-local function collectModuleControls()
-    local items = {}
-    local catalog = VFlow.getModuleControlCatalog and VFlow.getModuleControlCatalog() or {}
-    for _, info in ipairs(catalog) do
-        items[#items + 1] = info
-    end
-    table.sort(items, function(a, b)
-        return (a.order or 0) < (b.order or 0)
-    end)
-    return items
-end
-
-local function getUnavailableSavedDependencies(controlInfo)
-    local missing = {}
-    for _, depKey in ipairs(controlInfo and controlInfo.dependencies or {}) do
-        local depState = VFlow.getModuleControlSavedState and VFlow.getModuleControlSavedState(depKey) or nil
-        if not depState or not depState.requested then
-            missing[#missing + 1] = depKey
-        end
-    end
-    return missing
-end
-
-renderModuleControlContent = function(container)
-    if not VFlow.Grid or not VFlow.Grid.render then
-        return
-    end
-
-    local controls = collectModuleControls()
-    local layout = {
-        { type = "title", text = L["Module Controls"], cols = 24 },
-        { type = "separator", cols = 24 },
-        {
-            type = "description",
-            text = function()
-                if VFlow.hasModuleStateChangesPendingReload and VFlow.hasModuleStateChangesPendingReload() then
-                    return L["Pending module changes detected. Click below or use /reload to apply."]
-                end
-                return L["No pending module changes."]
-            end,
-            cols = 24
-        },
-        {
-            type = "button",
-            text = L["Reload UI Now"],
-            cols = 8,
-            onClick = function()
-                ReloadUI()
-            end
-        },
-        { type = "spacer", height = 10, cols = 24 },
-    }
-
-    layout[#layout + 1] = {
-        type = "customRender",
-        cols = 24,
-        height = 132,
-        render = function(parent)
-            local columns = 3
-            local buttonWidth = 180
-            local buttonHeight = 32
-            local gapX = 10
-            local gapY = 12
-            local startX = 8
-            local startY = -4
-
-            for index, info in ipairs(controls) do
-                local runtimeState = VFlow.getModuleControlRuntimeState and VFlow.getModuleControlRuntimeState(info.controlKey) or nil
-                local savedState = VFlow.getModuleControlSavedState and VFlow.getModuleControlSavedState(info.controlKey) or nil
-                local requested = savedState and savedState.requested == true
-                local effectiveNext = savedState and savedState.effective == true
-                local unavailableDependencies = getUnavailableSavedDependencies(info)
-                local lockedByDependency = (not requested) and unavailableDependencies[1] ~= nil
-                local row = math.floor((index - 1) / columns)
-                local col = (index - 1) % columns
-
-                local btn = CreateFrame("Button", nil, parent, "BackdropTemplate")
-                btn:SetSize(buttonWidth, buttonHeight)
-                btn:SetPoint("TOPLEFT", startX + col * (buttonWidth + gapX), startY - row * (buttonHeight + gapY))
-                applyFlatBackdrop(btn, requested and "element" or "panel", requested and "primary" or "border")
-
-                local borderColor
-                if lockedByDependency then
-                    borderColor = { 0.9, 0.72, 0.28, 1 }
-                else
-                    borderColor = requested and getColor("primary", { 0.2, 0.6, 1, 1 }) or getColor("border", { 0.25, 0.25, 0.25, 1 })
-                end
-                btn:SetBackdropBorderColor(borderColor[1], borderColor[2], borderColor[3], requested and 0.95 or borderColor[4])
-
-                local dot = btn:CreateTexture(nil, "OVERLAY")
-                dot:SetSize(8, 8)
-                dot:SetPoint("LEFT", 10, 0)
-                if lockedByDependency then
-                    dot:SetColorTexture(0.9, 0.72, 0.28, 1)
-                elseif requested then
-                    dot:SetColorTexture(0.2, 0.8, 0.35, 1)
-                else
-                    dot:SetColorTexture(0.45, 0.45, 0.45, 1)
-                end
-
-                if lockedByDependency then
-                    local lockIcon = btn:CreateTexture(nil, "OVERLAY")
-                    lockIcon:SetSize(14, 14)
-                    lockIcon:SetPoint("RIGHT", -8, 0)
-                    lockIcon:SetTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Up")
-                    lockIcon:SetTexCoord(0.25, 0.75, 0.25, 0.75)
-                    lockIcon:SetVertexColor(0.95, 0.82, 0.32, 1)
-                end
-
-                local label = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-                label:SetPoint("LEFT", 24, 0)
-                label:SetPoint("RIGHT", lockedByDependency and -28 or -8, 0)
-                label:SetJustifyH("LEFT")
-                label:SetWordWrap(false)
-                label:SetText(info.label)
-                if requested then
-                    label:SetTextColor(1, 1, 1, 1)
-                elseif lockedByDependency then
-                    label:SetTextColor(1, 0.9, 0.55, 1)
-                else
-                    local dim = getColor("textDim", { 0.7, 0.7, 0.7, 1 })
-                    label:SetTextColor(dim[1], dim[2], dim[3], 1)
-                end
-
-                btn:SetScript("OnEnter", function(self)
-                    local hover = getColor("hover", { 0.22, 0.22, 0.22, 1 })
-                    self:SetBackdropColor(hover[1], hover[2], hover[3], requested and 0.4 or 0.22)
-                    GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
-                    GameTooltip:SetText(info.label)
-                    GameTooltip:AddLine((runtimeState and runtimeState.effective) and L["Currently loaded"] or L["Currently unloaded"], 1, 1, 1)
-                    if lockedByDependency then
-                        GameTooltip:AddLine(string.format(L["Enable first: %s"], formatControlNames(unavailableDependencies)), 1, 0.82, 0.35)
-                    elseif requested then
-                        if effectiveNext then
-                            GameTooltip:AddLine(L["Remains enabled after reload"], 0.6, 1, 0.6)
-                        else
-                            GameTooltip:AddLine(string.format(L["Disabled after reload due to unmet dependency: %s"], formatControlNames(savedState.missingDependencies)), 1, 0.82, 0.35)
-                        end
-                    else
-                        GameTooltip:AddLine(L["Disabled after reload"], 1, 0.4, 0.4)
-                    end
-                    if info.dependencies and info.dependencies[1] then
-                        GameTooltip:AddLine(string.format(L["Dependencies: %s"], formatControlNames(info.dependencies)), 0.7, 0.82, 1)
-                    end
-                    GameTooltip:Show()
-                end)
-                btn:SetScript("OnLeave", function(self)
-                    local bgName = requested and "element" or "panel"
-                    local bg = getColor(bgName, { 0.15, 0.15, 0.15, 1 })
-                    self:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
-                    GameTooltip:Hide()
-                end)
-                btn:SetScript("OnClick", function()
-                    if lockedByDependency then
-                        print("|cffffff00VFlow:|r " .. string.format(L["Please enable %s first, then enable %s."], formatControlNames(unavailableDependencies), info.label))
-                        return
-                    end
-                    VFlow.setSavedModuleControlEnabled(info.controlKey, not requested)
-                    if VFlow.MainUI and VFlow.MainUI.refresh then
-                        VFlow.MainUI.refresh()
-                    end
-                end)
-            end
-        end
-    }
-
-    VFlow.Grid.render(container, layout, {}, nil)
-end
-
--- =========================================================
--- SECTION 8: 更新菜单选中状态
--- =========================================================
-
-updateMenuSelection = function()
-    for _, btn in ipairs(menuButtons) do
-        if btn.itemKey then
-            if btn.itemKey == currentMenuKey then
-                local primary = getColor("primary", { 0.2, 0.6, 1, 1 })
-                if btn.indicator then
-                    btn.indicator:Show()
-                end
-                if btn.hover then
-                    btn.hover:SetColorTexture(primary[1], primary[2], primary[3], 0.14)
-                end
-                btn.text:SetTextColor(1, 1, 1, 1)
-            else
-                local dim = getColor("textDim", { 0.7, 0.7, 0.7, 1 })
-                if btn.indicator then
-                    btn.indicator:Hide()
-                end
-                if btn.hover then
-                    local primary = getColor("primary", { 0.2, 0.6, 1, 1 })
-                    btn.hover:SetColorTexture(primary[1], primary[2], primary[3], 0)
-                end
-                local textC = getColor("text", { 0.9, 0.9, 0.9, 1 })
-                btn.text:SetTextColor(textC[1], textC[2], textC[3], 0.9)
-            end
-        end
-    end
-end
-
--- =========================================================
--- SECTION 9: 显示右侧内容
--- =========================================================
-
-showContent = function(menuKey, moduleName)
+local function showContent(menuKey, moduleName)
     if not moduleName then
-        moduleName = findModuleByMenuKey(menuKey)
+        moduleName = Shared.findModuleByMenuKey(menuKey)
     end
-    currentMenuKey = menuKey
-    updateMenuSelection()
+    Shared.currentMenuKey = menuKey
+    Shared.updateMenuSelection()
 
     -- 切页前先完整释放旧页面，避免 Grid / watch 回调残留
     disposeRightPanelContent()
@@ -1070,7 +179,7 @@ showContent = function(menuKey, moduleName)
     rightPanel.content = content
 
     if menuKey == MODULE_CONTROL_MENU_KEY then
-        renderModuleControlContent(content)
+        Shared.renderModuleControlContent(content)
         return
     end
 
@@ -1089,18 +198,18 @@ showContent = function(menuKey, moduleName)
 
     local desc = VFlow.UI.description(content, string.format(L["Module %s is under development..."], moduleName or L["Unknown"]))
     desc:SetPoint("TOPLEFT", 10, -50)
-
-
 end
 
+-- 导出 showContent 到共享表，供菜单模块回调使用
+Shared.showContent = showContent
+
 -- =========================================================
--- SECTION 10: 创建主框架
+-- SECTION 6: 创建主框架
 -- =========================================================
 
 local function createMainFrame()
     if mainFrame then return end
 
-    -- 主框架
     mainFrame = CreateFrame("Frame", "VFlowMainFrame", UIParent, "BackdropTemplate")
     mainFrame:SetSize(900, 600)
     mainFrame:SetPoint("CENTER")
@@ -1274,16 +383,23 @@ local function createMainFrame()
     rightPanel:SetPoint("TOPRIGHT", -10, -50)
     applyFlatBackdrop(rightPanel, "background", "border", 0.4)
 
-    -- 加载自定义组
-    loadCustomGroups()
+    -- 将帧引用写入共享表，供菜单模块使用
+    Shared.leftMenu = leftMenu
+    Shared.menuScrollFrame = menuScrollFrame
+    Shared.menuContent = menuContent
 
-    -- 渲染菜单
-    renderMenu()
+    -- 加载自定义组并渲染菜单
+    Shared.loadCustomGroups()
+    Shared.renderMenu()
 
     -- 显示默认内容
-    local defaultMenuKey, defaultModule = getFirstAvailableMenuTarget()
+    local defaultMenuKey, defaultModule = Shared.getFirstAvailableMenuTarget()
     showContent(defaultMenuKey, defaultModule)
 end
+
+-- =========================================================
+-- SECTION 7: 状态监听
+-- =========================================================
 
 VFlow.State.watch("internalEditMode", "VFlow.MainUI.InternalEditButton", function()
     updateInternalEditButtonVisual()
@@ -1294,7 +410,7 @@ VFlow.State.watch("systemEditMode", "VFlow.MainUI.SystemEditButton", function()
 end)
 
 -- =========================================================
--- SECTION 11: 战斗门控与全局入口
+-- SECTION 8: 战斗门控与全局入口
 -- =========================================================
 
 local pendingOpenRequest = nil
@@ -1305,11 +421,11 @@ local function performOpenRequest(menuKey, context)
     mainFrame:Show()
     pendingOpenContext = nil
     if not menuKey then
-        local fallbackKey, fallbackModule = getFirstAvailableMenuTarget()
+        local fallbackKey, fallbackModule = Shared.getFirstAvailableMenuTarget()
         showContent(fallbackKey, fallbackModule)
         return
     end
-    local moduleName = findModuleByMenuKey(menuKey)
+    local moduleName = Shared.findModuleByMenuKey(menuKey)
     if moduleName or menuKey == MODULE_CONTROL_MENU_KEY then
         pendingOpenContext = {
             menuKey = menuKey,
@@ -1318,11 +434,10 @@ local function performOpenRequest(menuKey, context)
         showContent(menuKey, moduleName)
         return
     end
-    local fallbackKey, fallbackModule = getFirstAvailableMenuTarget()
+    local fallbackKey, fallbackModule = Shared.getFirstAvailableMenuTarget()
     showContent(fallbackKey, fallbackModule)
 end
 
--- 监听战斗状态变化
 VFlow.State.watch("inCombat", "VFlow.MainUI", function(inCombat)
     if inCombat then
         if mainFrame and mainFrame:IsShown() then
@@ -1338,7 +453,7 @@ VFlow.State.watch("inCombat", "VFlow.MainUI", function(inCombat)
 end)
 
 -- =========================================================
--- SECTION 12: 系统功能（冷却管理器 / 编辑模式）
+-- SECTION 9: 系统功能（冷却管理器 / 编辑模式）
 -- =========================================================
 
 VFlow.openCooldownManager = function()
@@ -1360,19 +475,21 @@ VFlow.toggleSystemEditMode = function()
     end
 end
 
---- 开启插件内部编辑模式（用于「不在系统编辑模式中显示」的自定义图形监控等）
 VFlow.openInternalEditMode = function()
     if VFlow.DragFrame and VFlow.DragFrame.setInternalEditMode then
         VFlow.DragFrame.setInternalEditMode(true)
     end
 end
 
---- 切换插件内部编辑模式
 VFlow.toggleInternalEditMode = function()
     if VFlow.DragFrame and VFlow.DragFrame.toggleInternalEditMode then
         VFlow.DragFrame.toggleInternalEditMode()
     end
 end
+
+-- =========================================================
+-- SECTION 10: 公共 API
+-- =========================================================
 
 VFlow.MainUI = {
     show = function()
@@ -1421,13 +538,13 @@ VFlow.MainUI = {
     end,
     refresh = function()
         if mainFrame and mainFrame:IsShown() then
-            renderMenu()
-            if currentMenuKey and rightPanel then
-                local moduleName = findModuleByMenuKey(currentMenuKey)
-                if currentMenuKey == MODULE_CONTROL_MENU_KEY or moduleName then
-                    showContent(currentMenuKey, moduleName)
+            Shared.renderMenu()
+            if Shared.currentMenuKey and rightPanel then
+                local moduleName = Shared.findModuleByMenuKey(Shared.currentMenuKey)
+                if Shared.currentMenuKey == MODULE_CONTROL_MENU_KEY or moduleName then
+                    showContent(Shared.currentMenuKey, moduleName)
                 else
-                    local fallbackKey, fallbackModule = getFirstAvailableMenuTarget()
+                    local fallbackKey, fallbackModule = Shared.getFirstAvailableMenuTarget()
                     showContent(fallbackKey, fallbackModule)
                 end
             end
@@ -1437,7 +554,7 @@ VFlow.MainUI = {
         return rightPanel and rightPanel.content
     end,
     getCurrentMenuKey = function()
-        return currentMenuKey
+        return Shared.currentMenuKey
     end,
     consumeOpenContext = function(menuKey)
         if pendingOpenContext and pendingOpenContext.menuKey == menuKey then
@@ -1450,7 +567,7 @@ VFlow.MainUI = {
 }
 
 -- =========================================================
--- SECTION 13: 斜杠命令
+-- SECTION 11: 斜杠命令
 -- =========================================================
 
 SLASH_VFLOWUI1 = "/vflow"
@@ -1472,7 +589,12 @@ SlashCmdList["VFLOWUI"] = function(msg)
         print("|cff00ff00VFlow:|r " .. string.format(L["Cleared all config, %d modules"], cleared))
         print("|cff00ff00VFlow:|r " .. L["Enter /reload for reset to take effect"])
     elseif msg == "pool stats" then
-        VFlow.Pool.debugAll()
+        for _, poolName in ipairs({ "VFlowButton", "VFlowContainer", "VFlowSlider", "VFlowCheckbox", "VFlowInput", "VFlowDropdown", "VFlowIconButton" }) do
+            local s = VFlow.Pool.getStats(poolName)
+            if s.acquired > 0 then
+                print(string.format("  %s: active=%d hit=%d%%", poolName, s.active, s.hitRate))
+            end
+        end
     elseif msg == "pool reset" then
         print("|cff00ff00VFlow:|r " .. L["Resetting all frame pools..."])
         for _, poolName in ipairs({ "VFlowContainer", "VFlowSlider", "VFlowCheckbox", "VFlowInput", "VFlowDropdown", "VFlowSeparator", "VFlowSpacer" }) do
@@ -1491,7 +613,7 @@ SlashCmdList["VFLOWUI"] = function(msg)
 end
 
 -- =========================================================
--- SECTION 14: 初始化
+-- SECTION 12: 初始化
 -- =========================================================
 
 VFlow.on("PLAYER_ENTERING_WORLD", "VFlow.MainUI", function()
@@ -1504,21 +626,19 @@ VFlow.on("PLAYER_ENTERING_WORLD", "VFlow.MainUI", function()
 
     -- 检查是否启用 /wa 命令
     local enableWa = false
+    local isModuleVisible = Shared.isModuleVisible
     if isModuleVisible("GeneralHome") and VFlow.getDBIfReady then
         local homeDB = VFlow.getDBIfReady("VFlow.GeneralHome")
         enableWa = homeDB and homeDB.enableWaCommand
     end
     if enableWa == nil then enableWa = isModuleVisible("GeneralHome") end
-    
+
     if enableWa then
         if not SlashCmdList["VFLOW_WA"] then
             SLASH_VFLOW_WA1 = "/wa"
             SlashCmdList["VFLOW_WA"] = function(msg)
                 VFlow.MainUI.toggle()
             end
-            -- print("|cff00ff00VFlow:|r 已启用 /wa 命令")
         end
     end
-
-    -- print("|cff00ff00VFlow:|r " .. L["Type /vflow to open main UI"])
 end)

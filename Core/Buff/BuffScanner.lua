@@ -6,8 +6,6 @@
 local VFlow = _G.VFlow
 if not VFlow then return end
 
-local Profiler = VFlow.Profiler
-
 -- =========================================================
 -- SECTION 2: SpellID 解析
 -- =========================================================
@@ -92,12 +90,3 @@ VFlow.on("TRAIT_CONFIG_UPDATED", "BuffScanner", ScheduleScan)
 VFlow.BuffScanner = {
     scan = ScanBuffViewers,
 }
-
-if Profiler and Profiler.registerScope then
-    Profiler.registerScope("BS:ScanBuffViewers", function()
-        return ScanBuffViewers
-    end, function(fn)
-        ScanBuffViewers = fn
-        VFlow.BuffScanner.scan = fn
-    end)
-end

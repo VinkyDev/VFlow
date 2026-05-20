@@ -1,15 +1,20 @@
 <Ui>
     <Script file="Infra\Core.lua"/>
+    <Script file="Infra\ModuleCatalog.lua"/>
     <Script file="Infra\ModuleControlConstants.lua"/>
     <Script file="Infra\State.lua"/>
     <Script file="Infra\Store.lua"/>
+    <Script file="Infra\FrameData.lua"/>
     <Script file="Infra\Pool.lua"/>
+    <Script file="Infra\PoolWidgets.lua"/>
     <Script file="Infra\PixelPerfect.lua"/>
     <Script file="Infra\BarFrameKit.lua"/>
-    <Script file="Infra\UI.lua"/>
+    <Script file="Infra\UI\UICore.lua"/>
+    <Script file="Infra\UI\UIFont.lua"/>
+    <Script file="Infra\UI\UIScroll.lua"/>
+    <Script file="Infra\UI\UIPickers.lua"/>
     <Script file="Infra\Utils.lua"/>
     <Script file="Infra\Grid.lua"/>
     <Script file="Infra\ContainerAnchor.lua"/>
     <Script file="Infra\DragFrame.lua"/>
-    <!-- <Script file="Infra\Profiler.lua"/> -->
 </Ui>

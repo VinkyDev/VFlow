@@ -1,6 +1,6 @@
 --[[ Core 依赖：
   - Core/Style/StyleApply.lua：图标样式缓存与监听本模块
-  - Core/Style/CooldownStyle.lua：将样式应用到冷却管理器帧
+  - Core/Style/StyleEngine.lua：将样式应用到冷却管理器帧
   - Core/Style/MasqueSupport.lua：Masque 检测与皮肤注册桥接
 ]]
 

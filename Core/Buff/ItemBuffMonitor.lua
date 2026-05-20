@@ -7,7 +7,6 @@ local VFlow = _G.VFlow
 if not VFlow then return end
 
 local L = VFlow.L
-local Profiler = VFlow.Profiler
 local Utils = VFlow.Utils
 local ModuleControlConstants = VFlow.ModuleControlConstants
 
@@ -735,17 +734,3 @@ VFlow.ItemBuffMonitor = {
 
     refresh = RefreshLayout,
 }
-
-if Profiler and Profiler.registerScope then
-    Profiler.registerScope("TPM:ScanItems", function()
-        return ScanItems
-    end, function(fn)
-        ScanItems = fn
-    end)
-    Profiler.registerScope("TPM:RefreshLayout", function()
-        return RefreshLayout
-    end, function(fn)
-        RefreshLayout = fn
-        VFlow.ItemBuffMonitor.refresh = fn
-    end)
-end

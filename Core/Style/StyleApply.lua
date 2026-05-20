@@ -13,8 +13,8 @@ local StyleApply = {}
 VFlow.StyleApply = StyleApply
 
 local abs = math.abs
-local Profiler = VFlow.Profiler
 local CORE_ENABLED = ModuleControlConstants.CORE_ENABLED
+local FD = VFlow.FD
 
 -- =========================================================
 -- SECTION 2: 工具函数
@@ -174,15 +174,23 @@ end
 -- =========================================================
 
 function StyleApply.ApplyIconSize(button, w, h)
-    if button._vf_w == w and button._vf_h == h then return end
+    local fd = FD(button)
+    if fd.w == w and fd.h == h then return end
     button:SetSize(w, h)
-    button._vf_w = w
-    button._vf_h = h
+    fd.w = w
+    fd.h = h
 end
 
 function StyleApply.ApplyFontStyle(fs, cfg, cachePrefix)
     if not fs or not cfg then return end
     local prefix = cachePrefix or "_vf"
+    -- Strip _vf_ prefix for FD storage
+    if prefix == "_vf" then
+        prefix = ""
+    elseif prefix:sub(1, 4) == "_vf_" then
+        prefix = prefix:sub(5)
+    end
+    local sep = prefix ~= "" and (prefix .. "_") or ""
 
     local size = cfg.size or 14
     local fontToken = cfg.font
@@ -193,11 +201,12 @@ function StyleApply.ApplyFontStyle(fs, cfg, cachePrefix)
     elseif outline == "MONOCHROMEOUTLINE" then
         requestedFlags = "OUTLINE,MONOCHROME"
     end
-    local sizeKey = prefix .. "_size"
-    local fontKey = prefix .. "_font"
-    local outlineKey = prefix .. "_outline"
+    local sizeKey = sep .. "size"
+    local fontKey = sep .. "font"
+    local outlineKey = sep .. "outline"
 
-    if fs[sizeKey] ~= size or fs[fontKey] ~= fontToken or fs[outlineKey] ~= outline then
+    local fd = FD(fs)
+    if fd[sizeKey] ~= size or fd[fontKey] ~= fontToken or fd[outlineKey] ~= outline then
         local applyFont = VFlow.UI and VFlow.UI.applyFont
         if applyFont then
             applyFont(fs, fontToken, size, requestedFlags)
@@ -207,32 +216,32 @@ function StyleApply.ApplyFontStyle(fs, cfg, cachePrefix)
         else
             SafeSetShadow(fs, false)
         end
-        fs[sizeKey] = size
-        fs[fontKey] = fontToken
-        fs[outlineKey] = outline
+        fd[sizeKey] = size
+        fd[fontKey] = fontToken
+        fd[outlineKey] = outline
     end
 
     if cfg.color then
         local c = cfg.color
         local r, g, b, a = c.r or 1, c.g or 1, c.b or 1, c.a or 1
-        local rKey, gKey, bKey, aKey = prefix .. "_r", prefix .. "_g", prefix .. "_b", prefix .. "_a"
-        if fs[rKey] ~= r or fs[gKey] ~= g or fs[bKey] ~= b or fs[aKey] ~= a then
+        local rKey, gKey, bKey, aKey = sep .. "r", sep .. "g", sep .. "b", sep .. "a"
+        if fd[rKey] ~= r or fd[gKey] ~= g or fd[bKey] ~= b or fd[aKey] ~= a then
             fs:SetTextColor(r, g, b, a)
-            fs[rKey] = r; fs[gKey] = g; fs[bKey] = b; fs[aKey] = a
+            fd[rKey] = r; fd[gKey] = g; fd[bKey] = b; fd[aKey] = a
         end
     end
 
     local position = cfg.position or "CENTER"
     local ox = cfg.offsetX or 0
     local oy = cfg.offsetY or 0
-    local posKey = prefix .. "_pos"
-    local oxKey = prefix .. "_ox"
-    local oyKey = prefix .. "_oy"
-    if fs[posKey] ~= position or fs[oxKey] ~= ox or fs[oyKey] ~= oy then
+    local posKey = sep .. "pos"
+    local oxKey = sep .. "ox"
+    local oyKey = sep .. "oy"
+    if fd[posKey] ~= position or fd[oxKey] ~= ox or fd[oyKey] ~= oy then
         fs:ClearAllPoints()
         local parent = fs:GetParent()
         fs:SetPoint(position, parent, position, ox, oy)
-        fs[posKey] = position; fs[oxKey] = ox; fs[oyKey] = oy
+        fd[posKey] = position; fd[oxKey] = ox; fd[oyKey] = oy
     end
 end
 
@@ -242,10 +251,11 @@ end
 
 function StyleApply.ApplyKeybind(button, cfg)
     if not button or not cfg then return end
+    local fd = FD(button)
 
     local show = cfg.showKeybind
     if not show then
-        if button._vf_keybindFrame then button._vf_keybindFrame:Hide() end
+        if fd.keybindFrame then fd.keybindFrame:Hide() end
         return
     end
 
@@ -257,30 +267,31 @@ function StyleApply.ApplyKeybind(button, cfg)
         end
     end
 
-    if not button._vf_keybindFrame then
+    if not fd.keybindFrame then
         local f = CreateFrame("Frame", nil, button)
         f:SetAllPoints(button)
         f:SetFrameLevel(button:GetFrameLevel() + 2)
         local fs = f:CreateFontString(nil, "OVERLAY")
         fs:SetPoint("TOPRIGHT", f, "TOPRIGHT", -1, -1)
         f._text = fs
-        button._vf_keybindFrame = f
+        fd.keybindFrame = f
     end
 
-    local fs = button._vf_keybindFrame._text
+    local fs = fd.keybindFrame._text
     if cfg.keybindFont then
         StyleApply.ApplyFontStyle(fs, cfg.keybindFont, "_vf_kb")
     end
 
-    if fs and keyText ~= (fs._vf_lastText or "") then
+    local ffs = FD(fs)
+    if fs and keyText ~= (ffs.lastText or "") then
         fs:SetText(keyText)
-        fs._vf_lastText = keyText
+        ffs.lastText = keyText
     end
 
     if keyText and keyText ~= "" then
-        button._vf_keybindFrame:Show()
+        fd.keybindFrame:Show()
     else
-        button._vf_keybindFrame:Hide()
+        fd.keybindFrame:Hide()
     end
 end
 
@@ -320,7 +331,7 @@ end
 --- 重要/效能/自定义技能管理器图标（非 BUFF 监视器）
 local function IsSkillCooldownManagerIcon(button)
     if not button then return false end
-    if button._vf_cdmKind == "skill" then return true end
+    if FD(button).cdmKind == "skill" then return true end
     local p = button:GetParent()
     local n = p and p.GetName and p:GetName()
     if type(n) ~= "string" then return false end
@@ -331,7 +342,7 @@ end
 
 --- 额外 CD 追加到重要/效能条：物品 CD 与灰度由 ItemGroups.ApplyEntryCooldown / SyncIconDesatFromCooldown 管理
 local function IsVFItemAppendSkillSlot(button)
-    return button and button._vf_itemAppendFrame == true
+    return button and FD(button).itemAppendFrame == true
 end
 
 --- 优先 button.cooldownInfo 的 spellID：关联 BUFF 激活时 GetSpellID/GetAuraSpellID 可能指向光环 ID
@@ -463,7 +474,7 @@ end
 
 --- 仅用于「仅技能冷却」图标灰度；不依赖 cdInfo.isActive（关联 BUFF 续时间时 isActive 可能抖动导致闪灰）
 local function ComputeSpellOnlyTargetDesaturation(button, state)
-    if not button._vf_hideBuffCooldownOverlay or not IsSkillCooldownManagerIcon(button)
+    if not FD(button).hideBuffCooldownOverlay or not IsSkillCooldownManagerIcon(button)
         or IsVFItemAppendSkillSlot(button) then
         return 0
     end
@@ -492,7 +503,8 @@ end
 --- SetUseAuraDisplayTime(false) + DurationObject；仅在 isOnGCD 且无 durObj 时 Clear，避免误清整块遮罩与读秒
 local function ApplySpellOnlyCooldownDisplay(button, state)
     if IsVFItemAppendSkillSlot(button) then return end
-    if not button._vf_hideBuffCooldownOverlay then return end
+    local fd = FD(button)
+    if not fd.hideBuffCooldownOverlay then return end
     if not IsSkillCooldownManagerIcon(button) then return end
     local cd = button.Cooldown
     if not cd then return end
@@ -504,9 +516,9 @@ local function ApplySpellOnlyCooldownDisplay(button, state)
 
     if tex and tex.SetDesaturation then
         local want = ComputeSpellOnlyTargetDesaturation(button, state)
-        button._vf_spellOnlyDesatApplying = true
+        fd.spellOnlyDesatApplying = true
         pcall(tex.SetDesaturation, tex, want)
-        button._vf_spellOnlyDesatApplying = false
+        fd.spellOnlyDesatApplying = false
     end
 
     if cd.SetUseAuraDisplayTime then
@@ -573,22 +585,27 @@ local function EnsureSpellOnlyWatchOwner(button)
     if not button then
         return nil
     end
-    if not button._vf_spellWatchOwner then
-        button._vf_spellWatchOwner = { button = button }
+    local fd = FD(button)
+    if not fd.spellWatchOwner then
+        fd.spellWatchOwner = { button = button }
     end
-    return button._vf_spellWatchOwner
+    return fd.spellWatchOwner
 end
 
 local function ReleaseSpellOnlyCooldownWatcher(button)
-    if not button or not button._vf_watchedSpellID then
+    if not button then
+        return
+    end
+    local fd = FD(button)
+    if not fd.watchedSpellID then
         return
     end
     local watcher = GetSpellStateWatcher()
-    local ownerKey = button._vf_spellWatchOwner
+    local ownerKey = fd.spellWatchOwner
     if watcher and ownerKey then
-        watcher.unwatch(ownerKey, button._vf_watchedSpellID)
+        watcher.unwatch(ownerKey, fd.watchedSpellID)
     end
-    button._vf_watchedSpellID = nil
+    fd.watchedSpellID = nil
 end
 
 RequestSpellOnlyCooldownRefresh = function(button)
@@ -609,13 +626,14 @@ local function EnsureSpellOnlyRefreshHooks(button)
     button._vf_spellOnlyRefreshHooked = true
 
     local function reconcileAfterSystemRefresh(self)
-        if not self
-            or not self._vf_hideBuffCooldownOverlay
+        if not self then return end
+        local fd = FD(self)
+        if not fd.hideBuffCooldownOverlay
             or not IsSkillCooldownManagerIcon(self)
             or IsVFItemAppendSkillSlot(self) then
             return
         end
-        ApplyCooldownMaskSwipeNow(self, self._vf_spellOnlyChargeRechargeActive == true)
+        ApplyCooldownMaskSwipeNow(self, fd.spellOnlyChargeRechargeActive == true)
         RequestSpellOnlyCooldownRefresh(self)
     end
 
@@ -631,15 +649,16 @@ local function SyncSpellOnlyCooldownWatcher(button)
     if not button then
         return
     end
+    local fd = FD(button)
 
-    local shouldWatch = button._vf_hideBuffCooldownOverlay == true
+    local shouldWatch = fd.hideBuffCooldownOverlay == true
         and not IsVFItemAppendSkillSlot(button)
         and IsSkillCooldownManagerIcon(button)
         and button.IsShown
         and button:IsShown()
 
     local spellID = shouldWatch and GetSpellIDForSpellOnlyCooldown(button) or nil
-    if spellID == button._vf_watchedSpellID then
+    if spellID == fd.watchedSpellID then
         return
     end
 
@@ -657,7 +676,7 @@ local function SyncSpellOnlyCooldownWatcher(button)
     if watcher.watch(ownerKey, spellID, function()
         RequestSpellOnlyCooldownRefresh(button)
     end) then
-        button._vf_watchedSpellID = spellID
+        fd.watchedSpellID = spellID
     end
 end
 
@@ -683,7 +702,7 @@ spellOnlyCooldownFlushFrame:SetScript("OnUpdate", function(self)
     for button in pairs(batch) do
         if button
             and button.Icon
-            and button._vf_hideBuffCooldownOverlay
+            and FD(button).hideBuffCooldownOverlay
             and button.IsShown
             and button:IsShown()
             and IsSkillCooldownManagerIcon(button)
@@ -697,17 +716,18 @@ end)
 ApplyCooldownMaskSwipeNow = function(self, state)
     local cd = self.Cooldown
     if not cd or not cd.SetSwipeColor then return end
-    local hideBuff = self._vf_hideBuffCooldownOverlay and IsSkillCooldownManagerIcon(self)
+    local fd = FD(self)
+    local hideBuff = fd.hideBuffCooldownOverlay and IsSkillCooldownManagerIcon(self)
     local color
-    if self._vf_hideBuffCooldownOverlay and IsSkillCooldownManagerIcon(self)
+    if fd.hideBuffCooldownOverlay and IsSkillCooldownManagerIcon(self)
         and state == true then
-        color = self._vf_chargeRechargeMaskColor or self._vf_cooldownMaskColor
+        color = fd.chargeRechargeMaskColor or fd.cooldownMaskColor
     elseif hideBuff then
-        color = self._vf_cooldownMaskColor
-    elseif self.cooldownUseAuraDisplayTime and self._vf_buffMaskColor then
-        color = self._vf_buffMaskColor
+        color = fd.cooldownMaskColor
+    elseif self.cooldownUseAuraDisplayTime and fd.buffMaskColor then
+        color = fd.buffMaskColor
     else
-        color = self._vf_cooldownMaskColor
+        color = fd.cooldownMaskColor
     end
     if type(color) == "table" then
         cd:SetSwipeColor(color.r or 1, color.g or 1, color.b or 1, color.a or 1)
@@ -717,32 +737,34 @@ end
 OnCooldownMaskDriverRefresh = function(self)
     local state
     local chargeRechargeActive = false
-    if self._vf_hideBuffCooldownOverlay and IsSkillCooldownManagerIcon(self) and not IsVFItemAppendSkillSlot(self) then
+    local fd = FD(self)
+    if fd.hideBuffCooldownOverlay and IsSkillCooldownManagerIcon(self) and not IsVFItemAppendSkillSlot(self) then
         state = BuildSpellOnlyCooldownState(self)
         ApplySpellOnlyCooldownDisplay(self, state)
         chargeRechargeActive = state and state.chargeRechargeActive == true
-        self._vf_spellOnlyChargeRechargeActive = chargeRechargeActive
+        fd.spellOnlyChargeRechargeActive = chargeRechargeActive
     else
-        self._vf_spellOnlyChargeRechargeActive = nil
+        fd.spellOnlyChargeRechargeActive = nil
     end
     ApplyCooldownMaskSwipeNow(self, chargeRechargeActive)
 end
 
 function StyleApply.ApplyAuraSwipeColor(button, groupCfg)
     if not button or not groupCfg then return end
+    local fd = FD(button)
 
-    button._vf_buffMaskColor = groupCfg.buffMaskColor
-    button._vf_cooldownMaskColor = groupCfg.cooldownMaskColor
-    button._vf_chargeRechargeMaskColor = groupCfg.chargeRechargeMaskColor
-    button._vf_hideBuffCooldownOverlay = SkillWantsSpellOnlyCooldown(button)
+    fd.buffMaskColor = groupCfg.buffMaskColor
+    fd.cooldownMaskColor = groupCfg.cooldownMaskColor
+    fd.chargeRechargeMaskColor = groupCfg.chargeRechargeMaskColor
+    fd.hideBuffCooldownOverlay = SkillWantsSpellOnlyCooldown(button)
 
-    if button._vf_hideBuffCooldownOverlay then
+    if fd.hideBuffCooldownOverlay then
         EnsureSpellOnlyLifecycleHooks(button)
         EnsureSpellOnlyRefreshHooks(button)
         SyncSpellOnlyCooldownWatcher(button)
     else
         pendingSpellOnlyButtons[button] = nil
-        button._vf_spellOnlyChargeRechargeActive = nil
+        fd.spellOnlyChargeRechargeActive = nil
         ReleaseSpellOnlyCooldownWatcher(button)
     end
 end
@@ -798,20 +820,22 @@ function StyleApply.InvalidateButtonStyle(button)
     if not button then
         return
     end
-    button._vf_btnStyleVer = nil
-    button._vf_spellMaskKey = nil
+    local fd = FD(button)
+    fd.btnStyleVer = nil
+    fd.spellMaskKey = nil
 end
 
 --- 全局样式版本（VFlow._buttonStyleVersion）未变则跳过，避免热路径重复跑字体/美化
 --- 调用方须先按需 ApplyIconSize；配置变更或 cooldownID 变化时由上层失效按钮缓存
 function StyleApply.ApplyButtonStyleIfStale(button, cfg)
     if not button or not cfg then return end
+    local fd = FD(button)
     local ver = VFlow._buttonStyleVersion or 0
-    if button._vf_btnStyleVer == ver then
+    if fd.btnStyleVer == ver then
         return
     end
     StyleApply.ApplyButtonStyle(button, cfg)
-    button._vf_btnStyleVer = ver
+    fd.btnStyleVer = ver
 end
 
 -- =========================================================
@@ -845,36 +869,37 @@ local function ApplyIconZoom(button, groupCfg)
 
     local w, h = button:GetSize()
     local zoomAmount = styleCache.zoomIcons and styleCache.zoomAmount or 0
+    local fd = FD(button)
 
     local zoomKey = w .. "z" .. zoomAmount
-    if button._vf_zoomKey ~= zoomKey then
+    if fd.zoomKey ~= zoomKey then
         tex:SetTexCoord(GetAspectPreservingTexCoord(w, h, zoomAmount))
-        button._vf_zoomKey = zoomKey
+        fd.zoomKey = zoomKey
     end
 
     local cd = button.Cooldown
     if not cd then return end
 
     local sizeKey = w .. "x" .. h
-    if button._vf_cdSizeKey ~= sizeKey then
+    if fd.cdSizeKey ~= sizeKey then
         cd:ClearAllPoints()
         cd:SetAllPoints(button)
-        button._vf_cdSizeKey = sizeKey
+        fd.cdSizeKey = sizeKey
     end
 
     if cd.SetSwipeTexture then
         local target = styleCache.zoomIcons and WHITE8X8 or DEFAULT_SWIPE_TEXTURE
-        if button._vf_swipeTex ~= target then
+        if fd.swipeTex ~= target then
             cd:SetSwipeTexture(target)
-            button._vf_swipeTex = target
+            fd.swipeTex = target
         end
     end
 
     if cd.SetSwipeColor then
         local r, g, b, a = GetMaskColorForButton(groupCfg)
-        if button._vf_swR ~= r or button._vf_swG ~= g or button._vf_swB ~= b or button._vf_swA ~= a then
+        if fd.swR ~= r or fd.swG ~= g or fd.swB ~= b or fd.swA ~= a then
             cd:SetSwipeColor(r, g, b, a)
-            button._vf_swR = r; button._vf_swG = g; button._vf_swB = b; button._vf_swA = a
+            fd.swR = r; fd.swG = g; fd.swB = b; fd.swA = a
         end
     end
 
@@ -885,9 +910,10 @@ end
 local function ApplyOverlayHides(button)
     local hideAtlas   = styleCache.hideIconOverlay
     local hideTexture = styleCache.hideIconOverlayTexture
+    local fd = FD(button)
 
-    if button._vf_overlayAtlasHidden == hideAtlas
-        and button._vf_overlayTextureHidden == hideTexture then
+    if fd.overlayAtlasHidden == hideAtlas
+        and fd.overlayTextureHidden == hideTexture then
         return
     end
 
@@ -906,8 +932,8 @@ local function ApplyOverlayHides(button)
                 local atlas = region.GetAtlas and region:GetAtlas()
                 if SafeEquals(atlas, BLIZZARD_ICON_MASK_ATLAS) then
                     if hideTexture and button.Icon and button.Icon.RemoveMaskTexture
-                        and not button._vf_maskRemoved then
-                        button._vf_maskRemoved = true
+                        and not fd.maskRemoved then
+                        fd.maskRemoved = true
                         pcall(button.Icon.RemoveMaskTexture, button.Icon, region)
                     end
                 end
@@ -915,20 +941,22 @@ local function ApplyOverlayHides(button)
         end
     end
 
-    button._vf_overlayAtlasHidden   = hideAtlas
-    button._vf_overlayTextureHidden = hideTexture
+    fd.overlayAtlasHidden   = hideAtlas
+    fd.overlayTextureHidden = hideTexture
 end
 
 -- 边框
 local function ApplyBorder(button)
+    local fd = FD(button)
+
     if VFlow.MasqueSupport and VFlow.MasqueSupport:IsActive() then
-        if button._vf_border then button._vf_border:Hide() end
+        if fd.border then fd.border:Hide() end
         return
     end
 
     local borderFile = styleCache.borderFile
     if not borderFile or borderFile == "None" or borderFile == "无" then
-        if button._vf_border then button._vf_border:Hide() end
+        if fd.border then fd.border:Hide() end
         return
     end
 
@@ -939,20 +967,20 @@ local function ApplyBorder(button)
 
     local borderKey = borderFile .. "|" .. size .. "|" .. offsetX .. "|" .. offsetY
         .. "|" .. (color.r or 0) .. (color.g or 0) .. (color.b or 0) .. (color.a or 1)
-    if button._vf_borderKey == borderKey and button._vf_border then
-        button._vf_border:Show()
+    if fd.borderKey == borderKey and fd.border then
+        fd.border:Show()
         return
     end
-    button._vf_borderKey = borderKey
+    fd.borderKey = borderKey
 
-    if not button._vf_border then
+    if not fd.border then
         local b = CreateFrame("Frame", nil, button, "BackdropTemplate")
         b:SetFrameLevel(button:GetFrameLevel() + 1)
         b:SetAllPoints(button)
-        button._vf_border = b
+        fd.border = b
     end
 
-    local b = button._vf_border
+    local b = fd.border
     b:Show()
 
     local anchorOffsetX = offsetX
@@ -1005,7 +1033,7 @@ end
 --- BUFF / 光环类 CD 不按GCD隐藏遮罩层
 local function IsBuffAuraDurationCooldownIcon(button)
     if not button then return false end
-    if button._vf_cdmKind == "buff" then return true end
+    if FD(button).cdmKind == "buff" then return true end
     if button.cooldownUseAuraDisplayTime then return true end
     local p = button
     for _ = 1, 18 do
@@ -1165,9 +1193,10 @@ end
 
 function StyleApply.ApplyBeautify(button, groupCfg)
     RefreshStyleCache()
+    local fd = FD(button)
 
-    if button._vf_styleVer == styleCacheVersion then return end
-    button._vf_styleVer = styleCacheVersion
+    if fd.styleVer == styleCacheVersion then return end
+    fd.styleVer = styleCacheVersion
 
     ApplyIconZoom(button, groupCfg)
     ApplyOverlayHides(button)
@@ -1261,30 +1290,33 @@ local customGlowStopFunctions = makeGlowStopFunctions(CUSTOM_GLOW_KEY)
 
 function StyleApply.ShowGlow(frame)
     if not frame or not LCG then return end
-    if frame._vf_glowActive then StyleApply.HideGlow(frame) end
+    local fd = FD(frame)
+    if fd.glowActive then StyleApply.HideGlow(frame) end
     local color = GetGlowColor()
     local startFn = glowStartFunctions[glowCache.type]
     if startFn then
         local frameLevel = frame:GetFrameLevel() + 5
         startFn(frame, color, frameLevel)
-        frame._vf_glowActive = true
-        frame._vf_glowType = glowCache.type
+        fd.glowActive = true
+        fd.glowType = glowCache.type
         activeGlowFrames[frame] = true
     end
 end
 
 function StyleApply.HideGlow(frame)
-    if not frame or not frame._vf_glowActive then return end
-    local stopFn = glowStopFunctions[frame._vf_glowType]
+    if not frame then return end
+    local fd = FD(frame)
+    if not fd.glowActive then return end
+    local stopFn = glowStopFunctions[fd.glowType]
     if stopFn then stopFn(frame) end
-    frame._vf_glowActive = false
-    frame._vf_glowType = nil
+    fd.glowActive = false
+    fd.glowType = nil
     activeGlowFrames[frame] = nil
 end
 
 function StyleApply.RefreshActiveGlows()
     for frame in pairs(activeGlowFrames) do
-        if frame._vf_glowActive then
+        if FD(frame).glowActive then
             StyleApply.HideGlow(frame)
             StyleApply.ShowGlow(frame)
         end
@@ -1293,34 +1325,37 @@ end
 
 function StyleApply.ShowCustomGlow(frame)
     if not frame or not LCG then return end
+    local fd = FD(frame)
     -- 已以当前发光类型显示则不再重复 Start，避免动画被不断重置
-    if frame._vf_customGlowActive and frame._vf_customGlowType == glowCache.type then
+    if fd.customGlowActive and fd.customGlowType == glowCache.type then
         return
     end
-    if frame._vf_customGlowActive then StyleApply.HideCustomGlow(frame) end
+    if fd.customGlowActive then StyleApply.HideCustomGlow(frame) end
     local color = GetGlowColor()
     local startFn = customGlowStartFunctions[glowCache.type]
     if startFn then
         local frameLevel = frame:GetFrameLevel() + 5
         startFn(frame, color, frameLevel)
-        frame._vf_customGlowActive = true
-        frame._vf_customGlowType = glowCache.type
+        fd.customGlowActive = true
+        fd.customGlowType = glowCache.type
         activeCustomGlowFrames[frame] = true
     end
 end
 
 function StyleApply.HideCustomGlow(frame)
-    if not frame or not frame._vf_customGlowActive then return end
-    local stopFn = customGlowStopFunctions[frame._vf_customGlowType]
+    if not frame then return end
+    local fd = FD(frame)
+    if not fd.customGlowActive then return end
+    local stopFn = customGlowStopFunctions[fd.customGlowType]
     if stopFn then stopFn(frame) end
-    frame._vf_customGlowActive = false
-    frame._vf_customGlowType = nil
+    fd.customGlowActive = false
+    fd.customGlowType = nil
     activeCustomGlowFrames[frame] = nil
 end
 
 function StyleApply.RefreshActiveCustomGlows()
     for frame in pairs(activeCustomGlowFrames) do
-        if frame._vf_customGlowActive then
+        if FD(frame).customGlowActive then
             StyleApply.HideCustomGlow(frame)
             StyleApply.ShowCustomGlow(frame)
         end
@@ -1399,7 +1434,8 @@ function StyleApply.HookAlertManager()
     hooksecurefunc(alertManager, "ShowAlert", function(_, frame)
         if not IsSupportedGlowFrame(frame) then return end
         HideBlizzardGlow(frame)
-        if frame._vf_glowActive and frame._vf_glowType == glowCache.type then return end
+        local fd = FD(frame)
+        if fd.glowActive and fd.glowType == glowCache.type then return end
         StyleApply.ShowGlow(frame)
     end)
 
@@ -1429,32 +1465,6 @@ local function ScanActiveAlerts()
             end
         end
     end
-end
-
-if Profiler and Profiler.registerTableCount then
-    Profiler.registerTableCount(StyleApply, "ApplyIconSize", "SA:ApplyIconSize")
-    Profiler.registerTableCount(StyleApply, "ShowGlow", "SA:ShowGlow")
-    Profiler.registerTableCount(StyleApply, "HideGlow", "SA:HideGlow")
-    Profiler.registerTableCount(StyleApply, "ShowCustomGlow", "SA:ShowCustomGlow")
-    Profiler.registerTableCount(StyleApply, "HideCustomGlow", "SA:HideCustomGlow")
-end
-
-if Profiler and Profiler.registerTableScope then
-    Profiler.registerTableScope(StyleApply, "ApplyFontStyle", "SA:ApplyFontStyle")
-    Profiler.registerTableScope(StyleApply, "ApplyKeybind", "SA:ApplyKeybind")
-    Profiler.registerTableScope(StyleApply, "ApplyAuraSwipeColor", "SA:ApplyAuraSwipeColor")
-    Profiler.registerTableScope(StyleApply, "ApplyButtonStyle", "SA:ApplyButtonStyle")
-    Profiler.registerTableScope(StyleApply, "ApplyBeautify", "SA:ApplyBeautify")
-    Profiler.registerTableScope(StyleApply, "RefreshActiveGlows", "SA:RefreshActiveGlows")
-    Profiler.registerTableScope(StyleApply, "RefreshActiveCustomGlows", "SA:RefreshActiveCustomGlows")
-end
-
-if Profiler and Profiler.registerScope then
-    Profiler.registerScope("SA:ScanActiveAlerts", function()
-        return ScanActiveAlerts
-    end, function(fn)
-        ScanActiveAlerts = fn
-    end)
 end
 
 function StyleApply.InitializeGlow()

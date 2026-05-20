@@ -1,6 +1,6 @@
 --[[ Core 依赖：
   - Core/CustomTTS.lua：消费 ttsAliases，自定义文字转语音/音效播报
-  - Core/Style/CooldownStyle.lua：消费 highlightRules，自定义高亮
+  - Core/Style/StyleEngine.lua：消费 highlightRules，自定义高亮
   - Core/Style/StyleApply.lua：消费 skillRules，技能级隐藏增益剩余时间遮罩层
   - Core/Buff/BuffScanner.lua、Core/Skill/SkillScanner.lua：State 图标数据（只读）
   例外：技能/BUFF 子页内 State.watch 仅用于刷新图标网格列表。

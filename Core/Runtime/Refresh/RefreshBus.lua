@@ -7,7 +7,6 @@ local VFlow = _G.VFlow
 if not VFlow then return end
 
 local ViewerRefreshQueue = VFlow.ViewerRefreshQueue
-local Profiler = VFlow.Profiler
 
 local RefreshBus = {}
 VFlow.RefreshBus = RefreshBus
@@ -395,16 +394,4 @@ function RefreshBus.flush()
     if hasAnyEntries(pendingScopes) then
         scheduleFlush(false)
     end
-end
-
--- =========================================================
--- SECTION 5: Profiler
--- =========================================================
-
-if Profiler and Profiler.registerScope then
-    Profiler.registerScope("RB:Flush", function()
-        return RefreshBus.flush
-    end, function(fn)
-        RefreshBus.flush = fn
-    end)
 end

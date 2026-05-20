@@ -6,6 +6,7 @@
 local VFlow = _G.VFlow
 if not VFlow then return end
 
+local FD = VFlow.FD
 local BFK = {}
 VFlow.BarFrameKit = BFK
 
@@ -230,23 +231,24 @@ function BFK.SetupResourceBarHost(host)
     end
 
     local baseLvl = host:GetFrameLevel() or 0
+    local fd = FD(host)
 
     local bg = host:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
-    host._vf_bg = bg
+    fd.bg = bg
 
     local sb = CreateFrame("StatusBar", nil, host)
     sb:SetFrameLevel(baseLvl + 1)
     sb:SetAllPoints()
     sb:SetStatusBarTexture(BFK.DEFAULT_BAR_TEXTURE)
     BFK.ConfigureStatusBar(sb)
-    host._vf_sb = sb
+    fd.sb = sb
 
     local borderFrame = CreateFrame("Frame", nil, host)
     borderFrame:SetFrameLevel(baseLvl + 4)
     borderFrame:SetAllPoints(host)
     borderFrame:EnableMouse(false)
-    host._vf_borderFrame = borderFrame
+    fd.borderFrame = borderFrame
 
     host._bfk_hostReady = true
 end
@@ -255,15 +257,19 @@ end
 ---@param host Frame
 ---@param cfg table
 function BFK.ApplyResourceBarChrome(host, cfg)
-    if not host or not cfg or not host._vf_sb or not host._vf_borderFrame then
+    if not host or not cfg then
         return
     end
-    BFK.ApplyBarTextureFromConfig(host._vf_sb, cfg)
-    BFK.ApplyStatusBarLayoutFromConfig(host._vf_sb, cfg)
+    local fd = FD(host)
+    if not fd.sb or not fd.borderFrame then
+        return
+    end
+    BFK.ApplyBarTextureFromConfig(fd.sb, cfg)
+    BFK.ApplyStatusBarLayoutFromConfig(fd.sb, cfg)
     local PP = VFlow.PixelPerfect
     if not PP or not PP.CreateBorder then
         return
     end
     local bc = cfg.borderColor or { r = 0, g = 0, b = 0, a = 1 }
-    PP.CreateBorder(host._vf_borderFrame, BFK.ParseBorderThickness(cfg.borderThickness), bc, true)
+    PP.CreateBorder(fd.borderFrame, BFK.ParseBorderThickness(cfg.borderThickness), bc, true)
 end

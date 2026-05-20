@@ -8,8 +8,6 @@ if not VFlow then
     error("VFlow.VisibilityControl: Core模块未加载")
 end
 
-local Profiler = VFlow.Profiler
-
 local MODULE_KEY = "VFlow.StyleDisplay"
 local ModuleControlConstants = VFlow.ModuleControlConstants
 
@@ -233,18 +231,6 @@ local function UpdateConfigCache()
     end
 
     VisibilityControl.EvaluateAll()
-end
-
-if Profiler and Profiler.registerTableScope then
-    Profiler.registerTableScope(VisibilityControl, "EvaluateAll", "VC:EvaluateAll")
-end
-
-if Profiler and Profiler.registerScope then
-    Profiler.registerScope("VC:UpdateConfigCache", function()
-        return UpdateConfigCache
-    end, function(fn)
-        UpdateConfigCache = fn
-    end)
 end
 
 -- =========================================================

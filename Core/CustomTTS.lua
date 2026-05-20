@@ -6,7 +6,6 @@
 local VFlow = _G.VFlow
 if not VFlow then return end
 
-local Profiler = VFlow.Profiler
 local ModuleControlConstants = VFlow.ModuleControlConstants
 
 local SHARED_SETTINGS_KEY = "VFlow.OtherFeatures"
@@ -199,14 +198,6 @@ onCooldownViewerAlert = function(cooldownItem, alert)
                 PlaySoundFile(sound, channel or "Master")
             end)
         end
-end
-
-if Profiler and Profiler.registerCount then
-    Profiler.registerCount("CTT:CooldownViewerAlert_PlayAlert", function()
-        return onCooldownViewerAlert
-    end, function(fn)
-        onCooldownViewerAlert = fn
-    end)
 end
 
 -- =========================================================

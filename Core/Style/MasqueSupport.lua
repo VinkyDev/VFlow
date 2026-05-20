@@ -6,7 +6,7 @@
 local VFlow = _G.VFlow
 if not VFlow then return end
 
-local Profiler = VFlow.Profiler
+local FD = VFlow.FD
 
 -- =========================================================
 -- SECTION 2: 注册与 ReSkin
@@ -43,15 +43,16 @@ function MasqueSupport:RegisterButton(button, icon, border)
 
     -- 已注册且尺寸未变：无需 ReSkin，不计入热路径统计
     if self.registeredButtons[button] then
-        local w = button._vf_w or (button.GetWidth and button:GetWidth())
-        local h = button._vf_h or (button.GetHeight and button:GetHeight())
-        if w and h and button._vf_masqueSkinnedW == w and button._vf_masqueSkinnedH == h then
+        local fd = FD(button)
+        local w = fd.w or (button.GetWidth and button:GetWidth())
+        local h = fd.h or (button.GetHeight and button:GetHeight())
+        if w and h and fd.masqueSkinnedW == w and fd.masqueSkinnedH == h then
             return
         end
         if w and h then
             masqueGroup:ReSkin(button)
-            button._vf_masqueSkinnedW = w
-            button._vf_masqueSkinnedH = h
+            fd.masqueSkinnedW = w
+            fd.masqueSkinnedH = h
         end
         return
     end
@@ -71,8 +72,9 @@ function MasqueSupport:RegisterButton(button, icon, border)
 
     masqueGroup:AddButton(button, buttonData)
     self.registeredButtons[button] = true
-    button._vf_masqueSkinnedW = button._vf_w or (button.GetWidth and button:GetWidth())
-    button._vf_masqueSkinnedH = button._vf_h or (button.GetHeight and button:GetHeight())
+    local fd = FD(button)
+    fd.masqueSkinnedW = fd.w or (button.GetWidth and button:GetWidth())
+    fd.masqueSkinnedH = fd.h or (button.GetHeight and button:GetHeight())
 end
 
 ---取消注册一个按钮
@@ -84,8 +86,9 @@ function MasqueSupport:UnregisterButton(button)
 
     masqueGroup:RemoveButton(button)
     self.registeredButtons[button] = nil
-    button._vf_masqueSkinnedW = nil
-    button._vf_masqueSkinnedH = nil
+    local fd = FD(button)
+    fd.masqueSkinnedW = nil
+    fd.masqueSkinnedH = nil
 end
 
 ---刷新所有已注册的按钮皮肤
@@ -96,11 +99,6 @@ function MasqueSupport:ReSkin()
     masqueGroup:ReSkin()
 end
 
-if Profiler and Profiler.registerTableCount then
-    Profiler.registerTableCount(MasqueSupport, "RegisterButton", "MS:RegisterButton")
-    Profiler.registerTableCount(MasqueSupport, "ReSkin", "MS:ReSkinAll")
-end
-
 -- 注册 Masque 皮肤改变回调
 if masqueGroup then
     masqueGroup:RegisterCallback(function()
@@ -108,8 +106,7 @@ if masqueGroup then
         C_Timer.After(0.1, function()
             -- 触发 VFlow 的刷新（如果需要重新布局）
             if VFlow.MainUI and VFlow.MainUI.refresh then
-                -- 这里其实应该触发 CooldownStyle 的 RequestRefresh
-                -- 但 CooldownStyle 是 Core 模块，MasqueSupport 也是 Core，依赖关系可能要注意
+                -- 触发 StyleEngine 的 RequestRefresh
                 -- 我们可以通过事件总线或者全局函数调用
             end
             

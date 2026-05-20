@@ -6,8 +6,6 @@
 local VFlow = _G.VFlow
 VFlow.ItemsManualOrder = VFlow.ItemsManualOrder or {}
 
-local Profiler = VFlow.Profiler
-
 -- entryOrder 元素：
 --- { t = "trinket_slot", slot = 13|14 }  — autoTrinkets 开启时保留槽位（可空）
 --- { t = "racial", id = spellID }
@@ -178,8 +176,4 @@ function VFlow.ItemsManualOrder.Ensure(cfg)
             seen[k] = true
         end
     end
-end
-
-if Profiler and Profiler.registerTableScope then
-    Profiler.registerTableScope(VFlow.ItemsManualOrder, "Ensure", "IMO:Ensure")
 end

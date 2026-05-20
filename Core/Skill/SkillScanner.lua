@@ -6,8 +6,6 @@
 local VFlow = _G.VFlow
 if not VFlow then return end
 
-local Profiler = VFlow.Profiler
-
 -- =========================================================
 -- SECTION 2: SpellID 解析
 -- =========================================================
@@ -105,11 +103,3 @@ VFlow.SkillScanner = {
     scan = ScanSkillViewers,
 }
 
-if Profiler and Profiler.registerScope then
-    Profiler.registerScope("SS:ScanSkillViewers", function()
-        return ScanSkillViewers
-    end, function(fn)
-        ScanSkillViewers = fn
-        VFlow.SkillScanner.scan = fn
-    end)
-end

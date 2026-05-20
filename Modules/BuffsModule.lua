@@ -1,7 +1,7 @@
 --[[ Core 依赖：
   - Core/Buff/BuffGroups.lua：主 BUFF 组与自定义组布局
-  - Core/Runtime/Refresh/ViewerRefreshQueue.lua：BUFF 图标刷新合并调度（由 CooldownStyle 注册）
-  - Core/Style/CooldownStyle.lua：监听本模块并应用 BUFF 区样式
+  - Core/Runtime/Refresh/ViewerRefreshQueue.lua：BUFF 图标刷新合并调度（由 StyleEngine 注册）
+  - Core/Style/StyleEngine.lua：监听本模块并应用 BUFF 区样式
   - Core/Buff/BuffScanner.lua：维护 State.trackedBuffs（列表数据源，只读）
   - Core/Buff/ItemBuffMonitor.lua：计时BUFF监控、物品/技能持续时间解析与列表数据
   例外：ensureDefaultPotionsInitialized 在缺省配置时补全默认药水并落盘（档案级一次写入）。
