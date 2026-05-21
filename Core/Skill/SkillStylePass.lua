@@ -95,9 +95,9 @@ local function applyCurrentAppendStyles(context)
         return
     end
     for viewerName in pairs(context.dirtySkillViewers) do
+        local viewerCfg = getSkillViewerConfig(viewerName)
         itemGroups.forEachAppendFrame(viewerName, function(frame, groupId)
-            local cfg = itemGroups.getConfigForGroupId and itemGroups.getConfigForGroupId(groupId) or nil
-            applyFrameStyle(frame, cfg, true, frame and frame._vf_entry)
+            applyFrameStyle(frame, viewerCfg, true, frame and frame._vf_entry)
         end)
     end
 end
