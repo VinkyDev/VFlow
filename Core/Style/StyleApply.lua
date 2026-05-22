@@ -714,6 +714,37 @@ ApplyCooldownMaskSwipeNow = function(self, state)
     end
 end
 
+local function EnsureBuffCooldownSwipeColorHook(button)
+    local cd = button and button.Cooldown
+    if not cd or cd._vf_swipeColorHooked or not hooksecurefunc or not cd.SetSwipeColor then
+        return
+    end
+    cd._vf_swipeColorHooked = true
+
+    hooksecurefunc(cd, "SetSwipeColor", function(self)
+        if self._vf_reapplyingSwipeColor then
+            return
+        end
+
+        local parent = button
+        if not parent or parent._vf_hideBuffCooldownOverlay then
+            return
+        end
+        if parent._vf_cdmKind ~= "buff" then
+            return
+        end
+
+        local color = parent._vf_cooldownMaskColor
+        if type(color) ~= "table" then
+            return
+        end
+
+        self._vf_reapplyingSwipeColor = true
+        self:SetSwipeColor(color.r or 1, color.g or 1, color.b or 1, color.a or 1)
+        self._vf_reapplyingSwipeColor = nil
+    end)
+end
+
 OnCooldownMaskDriverRefresh = function(self)
     local state
     local chargeRechargeActive = false
@@ -731,6 +762,7 @@ end
 function StyleApply.ApplyAuraSwipeColor(button, groupCfg)
     if not button or not groupCfg then return end
 
+    EnsureBuffCooldownSwipeColorHook(button)
     button._vf_buffMaskColor = groupCfg.buffMaskColor
     button._vf_cooldownMaskColor = groupCfg.cooldownMaskColor
     button._vf_chargeRechargeMaskColor = groupCfg.chargeRechargeMaskColor
@@ -799,6 +831,7 @@ function StyleApply.InvalidateButtonStyle(button)
         return
     end
     button._vf_btnStyleVer = nil
+    button._vf_btnStyleCfgKey = nil
     button._vf_spellMaskKey = nil
 end
 
@@ -807,11 +840,13 @@ end
 function StyleApply.ApplyButtonStyleIfStale(button, cfg)
     if not button or not cfg then return end
     local ver = VFlow._buttonStyleVersion or 0
-    if button._vf_btnStyleVer == ver then
+    local cfgKey = tostring(cfg)
+    if button._vf_btnStyleVer == ver and button._vf_btnStyleCfgKey == cfgKey then
         return
     end
     StyleApply.ApplyButtonStyle(button, cfg)
     button._vf_btnStyleVer = ver
+    button._vf_btnStyleCfgKey = cfgKey
 end
 
 -- =========================================================
