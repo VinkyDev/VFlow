@@ -962,9 +962,20 @@ local function RunSkillCooldownOnlyPhase()
     end
 end
 
+local function GetViewerLayoutSpan(viewer)
+    if not viewer then
+        return 0
+    end
+    local span = viewer._vf_layoutSpan
+    if type(span) == "number" and span > 1 then
+        return span
+    end
+    return viewer:GetWidth() or 0
+end
+
 local function ConsumeSkillViewerWidthChange(force)
-    local ew = _G.EssentialCooldownViewer and _G.EssentialCooldownViewer:GetWidth() or 0
-    local uw = _G.UtilityCooldownViewer and _G.UtilityCooldownViewer:GetWidth() or 0
+    local ew = GetViewerLayoutSpan(_G.EssentialCooldownViewer)
+    local uw = GetViewerLayoutSpan(_G.UtilityCooldownViewer)
     if not force
         and _lastLayoutNotifyEssWidth ~= nil
         and _lastLayoutNotifyUtilWidth ~= nil

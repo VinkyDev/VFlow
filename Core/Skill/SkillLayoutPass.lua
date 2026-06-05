@@ -63,6 +63,7 @@ function SkillLayoutPass.LayoutViewer(viewModel)
             end
         end
         viewer:SetSize(1, 1)
+        viewer._vf_layoutSpan = nil
         result.layoutSignature = "empty"
         return result
     end
@@ -273,6 +274,13 @@ function SkillLayoutPass.LayoutViewer(viewModel)
     end
 
     local newWidth = viewer:GetWidth() or 0
+    local newHeight = viewer:GetHeight() or 0
+    if isHorizontal then
+        viewer._vf_layoutSpan = (newWidth > 1) and newWidth or nil
+    else
+        viewer._vf_layoutSpan = (newHeight > 1) and newHeight or nil
+    end
+    result.layoutSpan = viewer._vf_layoutSpan
     result.widthChanged = math.abs(newWidth - oldWidth) >= 0.5
     result.layoutSignature = table.concat({
         tostring(#rowCells),
