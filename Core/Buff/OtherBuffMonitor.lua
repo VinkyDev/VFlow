@@ -716,7 +716,7 @@ function RefreshLayout()
     for _, frame in ipairs(visibleIcons) do
         if VFlow.StyleApply then
             VFlow.StyleApply.ApplyIconSize(frame, w, h)
-            VFlow.StyleApply.ApplyButtonStyle(frame, config)
+            StyleApply.ApplyButtonStyleIfStale(frame, config)
         end
         if MasqueSupport and MasqueSupport:IsActive() and frame.Icon then
             MasqueSupport:RegisterButton(frame, frame.Icon)
