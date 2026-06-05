@@ -319,7 +319,7 @@ local function createWidget(parent, item, config, moduleKey, configPath)
             if item.onChange then
                 pcall(item.onChange, config, checked, item)
             end
-        end)
+        end, item)
     elseif item.type == "slider" then
         local value = getNestedValue(config, item.key) or item.min
         widget = UI.slider(parent, item.label, item.min, item.max, value, item.step or 1, function(val)

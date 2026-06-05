@@ -3,7 +3,7 @@
   - Core/Runtime/Refresh/ViewerRefreshQueue.lua：BUFF 图标刷新合并调度（由 CooldownStyle 注册）
   - Core/Style/CooldownStyle.lua：监听本模块并应用 BUFF 区样式
   - Core/Buff/BuffScanner.lua：维护 State.trackedBuffs（列表数据源，只读）
-  - Core/Buff/ItemBuffMonitor.lua：计时BUFF监控、物品/技能持续时间解析与列表数据
+  - Core/Buff/OtherBuffMonitor.lua：其他BUFF（主动+被动）监控、布局与持续时间解析
   例外：ensureDefaultPotionsInitialized 在缺省配置时补全默认药水并落盘（档案级一次写入）。
 ]]
 
@@ -70,6 +70,11 @@ local DEFAULT_POTIONS = {
     [241292] = 30,
 }
 
+local DEFAULT_PASSIVE_BUFFS = {
+    { iconID = 4644003, spellID = 1263318, duration = 10 },
+    { iconID = 7636702, spellID = 1266687, duration = 12, hasStacks = true },
+}
+
 -- =========================================================
 -- SECTION 3: 默认配置
 -- =========================================================
@@ -114,8 +119,8 @@ local function getDefaultGroupConfig()
     }
 end
 
--- 计时BUFF组的默认配置
-local function getTrinketPotionConfig()
+-- 其他BUFF：主动部分默认配置（存储键 trinketPotion，含布局与样式）
+local function getActiveBuffDefaults()
     local config = getDefaultGroupConfig()
     config.vertical = true
     config.width = 35
@@ -135,9 +140,21 @@ local function getTrinketPotionConfig()
     return config
 end
 
+-- 其他BUFF：被动部分默认配置（存储键 passiveBuff，仅监控数据）
+local function getPassiveBuffDataDefaults()
+    return {
+        spellIDs = {},
+        iconIDs = {},
+        spellDurations = {},
+        hasStacks = {},
+        defaultPassiveInitialized = false,
+    }
+end
+
 local defaults = {
     buffMonitor = getDefaultGroupConfig(),
-    trinketPotion = getTrinketPotionConfig(),
+    trinketPotion = getActiveBuffDefaults(),
+    passiveBuff = getPassiveBuffDataDefaults(),
     customGroups = {},
 }
 
@@ -168,6 +185,38 @@ local function ensureDefaultPotionsInitialized()
 end
 
 ensureDefaultPotionsInitialized()
+
+local function ensureDefaultPassiveInitialized()
+    local config = db.passiveBuff
+    if not config or config.defaultPassiveInitialized then
+        return
+    end
+
+    config.spellIDs = config.spellIDs or {}
+    config.iconIDs = config.iconIDs or {}
+    config.spellDurations = config.spellDurations or {}
+    config.hasStacks = config.hasStacks or {}
+
+    for _, entry in ipairs(DEFAULT_PASSIVE_BUFFS) do
+        if config.spellIDs[entry.spellID] == nil then
+            config.spellIDs[entry.spellID] = true
+            config.iconIDs[entry.spellID] = entry.iconID
+            config.spellDurations[entry.spellID] = entry.duration
+            if entry.hasStacks then
+                config.hasStacks[entry.spellID] = true
+            end
+        end
+    end
+
+    config.defaultPassiveInitialized = true
+    VFlow.Store.set(MODULE_KEY, "passiveBuff.spellIDs", config.spellIDs)
+    VFlow.Store.set(MODULE_KEY, "passiveBuff.iconIDs", config.iconIDs)
+    VFlow.Store.set(MODULE_KEY, "passiveBuff.spellDurations", config.spellDurations)
+    VFlow.Store.set(MODULE_KEY, "passiveBuff.hasStacks", config.hasStacks)
+    VFlow.Store.set(MODULE_KEY, "passiveBuff.defaultPassiveInitialized", true)
+end
+
+ensureDefaultPassiveInitialized()
 
 local Utils = VFlow.Utils
 
@@ -484,15 +533,19 @@ local function renderGroupConfig(container, groupConfig, groupName, options)
     end
 end
 
-local function renderTrinketPotionConfig(container, groupConfig)
+local function renderOtherBuffConfig(container, activeCfg, passiveCfg)
     local Grid = VFlow.Grid
-    Utils.applyDefaults(groupConfig, getTrinketPotionConfig())
+    Utils.applyDefaults(activeCfg, getActiveBuffDefaults())
+    Utils.applyDefaults(passiveCfg, getPassiveBuffDataDefaults())
 
-    -- 初始化临时字段
-    if not groupConfig._inputItemID then groupConfig._inputItemID = "" end
-    if not groupConfig._inputItemDuration then groupConfig._inputItemDuration = "" end
-    if not groupConfig._inputSpellID then groupConfig._inputSpellID = "" end
-    if not groupConfig._inputSpellDuration then groupConfig._inputSpellDuration = "" end
+    if not activeCfg._inputItemID then activeCfg._inputItemID = "" end
+    if not activeCfg._inputItemDuration then activeCfg._inputItemDuration = "" end
+    if not activeCfg._inputSpellID then activeCfg._inputSpellID = "" end
+    if not activeCfg._inputSpellDuration then activeCfg._inputSpellDuration = "" end
+    if not activeCfg._passiveInputIconID then activeCfg._passiveInputIconID = "" end
+    if not activeCfg._passiveInputBuffID then activeCfg._passiveInputBuffID = "" end
+    if not activeCfg._passiveInputDuration then activeCfg._passiveInputDuration = "" end
+    if activeCfg._passiveInputHasStacks == nil then activeCfg._passiveInputHasStacks = false end
 
     local function addManualItem(cfg)
         local itemIDText = cfg._inputItemID or ""
@@ -521,8 +574,8 @@ local function renderTrinketPotionConfig(container, groupConfig)
             end
         end
 
-        local resolved = VFlow.ItemBuffMonitor and VFlow.ItemBuffMonitor.resolveItemMonitorEntry
-            and VFlow.ItemBuffMonitor.resolveItemMonitorEntry(itemID, manualDuration)
+        local resolved = VFlow.OtherBuffMonitor and VFlow.OtherBuffMonitor.resolveItemMonitorEntry
+            and VFlow.OtherBuffMonitor.resolveItemMonitorEntry(itemID, manualDuration)
         if not resolved then
             print("|cffff0000VFlow:|r " .. L["Invalid item ID"])
             return
@@ -570,8 +623,8 @@ local function renderTrinketPotionConfig(container, groupConfig)
             end
         end
 
-        local resolved = VFlow.ItemBuffMonitor and VFlow.ItemBuffMonitor.resolveSpellMonitorEntry
-            and VFlow.ItemBuffMonitor.resolveSpellMonitorEntry(spellID, manualDuration)
+        local resolved = VFlow.OtherBuffMonitor and VFlow.OtherBuffMonitor.resolveSpellMonitorEntry
+            and VFlow.OtherBuffMonitor.resolveSpellMonitorEntry(spellID, manualDuration)
         if not resolved then
             print("|cffff0000VFlow:|r " .. L["Invalid spell ID"])
             return
@@ -592,34 +645,95 @@ local function renderTrinketPotionConfig(container, groupConfig)
         print("|cff00ff00VFlow:|r " .. string.format(L["Added spell %d (duration: %d sec)"], spellID, resolved.duration))
     end
 
+    local function addManualPassive()
+        local iconIDText = activeCfg._passiveInputIconID or ""
+        local buffIDText = activeCfg._passiveInputBuffID or ""
+        local durationText = activeCfg._passiveInputDuration or ""
+
+        if iconIDText == "" then
+            print("|cffff0000VFlow:|r " .. L["Please enter icon ID"])
+            return
+        end
+        if buffIDText == "" then
+            print("|cffff0000VFlow:|r " .. L["Please enter spell ID"])
+            return
+        end
+        if durationText == "" then
+            print("|cffff0000VFlow:|r " .. L["Please enter a valid duration"])
+            return
+        end
+
+        local iconID = tonumber(iconIDText)
+        local spellID = tonumber(buffIDText)
+        local duration = tonumber(durationText)
+
+        if not iconID or iconID <= 0 then
+            print("|cffff0000VFlow:|r " .. L["Invalid icon ID"])
+            return
+        end
+        if not spellID or spellID <= 0 then
+            print("|cffff0000VFlow:|r " .. L["Invalid spell ID"])
+            return
+        end
+        if not duration or duration <= 0 then
+            print("|cffff0000VFlow:|r " .. L["Please enter a valid duration"])
+            return
+        end
+        if passiveCfg.spellIDs[spellID] then
+            print("|cffff0000VFlow:|r " .. L["BUFF already added"])
+            return
+        end
+
+        passiveCfg.spellIDs[spellID] = true
+        passiveCfg.iconIDs[spellID] = iconID
+        passiveCfg.spellDurations[spellID] = duration
+        passiveCfg.hasStacks = passiveCfg.hasStacks or {}
+        if activeCfg._passiveInputHasStacks then
+            passiveCfg.hasStacks[spellID] = true
+        else
+            passiveCfg.hasStacks[spellID] = nil
+        end
+        VFlow.Store.set(MODULE_KEY, "passiveBuff.spellIDs", passiveCfg.spellIDs)
+        VFlow.Store.set(MODULE_KEY, "passiveBuff.iconIDs", passiveCfg.iconIDs)
+        VFlow.Store.set(MODULE_KEY, "passiveBuff.spellDurations", passiveCfg.spellDurations)
+        VFlow.Store.set(MODULE_KEY, "passiveBuff.hasStacks", passiveCfg.hasStacks)
+        activeCfg._passiveInputIconID = ""
+        activeCfg._passiveInputBuffID = ""
+        activeCfg._passiveInputDuration = ""
+        activeCfg._passiveInputHasStacks = false
+        VFlow.Store.set(MODULE_KEY, "trinketPotion._passiveInputIconID", "")
+        VFlow.Store.set(MODULE_KEY, "trinketPotion._passiveInputBuffID", "")
+        VFlow.Store.set(MODULE_KEY, "trinketPotion._passiveInputDuration", "")
+        VFlow.Store.set(MODULE_KEY, "trinketPotion._passiveInputHasStacks", false)
+        activeCfg._dataVersion = (activeCfg._dataVersion or 0) + 1
+        VFlow.Store.set(MODULE_KEY, "trinketPotion._dataVersion", activeCfg._dataVersion)
+        local stackNote = passiveCfg.hasStacks[spellID] and (" (" .. L["Has stacks"] .. ")") or ""
+        print("|cff00ff00VFlow:|r " .. string.format(L["Added passive BUFF %d (duration: %d sec)"], spellID, duration) .. stackNote)
+    end
+
     local layout = mergeLayouts(
-        -- 标题
         {
-            { type = "title", text = L["Trinkets & Potions"], cols = 24 },
+            { type = "title", text = L["Other BUFF"], cols = 24 },
             { type = "separator", cols = 24 },
         },
-
-        -- 提示文本
         {
             {
                 type = "interactiveText",
                 cols = 24,
-                text = L["Preview and drag in {Edit mode} to change position"],
+                text = L["Other BUFF overview"],
                 links = {
                     [L["Edit mode"]] = function()
                         VFlow.toggleSystemEditMode()
                     end,
-                }
+                },
             },
-            { type = "spacer", height = 10, cols = 24 },
+            { type = "spacer", height = 12, cols = 24 },
         },
-
-        -- 计时来源
         {
-            { type = "subtitle", text = L["Item monitor"], cols = 24 },
+            { type = "subtitle", text = L["Active BUFF"], cols = 24 },
             { type = "separator", cols = 24 },
             { type = "checkbox", key = "autoTrinkets", label = L["Auto-detect trinkets (slot 13/14)"], cols = 24 },
-            { type = "spacer", height = 10, cols = 24 },
+            { type = "spacer", height = 8, cols = 24 },
         },
 
         -- 手动物品
@@ -656,8 +770,8 @@ local function renderTrinketPotionConfig(container, groupConfig)
                     local items = {}
 
                     -- 添加自动检测的饰品
-                    if groupConfig.autoTrinkets and VFlow.ItemBuffMonitor then
-                        local autoItems = VFlow.ItemBuffMonitor.getAutoDetectedItems()
+                    if activeCfg.autoTrinkets and VFlow.OtherBuffMonitor then
+                        local autoItems = VFlow.OtherBuffMonitor.getAutoDetectedItems()
                         for _, itemData in ipairs(autoItems) do
                             local itemName, _, _, _, _, _, _, _, _, itemIcon = C_Item.GetItemInfo(itemData.itemID)
                             table.insert(items, {
@@ -672,26 +786,26 @@ local function renderTrinketPotionConfig(container, groupConfig)
                     end
 
                     -- 添加手动添加的物品
-                    for itemID in pairs(groupConfig.itemIDs or {}) do
+                    for itemID in pairs(activeCfg.itemIDs or {}) do
                         local itemName, _, _, _, _, _, _, _, _, itemIcon = C_Item.GetItemInfo(itemID)
                         table.insert(items, {
                             itemID = itemID,
                             name = itemName or string.format(L["Item %s"], itemID),
                             icon = itemIcon or 134400,
-                            duration = groupConfig.itemDurations[itemID] or 0,
+                            duration = activeCfg.itemDurations[itemID] or 0,
                             isAuto = false,
                             entryType = "item",
                         })
                     end
 
                     -- 添加手动添加的技能
-                    for spellID in pairs(groupConfig.spellIDs or {}) do
+                    for spellID in pairs(activeCfg.spellIDs or {}) do
                         local spellInfo = C_Spell.GetSpellInfo(spellID)
                         table.insert(items, {
                             spellID = spellID,
                             name = (spellInfo and spellInfo.name) or string.format(L["Spell %s"], spellID),
                             icon = (spellInfo and spellInfo.iconID) or 134400,
-                            duration = groupConfig.spellDurations[spellID] or 0,
+                            duration = activeCfg.spellDurations[spellID] or 0,
                             isAuto = false,
                             entryType = "spell",
                         })
@@ -728,25 +842,99 @@ local function renderTrinketPotionConfig(container, groupConfig)
                         end
 
                         if itemData.entryType == "spell" then
-                            groupConfig.spellIDs[itemData.spellID] = nil
-                            groupConfig.spellDurations[itemData.spellID] = nil
-                            VFlow.Store.set(MODULE_KEY, "trinketPotion.spellIDs", groupConfig.spellIDs)
-                            VFlow.Store.set(MODULE_KEY, "trinketPotion.spellDurations", groupConfig.spellDurations)
+                            activeCfg.spellIDs[itemData.spellID] = nil
+                            activeCfg.spellDurations[itemData.spellID] = nil
+                            VFlow.Store.set(MODULE_KEY, "trinketPotion.spellIDs", activeCfg.spellIDs)
+                            VFlow.Store.set(MODULE_KEY, "trinketPotion.spellDurations", activeCfg.spellDurations)
                         else
-                            groupConfig.itemIDs[itemData.itemID] = nil
-                            groupConfig.itemDurations[itemData.itemID] = nil
-                            VFlow.Store.set(MODULE_KEY, "trinketPotion.itemIDs", groupConfig.itemIDs)
-                            VFlow.Store.set(MODULE_KEY, "trinketPotion.itemDurations", groupConfig.itemDurations)
+                            activeCfg.itemIDs[itemData.itemID] = nil
+                            activeCfg.itemDurations[itemData.itemID] = nil
+                            VFlow.Store.set(MODULE_KEY, "trinketPotion.itemIDs", activeCfg.itemIDs)
+                            VFlow.Store.set(MODULE_KEY, "trinketPotion.itemDurations", activeCfg.itemDurations)
                         end
                     end,
                 }
             },
-            { type = "spacer", height = 5, cols = 24 },
+            { type = "spacer", height = 15, cols = 24 },
         },
-
-        -- 基础设置
         {
-            { type = "subtitle", text = L["Base Settings"], cols = 24 },
+            { type = "subtitle", text = L["Passive BUFF"], cols = 24 },
+            { type = "separator", cols = 24 },
+            { type = "input", key = "_passiveInputIconID", label = L["Icon ID"], cols = 5, numeric = true, labelOnLeft = true },
+            { type = "input", key = "_passiveInputBuffID", label = L["BUFF ID"], cols = 5, numeric = true, labelOnLeft = true },
+            { type = "input", key = "_passiveInputDuration", label = L["Duration (sec)"], cols = 5, numeric = true, labelOnLeft = true },
+            { type = "checkbox", key = "_passiveInputHasStacks", label = L["Has stacks"], cols = 6, compact = true },
+            { type = "button", text = L["Add"], cols = 3, onClick = addManualPassive },
+            { type = "description", text = L["Stacked passives increment on each trigger and expire per stack after duration"], cols = 24 },
+            { type = "spacer", height = 8, cols = 24 },
+            { type = "description", text = L["Monitored passive entries (click to delete):"], cols = 24 },
+            { type = "spacer", height = 5, cols = 24 },
+            {
+                type = "for",
+                cols = 2,
+                dependsOn = { "_dataVersion", "autoTrinkets", "itemIDs", "spellIDs" },
+                dataSource = function()
+                    local items = {}
+                    for spellID in pairs(passiveCfg.spellIDs or {}) do
+                        local iconID = passiveCfg.iconIDs and passiveCfg.iconIDs[spellID]
+                        local duration = passiveCfg.spellDurations and passiveCfg.spellDurations[spellID] or 0
+                        local hasStacks = passiveCfg.hasStacks and passiveCfg.hasStacks[spellID] == true
+                        if iconID then
+                            local displayName = spellID
+                            if VFlow.OtherBuffMonitor and VFlow.OtherBuffMonitor.getPassiveDisplayName then
+                                displayName = VFlow.OtherBuffMonitor.getPassiveDisplayName(iconID, spellID)
+                            end
+                            table.insert(items, {
+                                spellID = spellID,
+                                iconID = iconID,
+                                name = displayName,
+                                icon = iconID,
+                                duration = duration,
+                                hasStacks = hasStacks,
+                            })
+                        end
+                    end
+                    Utils.sortByName(items)
+                    return items
+                end,
+                template = {
+                    type = "iconButton",
+                    icon = function(itemData) return itemData.icon end,
+                    size = 40,
+                    tooltip = function(itemData)
+                        return function(tooltip)
+                            tooltip:AddLine(itemData.name, 1, 1, 1)
+                            tooltip:AddLine(L["BUFF ID"] .. ": " .. itemData.spellID, 0.8, 0.8, 0.8)
+                            tooltip:AddLine(L["Icon ID"] .. ": " .. itemData.iconID, 0.8, 0.8, 0.8)
+                            tooltip:AddLine(" ")
+                            tooltip:AddLine(string.format(L["Duration: %d sec"], itemData.duration), 1, 1, 1)
+                            if itemData.hasStacks then
+                                tooltip:AddLine("|cff00ff00" .. L["Has stacks"] .. "|r", 1, 1, 1)
+                            end
+                            tooltip:AddLine(" ")
+                            tooltip:AddLine("|cffff0000" .. L["Click to delete"] .. "|r", 1, 1, 1)
+                        end
+                    end,
+                    onClick = function(itemData)
+                        passiveCfg.spellIDs[itemData.spellID] = nil
+                        passiveCfg.iconIDs[itemData.spellID] = nil
+                        passiveCfg.spellDurations[itemData.spellID] = nil
+                        if passiveCfg.hasStacks then
+                            passiveCfg.hasStacks[itemData.spellID] = nil
+                        end
+                        VFlow.Store.set(MODULE_KEY, "passiveBuff.spellIDs", passiveCfg.spellIDs)
+                        VFlow.Store.set(MODULE_KEY, "passiveBuff.iconIDs", passiveCfg.iconIDs)
+                        VFlow.Store.set(MODULE_KEY, "passiveBuff.spellDurations", passiveCfg.spellDurations)
+                        VFlow.Store.set(MODULE_KEY, "passiveBuff.hasStacks", passiveCfg.hasStacks)
+                        activeCfg._dataVersion = (activeCfg._dataVersion or 0) + 1
+                        VFlow.Store.set(MODULE_KEY, "trinketPotion._dataVersion", activeCfg._dataVersion)
+                    end,
+                },
+            },
+            { type = "spacer", height = 15, cols = 24 },
+        },
+        {
+            { type = "subtitle", text = L["Display and position"], cols = 24 },
             { type = "separator", cols = 24 },
             { type = "checkbox", key = "dynamicLayout", label = L["Dynamic layout"], cols = 12 },
             { type = "checkbox", key = "vertical", label = L["Vertical layout"], cols = 12 },
@@ -863,8 +1051,9 @@ local function renderTrinketPotionConfig(container, groupConfig)
             { type = "spacer", height = 10, cols = 24 },
         },
 
-        -- 字体设置
         {
+            Grid.fontGroup("stackFont", L["Stack font"]),
+            { type = "spacer", height = 10, cols = 24 },
             Grid.fontGroup("cooldownFont", L["Cooldown countdown font"]),
         },
 
@@ -877,8 +1066,9 @@ local function renderTrinketPotionConfig(container, groupConfig)
         }
     )
 
-    Grid.render(container, layout, groupConfig, MODULE_KEY, "trinketPotion")
+    Grid.render(container, layout, activeCfg, MODULE_KEY, "trinketPotion")
 end
+
 
 local function renderContent(container, menuKey)
     if menuKey == "buff_settings" then
@@ -893,8 +1083,8 @@ local function renderContent(container, menuKey)
         renderGroupConfig(container, db.buffMonitor, L["Main BUFF Group"], {
             showVerticalLayoutOption = false
         })
-    elseif menuKey == "buff_trinket_potion" then
-        renderTrinketPotionConfig(container, db.trinketPotion)
+    elseif menuKey == "buff_other" then
+        renderOtherBuffConfig(container, db.trinketPotion, db.passiveBuff)
     elseif menuKey:find("^buff_custom_") then
         local customIndex = tonumber(menuKey:match("buff_custom_(%d+)"))
         if customIndex and db.customGroups[customIndex] then

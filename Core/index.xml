@@ -14,7 +14,7 @@
     <Script file="Core\Buff\BuffScanner.lua"/>
     <Script file="Core\Skill\SkillScanner.lua"/>
     <Script file="Core\Buff\BuffGroups.lua"/>
-    <Script file="Core\Buff\ItemBuffMonitor.lua"/>
+    <Script file="Core\Buff\OtherBuffMonitor.lua"/>
     <Script file="Core\Skill\SkillGroups.lua"/>
     <Script file="Core\Item\ItemAutoData.lua"/>
     <Script file="Core\Item\ItemsManualOrder.lua"/>
