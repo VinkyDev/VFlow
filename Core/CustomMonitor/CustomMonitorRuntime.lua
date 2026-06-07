@@ -1,96 +1,1853 @@
 -- =========================================================
--- VFlow CustomMonitorRuntime — 自定义图形监控运行时（主入口）
--- 职责：在容器帧内创建真实的 StatusBar / 环 / 阈值堆栈，并驱动动画
--- 支持：技能冷却 / 充能、BUFF 持续时间、BUFF 堆叠层数
+-- VFlow CustomMonitorRuntime - 自定义图形监控运行时
+-- 职责：在容器帧内创建真实的StatusBar并驱动动画
+-- 支持：技能冷却/充能、BUFF持续时间、BUFF堆叠层数
 --
 -- 生命周期由 CustomMonitorGroups 驱动：
 --   onContainerReady(storeKey, spellID, cfg, container)
 --   onContainerDestroyed(storeKey, spellID)
 -- Runtime 不监听 Store，消除与 Groups 的执行顺序竞争。
---
--- 已按职责拆分为 Runtime/ 子模块：
---   Constants / State / Visibility / Fonts          公共内核
---   CdmRegistry / AuraTracker                       CDM/Aura 追踪
---   Segments / BarFrame                             StatusBar 与帧构造
---   Renderers/{Cooldown,Duration,Stack}             三种渲染模式
 -- =========================================================
 
 local VFlow = _G.VFlow
 if not VFlow then return end
 
+local MODULE_KEY = "VFlow.CustomMonitor"
 local ModuleControlConstants = VFlow.ModuleControlConstants
-if not ModuleControlConstants.CUSTOM_ENABLED then return end
 
+if not ModuleControlConstants.CUSTOM_ENABLED then return end
+local PP = VFlow.PixelPerfect  -- 完美像素工具
+local BFK = VFlow.BarFrameKit
 local Profiler = VFlow.Profiler
 
-local Runtime = VFlow.CustomMonitor and VFlow.CustomMonitor.Runtime
-if not Runtime then return end
-
-local Constants = Runtime.Constants
-local State = Runtime.State
-local Visibility = Runtime.Visibility
-local Segments = Runtime.Segments
-local CdmRegistry = Runtime.CdmRegistry
-local AuraTracker = Runtime.AuraTracker
-local BarFrame = Runtime.BarFrame
-local Renderers = Runtime.Renderers
-local CooldownRenderer = Renderers.Cooldown
-local DurationRenderer = Renderers.Duration
-local StackRenderer = Renderers.Stack
-
 -- =========================================================
--- SECTION 1: 内联辅助
+-- SECTION 1: 模块入口
 -- =========================================================
 
-local UPDATE_INTERVAL = Constants.UPDATE_INTERVAL
-local SetBarTickState = Segments.setBarTickState
-local ShouldRenderGraphics = Segments.shouldRenderGraphics
-local CreateSegments = Segments.create
-local ClearSegments = Segments.clear
-local InnerBarSignature = Segments.innerBarSignature
-local SegmentLayoutSignature = Segments.segmentLayoutSignature
-local CreateBarFrame = BarFrame.create
-local ShouldShowBar = Visibility.shouldShowBar
-local IsHiddenForSystemEditOnly = Visibility.isHiddenForSystemEditOnly
-local ApplyMonitorContainerVisibility = Visibility.applyContainerVisibility
-local ScanCDMViewers = CdmRegistry.scanCDMViewers
-local UpdateRegularCooldownBar = CooldownRenderer.updateRegular
-local UpdateChargeBar = CooldownRenderer.updateCharge
-local UpdateDurationBar = DurationRenderer.update
-local UpdateStackBar = StackRenderer.update
-local BindBarToCDMFrame = AuraTracker.bindBarToCDMFrame
-local UnlinkBarFromAura = AuraTracker.unlinkBar
-local ClearAllHooks = AuraTracker.clearAllHooks
-local PP = VFlow.PixelPerfect
-
 -- =========================================================
--- SECTION 2: BUFF 派发索引
+-- SECTION 2: 常量
 -- =========================================================
 
-local function RemoveBuffFromDispatchIndex(barFrame)
-    if not barFrame then return end
-    local spellID = barFrame._spellID
-    if not spellID then return end
-    State.buffProbeBars[spellID] = nil
-    State.buffWatchedBars.player[spellID] = nil
-    State.buffWatchedBars.pet[spellID] = nil
-    State.buffWatchedBars.target[spellID] = nil
+local UPDATE_INTERVAL = 0.1
+local MAP_RETRY_INTERVAL = 1.5
+local BUFF_VIEWERS = {
+    "BuffIconCooldownViewer",
+    "BuffBarCooldownViewer",
+    "EssentialCooldownViewer",
+    "UtilityCooldownViewer",
+}
+
+local INTERP_EASE_OUT = Enum.StatusBarInterpolation and Enum.StatusBarInterpolation.ExponentialEaseOut or 1
+
+-- 环形纹理路径格式
+local RING_TEXTURE_FMT = "Interface\\AddOns\\VFlow\\Assets\\Ring\\Ring_%spx.tga"
+
+local function ResolveFontFlags(outline)
+    if outline == "OUTLINE" or outline == "THICKOUTLINE" then
+        return outline
+    end
+    if outline == "MONOCHROMEOUTLINE" then
+        return "OUTLINE,MONOCHROME"
+    end
+    return ""
 end
 
-local function SyncBuffDispatchIndex(barFrame)
-    if not barFrame or barFrame._storeKey ~= "buffs" then return end
-    RemoveBuffFromDispatchIndex(barFrame)
-    local unit = barFrame._trackedUnit
-    if barFrame._lastKnownActive and unit and State.buffWatchedBars[unit] then
-        State.buffWatchedBars[unit][barFrame._spellID] = barFrame
+local function ApplyConfiguredFont(fs, tf)
+    if not fs then return end
+    local fontSize = tf and tf.size or 14
+    local fontFlags = ResolveFontFlags(tf and tf.outline)
+    local applyFont = VFlow.UI and VFlow.UI.applyFont
+    if applyFont then
+        applyFont(fs, tf and tf.font, fontSize, fontFlags)
+    end
+    if tf and tf.outline == "SHADOW" then
+        fs:SetShadowColor(0, 0, 0, 1)
+        fs:SetShadowOffset(1, -1)
     else
-        State.buffProbeBars[barFrame._spellID] = barFrame
+        fs:SetShadowColor(0, 0, 0, 0)
+        fs:SetShadowOffset(0, 0)
     end
 end
 
 -- =========================================================
--- SECTION 3: 可见性 / 段重建
+-- SECTION 3: 显示条件判断
 -- =========================================================
+
+-- 判断是否应该显示条
+local function ShouldShowBar(cfg, isBuffActive)
+    local mode = cfg.visibilityMode or "hide"
+    local conditionMet = false
+
+    -- 检查各个条件（任一条件满足即为true）
+    if cfg.hideInCombat and VFlow.State.get("inCombat") then
+        conditionMet = true
+    end
+    if cfg.hideOnMount and VFlow.State.get("isMounted") then
+        conditionMet = true
+    end
+    if cfg.hideOnSkyriding and VFlow.State.get("isSkyriding") then
+        conditionMet = true
+    end
+    if cfg.hideInSpecial and (VFlow.State.get("inVehicle") or VFlow.State.get("inPetBattle")) then
+        conditionMet = true
+    end
+    if cfg.hideNoTarget and not VFlow.State.get("hasTarget") then
+        conditionMet = true
+    end
+    if cfg.hideWhenInactive and not isBuffActive then
+        conditionMet = true
+    end
+
+    -- 根据模式返回结果
+    if mode == "show" then
+        -- "仅...时显示"模式：条件满足时显示，否则隐藏
+        return conditionMet
+    else
+        -- "仅...时隐藏"模式（默认）：条件满足时隐藏，否则显示
+        return not conditionMet
+    end
+end
+
+--- 勾选「不在系统编辑模式中显示」时：仅暴雪编辑预览阶段隐藏，内部编辑模式仍显示
+local function IsHiddenForSystemEditOnly(cfg)
+    if not cfg or not cfg.hideInSystemEditMode then return false end
+    local sys = VFlow.State.systemEditMode or false
+    local internal = VFlow.State.internalEditMode or false
+    return sys and not internal
+end
+
+-- =========================================================
+-- SECTION 4: 模块状态
+-- =========================================================
+
+-- { [spellID] = barFrame }
+local _activeSkillBars    = {}
+local _activeBuffBars     = {}
+local _buffProbeBars      = {}
+local _buffWatchedBars    = {
+    player = {},
+    pet = {},
+    target = {},
+}
+local _tickBars           = {}
+local _tickBarCount       = 0
+
+-- spellID → cooldownID 映射（buff 监控专用）
+local _spellToCooldownID = {}
+-- cooldownID → CDM帧 缓存
+local _cooldownIDToFrame = {}
+
+-- CDM帧 Hook 管理
+local _hookedFrames   = setmetatable({}, { __mode = "k" })  -- cdmFrame → { barIDs = {key→true} }
+local _everHookedFrames = setmetatable({}, { __mode = "k" })
+local _frameToBarKeys = setmetatable({}, { __mode = "k" })  -- cdmFrame → { barKey, ... }
+-- aura key "unit#instanceID" → { barKey → true }（stacks 专用）
+local _auraKeyToBars  = {}
+local _barToAuraKey   = {}  -- barKey → aura key
+local _spellMapRetryAt = {}
+
+-- CDM RefreshData 等钩子同帧可能触发多次：合并到帧末一次处理，减少 UpdateStackBar 重复
+local _cdmFlushPending  = setmetatable({}, { __mode = "k" })  -- [cdmFrame] = true
+local _cdmFlushLastAura = setmetatable({}, { __mode = "k" })  -- [cdmFrame] = { auraInstanceID?, auraUnit? }
+local _cdmFlushScratch  = {}
+local _cdmFlushFrame = CreateFrame("Frame")
+_cdmFlushFrame:Hide()
+
+-- =========================================================
+-- SECTION 5: 通用辅助
+-- =========================================================
+
+--- 先尝试一位小数；含 secret 等对 format 有限制时回退为原值（引擎默认约三位小数）
+local function SetRemainingText(text, durObj)
+    local remaining
+    pcall(function() remaining = durObj:GetRemainingDuration() end)
+    if remaining == nil then
+        text:SetText("")
+        return
+    end
+    local ok1 = pcall(function()
+        text:SetFormattedText("%.1f", remaining)
+    end)
+    if ok1 then return end
+    local ok2 = pcall(function()
+        text:SetText(remaining)
+    end)
+    if not ok2 then text:SetText("") end
+end
+
+local function FillDirection(fillMode)
+    if fillMode == "fill" then
+        return Enum.StatusBarTimerDirection and Enum.StatusBarTimerDirection.RemainingTime or 1
+    end
+    return Enum.StatusBarTimerDirection and Enum.StatusBarTimerDirection.ElapsedTime or 0
+end
+
+local function ApplyTimerDuration(seg, durObj, interpolation, direction)
+    if not (durObj and seg.SetTimerDuration) then return false end
+    seg:SetMinMaxValues(0, 1)
+    seg:SetTimerDuration(durObj, interpolation, direction)
+    if seg.SetToTargetValue then seg:SetToTargetValue() end
+    return true
+end
+
+local function SetBarTickState(barFrame, mode)
+    if not barFrame then return end
+    barFrame._tickMode = mode
+end
+
+-- =========================================================
+-- SECTION 6: ShadowCooldown（技能冷却用）
+-- =========================================================
+
+local function GetOrCreateShadowCooldown(barFrame)
+    if barFrame._shadowCooldown then return barFrame._shadowCooldown end
+    local cd = CreateFrame("Cooldown", nil, barFrame, "CooldownFrameTemplate")
+    cd:SetAllPoints(barFrame)
+    cd:SetDrawSwipe(false)
+    cd:SetDrawEdge(false)
+    cd:SetDrawBling(false)
+    cd:SetHideCountdownNumbers(true)
+    cd:SetAlpha(0)
+    cd:EnableMouse(false)
+    barFrame._shadowCooldown = cd
+    return cd
+end
+
+-- =========================================================
+-- SECTION 7: CDM 帧扫描 & spellID→cooldownID 映射
+-- =========================================================
+
+local function HasAuraInstanceID(value)
+    if value == nil then return false end
+    if issecretvalue and issecretvalue(value) then return true end
+    if type(value) == "number" and value == 0 then return false end
+    return true
+end
+
+-- CDM 偶发把整份 AuraData 挂在 auraInstanceID 上；C_UnitAuras 只要数值 ID。
+local function AuraInstanceIDForAPI(v)
+    if type(v) == "table" and v.auraInstanceID ~= nil then return v.auraInstanceID end
+    return v
+end
+
+local function GetCooldownIDFromFrame(frame)
+    local cdID = frame.cooldownID
+    if not cdID and frame.cooldownInfo then
+        cdID = frame.cooldownInfo.cooldownID
+    end
+    return cdID
+end
+
+--- 仅用于映射/表键：含 secret 的 spellID 不可参与 >0 或与配置 ID 比较
+local function IsUsableNonSecretSpellId(id)
+    if not id or type(id) ~= "number" then return false end
+    if issecretvalue and issecretvalue(id) then return false end
+    return id > 0
+end
+
+local function SafeSpellIdEquals(a, b)
+    local ok, eq = pcall(function() return a == b end)
+    return ok and eq
+end
+
+local function ResolveSpellID(info)
+    if not info then return nil end
+    local linked = info.linkedSpellIDs and info.linkedSpellIDs[1]
+    if IsUsableNonSecretSpellId(linked) then return linked end
+    if IsUsableNonSecretSpellId(info.overrideSpellID) then return info.overrideSpellID end
+    if IsUsableNonSecretSpellId(info.spellID) then return info.spellID end
+    return nil
+end
+
+-- 从单个 CDM 帧注册映射（只追加，可在战斗中调用）
+local function RegisterCDMFrame(frame)
+    local cdID = GetCooldownIDFromFrame(frame)
+    if not cdID then return end
+    _cooldownIDToFrame[cdID] = frame
+    local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+    if not info then return end
+    local sid = ResolveSpellID(info)
+    if sid and not _spellToCooldownID[sid] then
+        _spellToCooldownID[sid] = cdID
+    end
+    if info.linkedSpellIDs then
+        for _, lid in ipairs(info.linkedSpellIDs) do
+            if IsUsableNonSecretSpellId(lid) and not _spellToCooldownID[lid] then
+                _spellToCooldownID[lid] = cdID
+            end
+        end
+    end
+    if IsUsableNonSecretSpellId(info.spellID) and not _spellToCooldownID[info.spellID] then
+        _spellToCooldownID[info.spellID] = cdID
+    end
+end
+
+-- 全量扫描重建映射（仅脱战时调用，需要 wipe 清表）
+local function ScanCDMViewers()
+    if InCombatLockdown() then return end
+    wipe(_spellToCooldownID)
+    wipe(_cooldownIDToFrame)
+    wipe(_spellMapRetryAt)
+    for _, viewerName in ipairs(BUFF_VIEWERS) do
+        local viewer = _G[viewerName]
+        if viewer then
+            if viewer.itemFramePool then
+                for frame in viewer.itemFramePool:EnumerateActive() do RegisterCDMFrame(frame) end
+            else
+                for _, child in ipairs({ viewer:GetChildren() }) do RegisterCDMFrame(child) end
+            end
+        end
+    end
+end
+
+-- 战斗中为单个 spellID 补建映射（只追加，找到即停）
+-- 调用方负责检查 _spellToCooldownID[spellID] == nil 后再调用
+local function TryMapSpellID(spellID)
+    local now = GetTime and GetTime() or 0
+    local retryAt = _spellMapRetryAt[spellID]
+    if retryAt and now < retryAt then return end
+    for _, viewerName in ipairs(BUFF_VIEWERS) do
+        local viewer = _G[viewerName]
+        if viewer then
+            local function check(frame)
+                local cdID = GetCooldownIDFromFrame(frame)
+                if not cdID then return false end
+                local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+                if not info then return false end
+                local sid = ResolveSpellID(info)
+                if SafeSpellIdEquals(sid, spellID) or SafeSpellIdEquals(info.spellID, spellID) then
+                    RegisterCDMFrame(frame)
+                    return true
+                end
+                if info.linkedSpellIDs then
+                    for _, lid in ipairs(info.linkedSpellIDs) do
+                        if SafeSpellIdEquals(lid, spellID) then RegisterCDMFrame(frame); return true end
+                    end
+                end
+                return false
+            end
+            if viewer.itemFramePool then
+                for frame in viewer.itemFramePool:EnumerateActive() do
+                    if check(frame) then
+                        _spellMapRetryAt[spellID] = nil
+                        return
+                    end
+                end
+            else
+                for _, child in ipairs({ viewer:GetChildren() }) do
+                    if check(child) then
+                        _spellMapRetryAt[spellID] = nil
+                        return
+                    end
+                end
+            end
+        end
+    end
+    _spellMapRetryAt[spellID] = now + MAP_RETRY_INTERVAL
+end
+
+local function FindCDMFrame(cooldownID)
+    if not cooldownID then return nil end
+    local cached = _cooldownIDToFrame[cooldownID]
+    if cached then return cached end
+    for _, viewerName in ipairs(BUFF_VIEWERS) do
+        local viewer = _G[viewerName]
+        if viewer then
+            if viewer.itemFramePool then
+                for frame in viewer.itemFramePool:EnumerateActive() do
+                    local cdID = GetCooldownIDFromFrame(frame)
+                    if cdID == cooldownID then
+                        _cooldownIDToFrame[cdID] = frame
+                        return frame
+                    end
+                end
+            else
+                for _, child in ipairs({ viewer:GetChildren() }) do
+                    local cdID = GetCooldownIDFromFrame(child)
+                    if cdID == cooldownID then
+                        _cooldownIDToFrame[cdID] = child
+                        return child
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- =========================================================
+-- SECTION 9: Aura 追踪 & CDM Hook（stacks/duration 共用）
+-- =========================================================
+
+local function BuildAuraKey(unit, auraInstanceID)
+    if not HasAuraInstanceID(auraInstanceID) then return nil end
+    local u = (type(unit) == "string" and unit ~= "") and unit or "player"
+    return u .. "#" .. tostring(auraInstanceID)
+end
+
+local function UnlinkBarFromAura(barKey)
+    local oldAuraKey = _barToAuraKey[barKey]
+    if not oldAuraKey then return end
+    local bars = _auraKeyToBars[oldAuraKey]
+    if bars then
+        bars[barKey] = nil
+        if not next(bars) then _auraKeyToBars[oldAuraKey] = nil end
+    end
+    _barToAuraKey[barKey] = nil
+end
+
+local function LinkBarToAura(barFrame, barKey, unit, auraInstanceID)
+    auraInstanceID = AuraInstanceIDForAPI(auraInstanceID)
+    local auraKey = BuildAuraKey(unit, auraInstanceID)
+    if not auraKey then return end
+    local oldKey = _barToAuraKey[barKey]
+    if oldKey ~= auraKey then UnlinkBarFromAura(barKey) end
+    if not _auraKeyToBars[auraKey] then _auraKeyToBars[auraKey] = {} end
+    _auraKeyToBars[auraKey][barKey] = true
+    _barToAuraKey[barKey] = auraKey
+    barFrame._trackedAuraInstanceID = auraInstanceID
+    barFrame._trackedUnit           = unit
+end
+
+-- 按优先级在多个单位上查找 aura（展开版，避免闭包分配）
+local function GetAuraDataByInstanceID(auraInstanceID, preferredUnit, secondUnit)
+    auraInstanceID = AuraInstanceIDForAPI(auraInstanceID)
+    if not HasAuraInstanceID(auraInstanceID) then return nil, nil end
+    local data
+    if preferredUnit and preferredUnit ~= "" then
+        data = C_UnitAuras.GetAuraDataByAuraInstanceID(preferredUnit, auraInstanceID)
+        if data then return data, preferredUnit end
+    end
+    if secondUnit and secondUnit ~= "" and secondUnit ~= preferredUnit then
+        data = C_UnitAuras.GetAuraDataByAuraInstanceID(secondUnit, auraInstanceID)
+        if data then return data, secondUnit end
+    end
+    if preferredUnit ~= "player" and secondUnit ~= "player" then
+        data = C_UnitAuras.GetAuraDataByAuraInstanceID("player", auraInstanceID)
+        if data then return data, "player" end
+    end
+    if preferredUnit ~= "pet" and secondUnit ~= "pet" then
+        data = C_UnitAuras.GetAuraDataByAuraInstanceID("pet", auraInstanceID)
+        if data then return data, "pet" end
+    end
+    return nil, nil
+end
+
+-- CDM 帧回调：当帧刷新时通知关联的 buff 监控条
+local UpdateStackBar   -- 前向声明
+local UpdateDurationBar
+local RefreshSkillBar
+local RefreshBuffBar
+
+-- CDM 清空槽位时立刻同步层数条
+local function OnCDMClearAuraInstanceInfo(cdmFrame)
+    if not cdmFrame then return end
+    local barKeys = _frameToBarKeys[cdmFrame]
+    if not barKeys then return end
+    for _, barKey in ipairs(barKeys) do
+        local spellID = tonumber(barKey:match("^buffs/(%d+)$"))
+        local barFrame = spellID and _activeBuffBars[spellID]
+        if barFrame then
+            barFrame._nilCount = 0
+            barFrame._lastKnownActive = false
+            barFrame._lastKnownStacks = 0
+            barFrame._trackedAuraInstanceID = nil
+            barFrame._trackedUnit = nil
+            UnlinkBarFromAura(barKey)
+            if RefreshBuffBar then
+                RefreshBuffBar(barFrame, "cdm_clear")
+            elseif barFrame._monitorType == "stacks" then
+                UpdateStackBar(barFrame, spellID, barKey)
+            else
+                UpdateDurationBar(barFrame, spellID, barKey)
+            end
+        end
+    end
+end
+
+local function FlushCDMFrameChanges()
+    local batchCount = 0
+    for frame in pairs(_cdmFlushPending) do
+        batchCount = batchCount + 1
+        _cdmFlushScratch[batchCount] = frame
+    end
+    for i = 1, batchCount do
+        local frame = _cdmFlushScratch[i]
+        _cdmFlushScratch[i] = nil
+        _cdmFlushPending[frame] = nil
+        local slot = _cdmFlushLastAura[frame]
+        _cdmFlushLastAura[frame] = nil
+
+        local auraInstanceID = slot and slot[1]
+        local auraUnit = slot and slot[2]
+        if not HasAuraInstanceID(auraInstanceID) and frame.auraInstanceID then
+            if HasAuraInstanceID(frame.auraInstanceID) then
+                auraInstanceID = frame.auraInstanceID
+            end
+        end
+        if (not auraUnit or auraUnit == "") and frame.auraDataUnit then
+            auraUnit = frame.auraDataUnit
+        end
+
+        local barKeys = _frameToBarKeys[frame]
+        if barKeys then
+            for _, barKey in ipairs(barKeys) do
+                local spellID  = tonumber(barKey:match("^buffs/(%d+)$"))
+                local barFrame = spellID and _activeBuffBars[spellID]
+                if barFrame then
+                    if auraInstanceID then
+                        local trackedUnit = auraUnit or frame.auraDataUnit
+                            or barFrame._trackedUnit or "player"
+                        LinkBarToAura(barFrame, barKey, trackedUnit, auraInstanceID)
+                    end
+                    if RefreshBuffBar then
+                        RefreshBuffBar(barFrame, "cdm_flush")
+                    elseif barFrame._monitorType == "stacks" then
+                        UpdateStackBar(barFrame, spellID, barKey)
+                    else
+                        UpdateDurationBar(barFrame, spellID, barKey)
+                    end
+                end
+            end
+        end
+    end
+end
+
+local function DeferCDMFrameChanged(frame, ...)
+    if not frame then return end
+    local barKeysEarly = _frameToBarKeys[frame]
+    if not barKeysEarly then return end
+
+    local auraInstanceID, auraUnit
+    for i = 1, select("#", ...) do
+        local v = select(i, ...)
+        if not auraInstanceID and HasAuraInstanceID(v) then auraInstanceID = v end
+        if not auraUnit and type(v) == "string" and v ~= "" then auraUnit = v end
+    end
+
+    local slot = _cdmFlushLastAura[frame]
+    if not slot then
+        slot = {}
+        _cdmFlushLastAura[frame] = slot
+    end
+    if HasAuraInstanceID(auraInstanceID) then slot[1] = auraInstanceID end
+    if auraUnit and auraUnit ~= "" then slot[2] = auraUnit end
+
+    _cdmFlushPending[frame] = true
+    _cdmFlushFrame:Show()
+end
+
+_cdmFlushFrame:SetScript("OnUpdate", function(self)
+    self:Hide()
+    if next(_cdmFlushPending) then
+        FlushCDMFrameChanges()
+    end
+end)
+
+local function RemoveBarKeyFromFrame(cdmFrame, barKey)
+    if not cdmFrame or not barKey then return end
+    local hookState = _hookedFrames[cdmFrame]
+    if not hookState or not hookState.barIDs or not hookState.barIDs[barKey] then
+        return
+    end
+
+    hookState.barIDs[barKey] = nil
+
+    local barKeys = _frameToBarKeys[cdmFrame]
+    if barKeys then
+        for i = #barKeys, 1, -1 do
+            if barKeys[i] == barKey then
+                table.remove(barKeys, i)
+                break
+            end
+        end
+        if #barKeys == 0 then
+            _frameToBarKeys[cdmFrame] = nil
+            _cdmFlushPending[cdmFrame] = nil
+            _cdmFlushLastAura[cdmFrame] = nil
+        end
+    end
+
+    if not next(hookState.barIDs) then
+        _hookedFrames[cdmFrame] = nil
+    end
+end
+
+local function HookCDMFrame(cdmFrame, barKey)
+    if not cdmFrame then return end
+    if not _hookedFrames[cdmFrame] then
+        _hookedFrames[cdmFrame] = { barIDs = {} }
+        _frameToBarKeys[cdmFrame] = {}
+    end
+    if not _everHookedFrames[cdmFrame] then
+        if cdmFrame.RefreshData         then hooksecurefunc(cdmFrame, "RefreshData",         DeferCDMFrameChanged) end
+        if cdmFrame.RefreshApplications then hooksecurefunc(cdmFrame, "RefreshApplications", DeferCDMFrameChanged) end
+        if cdmFrame.SetAuraInstanceInfo then hooksecurefunc(cdmFrame, "SetAuraInstanceInfo",  DeferCDMFrameChanged) end
+        if cdmFrame.ClearAuraInstanceInfo then hooksecurefunc(cdmFrame, "ClearAuraInstanceInfo", OnCDMClearAuraInstanceInfo) end
+        _everHookedFrames[cdmFrame] = true
+    end
+    if not _hookedFrames[cdmFrame].barIDs[barKey] then
+        _hookedFrames[cdmFrame].barIDs[barKey] = true
+        table.insert(_frameToBarKeys[cdmFrame], barKey)
+    end
+end
+
+local function BindBarToCDMFrame(barFrame, cdmFrame, barKey)
+    if not barFrame then return end
+    local prevFrame = barFrame._hookedCDMFrame
+    if prevFrame and prevFrame ~= cdmFrame then
+        RemoveBarKeyFromFrame(prevFrame, barKey)
+    end
+    if cdmFrame then
+        HookCDMFrame(cdmFrame, barKey)
+        barFrame._hookedCDMFrame = cdmFrame
+    else
+        if prevFrame then
+            RemoveBarKeyFromFrame(prevFrame, barKey)
+        end
+        barFrame._hookedCDMFrame = nil
+    end
+end
+
+local function ClearAllHooks()
+    for frame in pairs(_cdmFlushPending) do
+        _cdmFlushPending[frame] = nil
+    end
+    for frame in pairs(_cdmFlushLastAura) do
+        _cdmFlushLastAura[frame] = nil
+    end
+    _cdmFlushFrame:Hide()
+    for frame in pairs(_hookedFrames) do
+        _hookedFrames[frame] = nil
+        _frameToBarKeys[frame] = nil
+    end
+    wipe(_auraKeyToBars)
+    wipe(_barToAuraKey)
+    wipe(_spellToCooldownID)
+    wipe(_cooldownIDToFrame)
+    wipe(_spellMapRetryAt)
+    wipe(_buffProbeBars)
+    wipe(_buffWatchedBars.player)
+    wipe(_buffWatchedBars.pet)
+    wipe(_buffWatchedBars.target)
+    for _, barFrame in pairs(_activeBuffBars) do
+        barFrame._hookedCDMFrame = nil
+    end
+end
+
+-- =========================================================
+-- SECTION 9: StatusBar 分段创建（共用）
+-- =========================================================
+
+local function colKey(c)
+    if not c then return "-" end
+    return table.concat({ tostring(c.r), tostring(c.g), tostring(c.b), tostring(c.a) }, ";")
+end
+
+local function ShouldRenderGraphics(cfg)
+    return cfg and cfg.showGraphics ~= false
+end
+
+local function ShouldRenderText(cfg)
+    return cfg and cfg.showText ~= false
+end
+
+local function timerFontKey(cfg)
+    local t = cfg.timerFont or {}
+    local fc = t.color or {}
+    return table.concat({
+        tostring(t.font or ""),
+        tostring(t.size or 0),
+        tostring(t.outline or ""),
+        tostring(t.position or "CENTER"),
+        tostring(t.offsetX or 0),
+        tostring(t.offsetY or 0),
+        colKey(fc),
+    }, "\031")
+end
+
+--- CreateBarFrame 维度（含环形/条形共用的背景与计时文字区；不含 monitorType/充能业务模式）
+local function innerBarSignature(cfg)
+    return table.concat({
+        tostring(cfg.shape or "bar"),
+        tostring(cfg.showGraphics ~= false),
+        tostring(cfg.showText ~= false),
+        colKey(cfg.bgColor or { r = 0.1, g = 0.1, b = 0.1, a = 0.5 }),
+        tostring(cfg.showGraphics ~= false and cfg.showIcon ~= false),
+        tostring(cfg.iconSize or 20),
+        tostring(cfg.iconPosition or "LEFT"),
+        tostring(cfg.iconOffsetX or 0),
+        tostring(cfg.iconOffsetY or 0),
+        timerFontKey(cfg),
+    }, "\031")
+end
+
+--- CreateSegments 维度（含环形/堆叠阈值/充能路径）
+local function segmentLayoutSignature(cfg, barFrame)
+    local storeKey = barFrame._storeKey or "skills"
+    local shape = cfg.shape or "bar"
+    local mon = (storeKey == "buffs") and (barFrame._monitorType or cfg.monitorType or "duration") or ""
+    local bt = (BFK and BFK.ParseBorderThickness and BFK.ParseBorderThickness(cfg.borderThickness))
+        or tonumber(cfg.borderThickness) or 1
+    return table.concat({
+        shape,
+        storeKey,
+        mon,
+        tostring(cfg.showGraphics ~= false),
+        tostring(tonumber(cfg.maxStacks) or 5),
+        tostring(tonumber(cfg.segmentGap) or 0),
+        cfg.barDirection or "horizontal",
+        tostring(cfg.barReverse == true),
+        tostring(cfg.barTexture or ""),
+        tostring(tonumber(cfg.stackThreshold1) or 0),
+        tostring(tonumber(cfg.stackThreshold2) or 0),
+        colKey(cfg.stackColor1),
+        colKey(cfg.stackColor2),
+        colKey(cfg.barColor),
+        colKey(cfg.bgColor),
+        tostring(cfg.ringTexture or ""),
+        colKey(cfg.ringColor or { r = 0.2, g = 0.6, b = 1, a = 1 }),
+        tostring(cfg.ringThickness or 0),
+        tostring(cfg.barFillMode or ""),
+        tostring(bt),
+        colKey(cfg.borderColor),
+        storeKey == "skills" and tostring(cfg.isChargeSpell == true) or "",
+        tostring(cfg.ringSize or 0),
+    }, "\031")
+end
+
+local function ClearSegments(barFrame)
+    if barFrame._segments then
+        for _, seg in ipairs(barFrame._segments) do seg:Hide(); seg:SetParent(nil) end
+    end
+    if barFrame._segBGs then
+        for _, bg in ipairs(barFrame._segBGs) do bg:Hide(); bg:SetParent(nil) end
+    end
+    if barFrame._thresholdOverlays then
+        for _, ov in ipairs(barFrame._thresholdOverlays) do ov:Hide(); ov:SetParent(nil) end
+    end
+    if barFrame._segFrames then
+        for _, frame in ipairs(barFrame._segFrames) do frame:Hide(); frame:SetParent(nil) end
+    end
+    barFrame._segments          = {}
+    barFrame._segBGs            = {}
+    barFrame._thresholdOverlays = {}
+    barFrame._segFrames         = {}
+end
+
+-- count=1 → 单段；count>1 → 多段（充能/stacks）
+-- isStack=true 时启用阈值覆盖层
+-- isRing=true 时创建环形（仅用于BUFF持续时间，单段）
+local function CreateSegments(barFrame, count, cfg, isStack, isRing)
+    ClearSegments(barFrame)
+    if not ShouldRenderGraphics(cfg) then
+        barFrame._segSig = segmentLayoutSignature(cfg, barFrame)
+        barFrame._segsDirty = false
+        barFrame._segsNeedCount = nil
+        return
+    end
+    if count < 1 then
+        return
+    end
+
+    local segContainer = barFrame._segContainer
+    local totalW, totalH = segContainer:GetSize()
+    if totalW <= 0 then
+        barFrame._segsDirty     = true
+        barFrame._segsNeedCount = count
+        return
+    end
+
+    -- 环形模式（仅BUFF持续时间）
+    if isRing then
+        local ringTexture = cfg.ringTexture or "10"
+        local ringTex = string.format(RING_TEXTURE_FMT, ringTexture)
+        local rc = cfg.ringColor or { r = 0.2, g = 0.6, b = 1, a = 1 }
+
+        -- 背景环（使用环形纹理，深灰色）
+        local bg = segContainer:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints()
+        bg:SetTexture(ringTex)
+        local bgc = cfg.bgColor or { r = 0.1, g = 0.1, b = 0.1, a = 0.5 }
+        bg:SetVertexColor(bgc.r, bgc.g, bgc.b, bgc.a)
+        bg:Show()
+        barFrame._segBGs[1] = bg
+
+        -- 隐藏barFrame自身的矩形背景
+        local barBG = barFrame.GetBackdrop and barFrame:GetBackdrop()
+        local bgTex = barFrame.GetRegions and select(1, barFrame:GetRegions())
+        if bgTex and bgTex.SetColorTexture then
+            bgTex:SetColorTexture(0, 0, 0, 0)
+        end
+
+        -- 使用CooldownFrame作为进度显示
+        local cd = CreateFrame("Cooldown", nil, segContainer, "CooldownFrameTemplate")
+        cd:SetAllPoints()
+        cd:SetDrawEdge(false)
+        cd:SetDrawBling(false)
+        cd:SetSwipeTexture(ringTex)
+        cd:SetSwipeColor(rc.r, rc.g, rc.b, rc.a)
+        cd:SetReverse(false)  -- 不反向：黑色遮罩从满到空消退，露出背景环
+        cd:SetHideCountdownNumbers(true)
+        cd:SetUseCircularEdge(false)
+        cd:EnableMouse(false)
+        cd:Show()
+        cd._isRing = true
+        cd._needsRefresh = true
+        barFrame._segments[1] = cd
+
+        barFrame._segSig = segmentLayoutSignature(cfg, barFrame)
+        barFrame._segsDirty = false
+        barFrame._segsNeedCount = nil
+        return
+    end
+
+    -- 条形模式：分段几何与边框同 BarFrameKit / ResourceBars（ref 像素比例 + 末格双锚点）
+    local dir = cfg.barDirection or "horizontal"
+    local barReverse = cfg.barReverse == true
+    local tex = BFK and BFK.ResolveBarTexture(cfg.barTexture) or "Interface\\Buttons\\WHITE8X8"
+    local bc  = cfg.barColor or { r = 0.2, g = 0.6, b = 1, a = 1 }
+
+    -- 阈值配置（isStack 时读取）
+    local t1 = isStack and (tonumber(cfg.stackThreshold1) or 0) or 0
+    local t2 = isStack and (tonumber(cfg.stackThreshold2) or 0) or 0
+    local c1 = cfg.stackColor1 or { r = 1, g = 0.5, b = 0, a = 1 }
+    local c2 = cfg.stackColor2 or { r = 1, g = 0,   b = 0, a = 1 }
+
+    local baseLevel = segContainer:GetFrameLevel()
+
+    for i = 1, count do
+        local segFrame = CreateFrame("Frame", nil, segContainer)
+        segFrame:SetFrameLevel(baseLevel)
+
+        local bg = segFrame:CreateTexture(nil, "BACKGROUND")
+        local bgc = cfg.bgColor or { r = 0.1, g = 0.1, b = 0.1, a = 0.5 }
+        bg:SetColorTexture(bgc.r, bgc.g, bgc.b, bgc.a)
+        bg:SetAllPoints(segFrame)
+
+        local seg = CreateFrame("StatusBar", nil, segFrame)
+        seg:SetStatusBarTexture(tex)
+        seg:SetStatusBarColor(bc.r, bc.g, bc.b, bc.a)
+        seg:SetValue(0)
+        seg:EnableMouse(false)
+        seg:SetFrameLevel(baseLevel + 1)
+        seg:SetAllPoints(segFrame)
+        if BFK then
+            BFK.ConfigureStatusBar(seg)
+            BFK.SetOrientation(seg, dir)
+            BFK.SetReverseFill(seg, barReverse)
+        end
+
+        if isStack then
+            seg:SetMinMaxValues(i - 1, i)
+            if dir == "vertical" and seg.SetFillStyle then
+                seg:SetFillStyle(Enum.StatusBarFillStyle.Standard)
+            end
+        else
+            seg:SetMinMaxValues(0, 1)
+        end
+
+        barFrame._segBGs[i]   = bg
+        barFrame._segments[i] = seg
+        barFrame._segFrames = barFrame._segFrames or {}
+        barFrame._segFrames[i] = segFrame
+
+        -- 阈值覆盖层
+        if isStack then
+            if t1 > 0 then
+                local ov1 = CreateFrame("StatusBar", nil, segFrame)
+                ov1:SetAllPoints(segFrame)
+                ov1:SetStatusBarTexture(tex)
+                ov1:SetStatusBarColor(c1.r, c1.g, c1.b, c1.a)
+                ov1:SetValue(0)
+                ov1:EnableMouse(false)
+                ov1:SetFrameLevel(baseLevel + 2)
+                ov1:SetMinMaxValues((i < t1) and (t1 - 1) or (i - 1), (i < t1) and t1 or i)
+                if BFK then
+                    BFK.ConfigureStatusBar(ov1)
+                    BFK.SetOrientation(ov1, dir)
+                    BFK.SetReverseFill(ov1, barReverse)
+                end
+                table.insert(barFrame._thresholdOverlays, ov1)
+            end
+            if t2 > 0 then
+                local ov2 = CreateFrame("StatusBar", nil, segFrame)
+                ov2:SetAllPoints(segFrame)
+                ov2:SetStatusBarTexture(tex)
+                ov2:SetStatusBarColor(c2.r, c2.g, c2.b, c2.a)
+                ov2:SetValue(0)
+                ov2:EnableMouse(false)
+                ov2:SetFrameLevel(baseLevel + 3)
+                ov2:SetMinMaxValues((i < t2) and (t2 - 1) or (i - 1), (i < t2) and t2 or i)
+                if BFK then
+                    BFK.ConfigureStatusBar(ov2)
+                    BFK.SetOrientation(ov2, dir)
+                    BFK.SetReverseFill(ov2, barReverse)
+                end
+                table.insert(barFrame._thresholdOverlays, ov2)
+            end
+        end
+
+        local borderFrame = CreateFrame("Frame", nil, segFrame)
+        borderFrame:SetFrameLevel(baseLevel + 4)
+        borderFrame:SetAllPoints(segFrame)
+        borderFrame:EnableMouse(false)
+        segFrame._vf_segmentBorder = borderFrame
+    end
+
+    --- 与 ResourceBars 一致：像素比例以「正在分割的容器」为 ref（totalW/H 亦来自该容器）
+    if BFK and BFK.LayoutDiscreteBarSegmentFrames then
+        BFK.LayoutDiscreteBarSegmentFrames(segContainer, cfg, count, dir, barFrame._segFrames or {}, segContainer)
+    end
+    if BFK and BFK.ApplySegmentCellBorder then
+        for i = 1, count do
+            local sf = barFrame._segFrames and barFrame._segFrames[i]
+            if sf and sf._vf_segmentBorder then
+                BFK.ApplySegmentCellBorder(sf._vf_segmentBorder, cfg)
+            end
+        end
+    end
+
+    barFrame._segSig = segmentLayoutSignature(cfg, barFrame)
+    barFrame._segsDirty     = false
+    barFrame._segsNeedCount = nil
+end
+
+-- 将层数值同时设给基础分段和阈值覆盖层
+local function SetStackSegmentsValue(barFrame, value)
+    for _, seg in ipairs(barFrame._segments) do seg:SetValue(value) end
+    for _, ov  in ipairs(barFrame._thresholdOverlays) do ov:SetValue(value) end
+end
+
+local function BuildChargeSegmentMetrics(container, count, dir, segmentGap)
+    if not container or count < 1 then return nil end
+
+    local totalW = container:GetWidth()
+    local totalH = container:GetHeight()
+    if totalW <= 0 or totalH <= 0 then return nil end
+
+    local ppScale = PP.GetPixelScale(container)
+    local function ToPixel(v) return math.floor(v / ppScale + 0.5) end
+    local function ToLogical(px) return px * ppScale end
+
+    local pxTotalW = ToPixel(totalW)
+    local pxTotalH = ToPixel(totalH)
+    local pxGap = ToPixel(segmentGap)
+    local metrics = {}
+
+    if count == 1 then
+        metrics[1] = {
+            x = 0,
+            y = 0,
+            w = ToLogical(pxTotalW),
+            h = ToLogical(pxTotalH),
+        }
+        return metrics
+    end
+
+    if dir == "vertical" then
+        local pxAvailH = math.max(0, pxTotalH - (count - 1) * pxGap)
+        local prevEdge = 0
+        for i = 1, count do
+            local edge = (i == count) and pxAvailH or math.floor(pxAvailH * i / count + 0.5)
+            local segPxH = math.max(0, edge - prevEdge)
+            metrics[i] = {
+                x = 0,
+                y = ToLogical(prevEdge + (i - 1) * pxGap),
+                w = ToLogical(pxTotalW),
+                h = ToLogical(segPxH),
+            }
+            prevEdge = edge
+        end
+    else
+        local pxAvailW = math.max(0, pxTotalW - (count - 1) * pxGap)
+        local prevEdge = 0
+        for i = 1, count do
+            local edge = (i == count) and pxAvailW or math.floor(pxAvailW * i / count + 0.5)
+            local segPxW = math.max(0, edge - prevEdge)
+            metrics[i] = {
+                x = ToLogical(prevEdge + (i - 1) * pxGap),
+                y = 0,
+                w = ToLogical(segPxW),
+                h = ToLogical(pxTotalH),
+            }
+            prevEdge = edge
+        end
+    end
+
+    return metrics
+end
+
+-- =========================================================
+-- SECTION 11: 技能冷却/充能 更新逻辑
+-- =========================================================
+
+local function UpdateRegularCooldownBar(barFrame, spellID)
+    local cfg = barFrame._cfg
+    local showGraphics = ShouldRenderGraphics(cfg)
+    local showText = ShouldRenderText(cfg)
+    local tickDurObj = nil
+    local tickText = nil
+    local cdInfo
+    pcall(function()
+        cdInfo = C_Spell.GetSpellCooldown(spellID)
+    end)
+    local isOnGCD = cdInfo and cdInfo.isOnGCD == true
+    local spellCdActive = true
+    if cdInfo and cdInfo.isActive ~= nil then
+        spellCdActive = cdInfo.isActive == true
+    end
+
+    local durObj
+    local shadowCD = showGraphics and GetOrCreateShadowCooldown(barFrame) or nil
+    if not isOnGCD then
+        pcall(function() durObj = C_Spell.GetSpellCooldownDuration(spellID) end)
+    end
+    if showGraphics then
+        if isOnGCD then
+            shadowCD:Clear()
+        elseif durObj and spellCdActive then
+            shadowCD:Clear()
+            pcall(function() shadowCD:SetCooldownFromDurationObject(durObj, true) end)
+        else
+            shadowCD:Clear()
+        end
+    end
+
+    local isOnCooldown = false
+    if showGraphics then
+        isOnCooldown = shadowCD:IsShown()
+    elseif durObj and spellCdActive then
+        -- 12.0 的 DurationObject 可能返回 secret value，只能直接渲染，不能比较。
+        -- 非图形模式下这里保守认定存在 durObj 即进入文本刷新，结束态由事件链收敛。
+        isOnCooldown = true
+    end
+
+    if not showGraphics then
+        if barFrame._text then
+            if isOnCooldown and not isOnGCD and durObj and spellCdActive and showText then
+                SetRemainingText(barFrame._text, durObj)
+                tickDurObj = durObj
+                tickText = barFrame._text
+            else
+                barFrame._text:SetText("")
+            end
+        end
+        SetBarTickState(barFrame, tickDurObj and "spell_cd" or nil)
+        return
+    end
+
+    if not barFrame._segments or #barFrame._segments ~= 1 then
+        CreateSegments(barFrame, 1, cfg)
+    end
+    local seg = barFrame._segments and barFrame._segments[1]
+    if not seg then
+        SetBarTickState(barFrame, nil)
+        return
+    end
+
+    -- 根据冷却状态设置颜色
+    if isOnCooldown and not isOnGCD and durObj and spellCdActive then
+        -- 冷却中：使用rechargeColor（冷却中颜色）
+        local rc = cfg.rechargeColor or cfg.barColor
+        seg:SetStatusBarColor(rc.r, rc.g, rc.b, rc.a)
+        local dir = FillDirection(cfg.barFillMode)
+        if not ApplyTimerDuration(seg, durObj, INTERP_EASE_OUT, dir) then
+            seg:SetValue(0)
+        end
+        barFrame._lastFillMode = cfg.barFillMode
+        if barFrame._text and showText then
+            SetRemainingText(barFrame._text, durObj)
+            tickDurObj = durObj
+            tickText = barFrame._text
+        elseif barFrame._text then
+            barFrame._text:SetText("")
+        end
+    else
+        -- 就绪时：使用barColor（就绪时颜色）
+        seg:SetStatusBarColor(cfg.barColor.r, cfg.barColor.g, cfg.barColor.b, cfg.barColor.a)
+        seg:SetMinMaxValues(0, 1)
+        seg:SetValue(1)
+        if barFrame._text then barFrame._text:SetText("") end
+    end
+    if BFK then BFK.SetReverseFill(seg, cfg.barReverse == true) end
+    SetBarTickState(barFrame, tickDurObj and "spell_cd" or nil)
+end
+
+local function UpdateChargeBar(barFrame, spellID)
+    local cfg = barFrame._cfg
+    local showGraphics = ShouldRenderGraphics(cfg)
+    local showText = ShouldRenderText(cfg)
+    local tickDurObj = nil
+    local tickText = nil
+
+    -- 使用配置中预先判断的技能类型
+    if not cfg.isChargeSpell then
+        UpdateRegularCooldownBar(barFrame, spellID)
+        return
+    end
+
+    if barFrame._needsChargeRefresh then
+        barFrame._cachedChargeInfo   = C_Spell.GetSpellCharges(spellID)
+        barFrame._needsChargeRefresh = false
+    end
+
+    local chargeInfo = barFrame._cachedChargeInfo
+    if not chargeInfo then
+        SetBarTickState(barFrame, nil)
+        return
+    end
+
+    local currentCharges = chargeInfo.currentCharges
+    local maxCharges = chargeInfo.maxCharges
+    local wasFullyCharged = barFrame._lastChargeWasFull == true
+
+    -- 缓存非secret的maxCharges值，战斗中可能需要fallback
+    if not (issecretvalue and issecretvalue(maxCharges)) then
+        barFrame._cachedMaxCharges = maxCharges
+    else
+        local cached = barFrame._cachedMaxCharges
+        if cached and cached > 0 then
+            maxCharges = cached
+        end
+    end
+
+    -- 如果maxCharges仍是secret或无效，无法设置条
+    if issecretvalue and issecretvalue(maxCharges) then
+        SetBarTickState(barFrame, nil)
+        return
+    end
+    if not maxCharges or maxCharges < 1 then
+        SetBarTickState(barFrame, nil)
+        return
+    end
+
+    local chargeDurObj = nil
+    pcall(function() chargeDurObj = C_Spell.GetSpellChargeDuration(spellID) end)
+
+    local activeChargeDurObj = chargeDurObj
+    local recharging = true
+    pcall(function()
+        if type(currentCharges) == "number" and type(maxCharges) == "number" then
+            if not (issecretvalue and (issecretvalue(currentCharges) or issecretvalue(maxCharges))) then
+                recharging = currentCharges < maxCharges
+            end
+        end
+    end)
+
+    local shouldShowRecharge = recharging and (chargeDurObj ~= nil) and (activeChargeDurObj ~= nil)
+    if not showGraphics then
+        if barFrame._text then
+            if showText and shouldShowRecharge then
+                SetRemainingText(barFrame._text, activeChargeDurObj)
+                tickDurObj = activeChargeDurObj
+                tickText = barFrame._text
+            else
+                barFrame._text:SetText("")
+            end
+        end
+        if type(currentCharges) == "number" and type(maxCharges) == "number"
+            and not (issecretvalue and (issecretvalue(currentCharges) or issecretvalue(maxCharges))) then
+            barFrame._lastChargeWasFull = currentCharges >= maxCharges
+        else
+            barFrame._lastChargeWasFull = false
+        end
+        SetBarTickState(barFrame, tickDurObj and "spell_charge" or nil)
+        return
+    end
+
+    local borderThickness = tonumber(cfg.borderThickness) or 1
+
+    -- 创建背景层（显示未充能部分）
+    if not barFrame._chargeBG then
+        local bg = barFrame._segContainer:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints(barFrame._segContainer)
+        local bgc = cfg.bgColor or { r = 0.1, g = 0.1, b = 0.1, a = 0.5 }
+        bg:SetColorTexture(bgc.r, bgc.g, bgc.b, bgc.a)
+        barFrame._chargeBG = bg
+    end
+
+    -- 设置主充能条（显示已有充能数）
+    if not barFrame._chargeBar then
+        local chargeBar = CreateFrame("StatusBar", nil, barFrame._segContainer)
+        chargeBar:SetStatusBarTexture(BFK and BFK.ResolveBarTexture(cfg.barTexture) or "Interface\\Buttons\\WHITE8X8")
+        chargeBar:SetAllPoints(barFrame._segContainer)
+        chargeBar:SetFrameLevel(barFrame._segContainer:GetFrameLevel() + 1)
+        if BFK then BFK.ConfigureStatusBar(chargeBar) end
+        barFrame._chargeBar = chargeBar
+    end
+
+    -- 每次更新颜色与材质（配置可能变化）
+    local barTex = BFK and BFK.ResolveBarTexture(cfg.barTexture) or "Interface\\Buttons\\WHITE8X8"
+    barFrame._chargeBar:SetStatusBarTexture(barTex)
+    if BFK then BFK.ConfigureStatusBar(barFrame._chargeBar) end
+    barFrame._chargeBar:SetStatusBarColor(cfg.barColor.r, cfg.barColor.g, cfg.barColor.b, cfg.barColor.a)
+    barFrame._chargeBar:SetMinMaxValues(0, maxCharges)
+    barFrame._chargeBar:SetValue(currentCharges)
+    local dir = cfg.barDirection or "horizontal"
+    if BFK then
+        BFK.SetOrientation(barFrame._chargeBar, dir)
+        BFK.SetReverseFill(barFrame._chargeBar, cfg.barReverse == true)
+    end
+
+    -- 设置充能进度条（显示正在充能的进度）
+    if not barFrame._refreshCharge then
+        local refreshCharge = CreateFrame("StatusBar", nil, barFrame._segContainer)
+        refreshCharge:SetStatusBarTexture(BFK and BFK.ResolveBarTexture(cfg.barTexture) or "Interface\\Buttons\\WHITE8X8")
+        if BFK then BFK.ConfigureStatusBar(refreshCharge) end
+        barFrame._refreshCharge = refreshCharge
+    end
+
+    if showText and not barFrame._refreshChargeText then
+        local tf = cfg.timerFont or {}
+        local fc = tf.color or { r = 1, g = 1, b = 1, a = 1 }
+        local clip = CreateFrame("Frame", nil, barFrame._chargeTextMask or barFrame._textHolder)
+        clip:SetPoint("TOPLEFT", barFrame._refreshCharge, "TOPLEFT", 0, 0)
+        clip:SetPoint("BOTTOMRIGHT", barFrame._refreshCharge, "BOTTOMRIGHT", 0, 0)
+        clip:SetFrameLevel(barFrame._textHolder:GetFrameLevel())
+        clip:SetClipsChildren(true)
+        clip:EnableMouse(false)
+        barFrame._refreshChargeClip = clip
+
+        local txt = clip:CreateFontString(nil, "OVERLAY")
+        ApplyConfiguredFont(txt, tf)
+        txt:SetTextColor(fc.r, fc.g, fc.b, fc.a)
+        txt:SetJustifyH("CENTER")
+        local anchor = tf.position or "CENTER"
+        txt:SetPoint(anchor, clip, anchor, tf.offsetX or 0, tf.offsetY or 0)
+        barFrame._refreshChargeText = txt
+    end
+
+    -- 每次更新颜色与材质（配置可能变化）
+    local rc = cfg.rechargeColor or { r = 0.5, g = 0.8, b = 1, a = 1 }
+    barFrame._refreshCharge:SetStatusBarTexture(barTex)
+    if BFK then BFK.ConfigureStatusBar(barFrame._refreshCharge) end
+    barFrame._refreshCharge:SetStatusBarColor(rc.r, rc.g, rc.b, rc.a)
+    if BFK then
+        BFK.SetOrientation(barFrame._refreshCharge, dir)
+        BFK.SetReverseFill(barFrame._refreshCharge, cfg.barReverse == true)
+    end
+
+    -- 保持原有充能动画路径：单格尺寸按首格计算，位置继续锚定到主条填充前沿
+    local totalW = barFrame._segContainer:GetWidth()
+    local totalH = barFrame._segContainer:GetHeight()
+    local barReverse = cfg.barReverse == true
+    if totalW > 0 and totalH > 0 then
+        local userGap = tonumber(cfg.segmentGap) or 0
+        local segmentGap = (maxCharges > 1) and (userGap - borderThickness) or 0
+        local ppScale = PP.GetPixelScale(barFrame._segContainer)
+        local function ToPixel(v) return math.floor(v / ppScale + 0.5) end
+        local function ToLogical(px) return px * ppScale end
+
+        local pxTotalW = ToPixel(totalW)
+        local pxTotalH = ToPixel(totalH)
+        local pxGap = ToPixel(segmentGap)
+
+        local pxSegW_Base, pxSegH_Base, pxRemainder
+        if dir == "vertical" then
+            pxSegW_Base = pxTotalW
+            local pxAvailableH = math.max(0, pxTotalH - (maxCharges - 1) * pxGap)
+            pxSegH_Base = math.floor(pxAvailableH / maxCharges)
+            pxRemainder = pxAvailableH % maxCharges
+        else
+            pxSegH_Base = pxTotalH
+            local pxAvailableW = math.max(0, pxTotalW - (maxCharges - 1) * pxGap)
+            pxSegW_Base = math.floor(pxAvailableW / maxCharges)
+            pxRemainder = pxAvailableW % maxCharges
+        end
+
+        local thisPxSegW = pxSegW_Base
+        local thisPxSegH = pxSegH_Base
+        if dir == "vertical" then
+            if 1 <= pxRemainder then thisPxSegH = thisPxSegH + 1 end
+        else
+            if 1 <= pxRemainder then thisPxSegW = thisPxSegW + 1 end
+        end
+        local logSegW = ToLogical(thisPxSegW)
+        local logSegH = ToLogical(thisPxSegH)
+
+        barFrame._refreshCharge:ClearAllPoints()
+        local tex = barFrame._chargeBar:GetStatusBarTexture()
+        if tex then
+            if dir == "vertical" then
+                if not barReverse then
+                    barFrame._refreshCharge:SetPoint("BOTTOM", tex, "TOP", 0, 0)
+                else
+                    barFrame._refreshCharge:SetPoint("TOP", tex, "BOTTOM", 0, 0)
+                end
+            else
+                if not barReverse then
+                    barFrame._refreshCharge:SetPoint("LEFT", tex, "RIGHT", 0, 0)
+                else
+                    barFrame._refreshCharge:SetPoint("RIGHT", tex, "LEFT", 0, 0)
+                end
+            end
+        end
+        barFrame._refreshCharge:SetSize(logSegW, logSegH)
+    end
+
+    -- 使用SetTimerDuration设置充能进度动画
+    pcall(function()
+        barFrame._refreshCharge:SetTimerDuration(
+            chargeDurObj,
+            Enum.StatusBarInterpolation.Immediate or 0,
+            Enum.StatusBarTimerDirection.ElapsedTime or 0
+        )
+    end)
+
+    activeChargeDurObj = nil
+    if barFrame._refreshCharge.GetTimerDuration then
+        activeChargeDurObj = barFrame._refreshCharge:GetTimerDuration()
+    end
+
+    local suppressRechargeThisFrame = false
+    if wasFullyCharged and recharging then
+        suppressRechargeThisFrame = true
+    end
+
+    shouldShowRecharge = recharging and (chargeDurObj ~= nil) and (activeChargeDurObj ~= nil)
+
+    if shouldShowRecharge then
+        barFrame._refreshCharge:Show()
+        barFrame._refreshCharge:SetAlpha(suppressRechargeThisFrame and 0 or 1)
+    else
+        barFrame._refreshCharge:Hide()
+        barFrame._refreshCharge:SetAlpha(1)
+    end
+
+    -- 创建分隔线（使用完美像素边框）- 边框重合自动形成分隔线
+    if maxCharges > 1 and borderThickness > 0 then
+        barFrame._chargeBorders = barFrame._chargeBorders or {}
+        for i = maxCharges + 1, #barFrame._chargeBorders do
+            if barFrame._chargeBorders[i] then
+                PP.HideBorder(barFrame._chargeBorders[i])
+                barFrame._chargeBorders[i]:Hide()
+                barFrame._chargeBorders[i] = nil
+            end
+        end
+        if totalW > 0 and totalH > 0 then
+            local userGap = tonumber(cfg.segmentGap) or 0
+            local segmentGap = (maxCharges > 1) and (userGap - borderThickness) or 0
+            local bc = cfg.borderColor or { r = 0.3, g = 0.3, b = 0.3, a = 1 }
+            local metrics = BuildChargeSegmentMetrics(barFrame._segContainer, maxCharges, dir, segmentGap)
+
+            for i = 1, maxCharges do
+                local cell = metrics and metrics[i]
+                if not barFrame._chargeBorders[i] then
+                    local borderFrame = CreateFrame("Frame", nil, barFrame._segContainer)
+                    borderFrame:SetFrameLevel(barFrame._segContainer:GetFrameLevel() + 10)
+                    barFrame._chargeBorders[i] = borderFrame
+                end
+                local borderFrame = barFrame._chargeBorders[i]
+                borderFrame:ClearAllPoints()
+                if cell then
+                    local anchor = (dir == "vertical") and "BOTTOMLEFT" or "TOPLEFT"
+                    borderFrame:SetPoint(anchor, barFrame._segContainer, anchor, cell.x, cell.y)
+                    PP.SetSize(borderFrame, cell.w, cell.h)
+                end
+
+                local needRebuild = (not borderFrame._vfBorderThickness)
+                    or (borderFrame._vfBorderThickness ~= borderThickness)
+                    or (borderFrame._vfBorderW ~= (cell and cell.w or 0))
+                    or (borderFrame._vfBorderH ~= (cell and cell.h or 0))
+                if needRebuild then
+                    PP.CreateBorder(borderFrame, borderThickness, bc, true)
+                    borderFrame._vfBorderThickness = borderThickness
+                    borderFrame._vfBorderW = cell and cell.w or 0
+                    borderFrame._vfBorderH = cell and cell.h or 0
+                    borderFrame._vfBorderColor = {
+                        r = bc.r or 1,
+                        g = bc.g or 1,
+                        b = bc.b or 1,
+                        a = bc.a or 1,
+                    }
+                else
+                    local last = borderFrame._vfBorderColor
+                    local r = bc.r or 1
+                    local g = bc.g or 1
+                    local b = bc.b or 1
+                    local a = bc.a or 1
+                    if (not last)
+                        or (last.r ~= r)
+                        or (last.g ~= g)
+                        or (last.b ~= b)
+                        or (last.a ~= a) then
+                        PP.UpdateBorderColor(borderFrame, bc)
+                        borderFrame._vfBorderColor = { r = r, g = g, b = b, a = a }
+                    end
+                end
+                PP.ShowBorder(borderFrame)
+                borderFrame:Show()
+            end
+        end
+    else
+        -- 隐藏所有边框
+        if barFrame._chargeBorders then
+            for _, borderFrame in ipairs(barFrame._chargeBorders) do
+                PP.HideBorder(borderFrame)
+                borderFrame:Hide()
+            end
+        end
+    end
+
+    -- 更新文字显示
+    if barFrame._text then
+        barFrame._text:SetText("")
+    end
+    if barFrame._refreshChargeText then
+        if shouldShowRecharge then
+            SetRemainingText(barFrame._refreshChargeText, activeChargeDurObj)
+            tickDurObj = activeChargeDurObj
+            tickText = barFrame._refreshChargeText
+        else
+            barFrame._refreshChargeText:SetText("")
+        end
+    end
+
+    if type(currentCharges) == "number" and type(maxCharges) == "number"
+        and not (issecretvalue and (issecretvalue(currentCharges) or issecretvalue(maxCharges))) then
+        barFrame._lastChargeWasFull = currentCharges >= maxCharges
+    else
+        barFrame._lastChargeWasFull = false
+    end
+    SetBarTickState(barFrame, tickDurObj and "spell_charge" or nil)
+end
+
+-- =========================================================
+-- SECTION 12: BUFF 持续时间更新逻辑
+-- =========================================================
+
+UpdateDurationBar = function(barFrame, spellID, barKey)
+    local cfg = barFrame._cfg
+    local showGraphics = ShouldRenderGraphics(cfg)
+    local showText = ShouldRenderText(cfg)
+    local tickDurObj = nil
+    local tickText = nil
+
+    -- 若尚未有映射，尝试补建（找到后不再重复查，barKey 已缓存在 barFrame 上）
+    if not _spellToCooldownID[spellID] then
+        TryMapSpellID(spellID)
+    end
+
+    local auraActive     = false
+    local auraInstanceID = nil
+    local unit           = nil
+
+    -- 路径1：CDM 帧
+    local cooldownID = _spellToCooldownID[spellID]
+    local cdmFrame = cooldownID and FindCDMFrame(cooldownID) or nil
+    BindBarToCDMFrame(barFrame, cdmFrame, barKey)
+    if cdmFrame and HasAuraInstanceID(cdmFrame.auraInstanceID) then
+        auraActive     = true
+        auraInstanceID = AuraInstanceIDForAPI(cdmFrame.auraInstanceID)
+        unit           = cdmFrame.auraDataUnit or "player"
+        barFrame._trackedAuraInstanceID = auraInstanceID
+        barFrame._trackedUnit           = unit
+    end
+
+    -- 路径2：上次记录的 auraInstanceID
+    if not auraActive and HasAuraInstanceID(barFrame._trackedAuraInstanceID) then
+        local tid = AuraInstanceIDForAPI(barFrame._trackedAuraInstanceID)
+        local d
+        d = C_UnitAuras.GetAuraDataByAuraInstanceID("player", tid)
+        if d then
+            unit = "player"
+        else
+            d = C_UnitAuras.GetAuraDataByAuraInstanceID("pet", tid)
+            if d then unit = "pet" end
+        end
+        if d then
+            auraActive     = true
+            auraInstanceID = tid
+            barFrame._trackedAuraInstanceID = tid
+            barFrame._trackedUnit = unit
+        end
+    end
+
+    -- 路径3：按 spellID 直接扫描（首次触发/CDM 尚未激活时兜底）
+    -- 战斗中 spellId 是 secret value，pcall 比较失败时直接退出循环
+    if not auraActive then
+        for _, scanUnit in ipairs({ "player", "pet" }) do
+            local auraData
+            if C_UnitAuras.GetPlayerAuraBySpellID and scanUnit == "player" then
+                auraData = C_UnitAuras.GetPlayerAuraBySpellID(spellID)
+            end
+            if not auraData then
+                local index = 1
+                while true do
+                    local data = C_UnitAuras.GetAuraDataByIndex(scanUnit, index)
+                    if not data then break end
+                    local matched = false
+                    local ok = pcall(function() matched = (data.spellId == spellID) end)
+                    if not ok then break end  -- secret value，战斗中放弃
+                    if matched then auraData = data; break end
+                    index = index + 1
+                end
+            end
+            if auraData and HasAuraInstanceID(auraData.auraInstanceID) then
+                unit           = scanUnit
+                auraInstanceID = auraData.auraInstanceID
+                auraActive     = true
+                barFrame._trackedAuraInstanceID = auraInstanceID
+                barFrame._trackedUnit           = unit
+                break
+            end
+        end
+    end
+
+    if not showGraphics then
+        if auraActive and auraInstanceID and unit then
+            barFrame._lastKnownActive = true
+            if barFrame._text then
+                local durObj = C_UnitAuras.GetAuraDuration(unit, auraInstanceID)
+                if showText and durObj then
+                    SetRemainingText(barFrame._text, durObj)
+                    tickDurObj = durObj
+                    tickText = barFrame._text
+                else
+                    barFrame._text:SetText("")
+                end
+            end
+        else
+            barFrame._lastKnownActive = false
+            barFrame._trackedAuraInstanceID = nil
+            barFrame._trackedUnit = nil
+            if barFrame._text then
+                barFrame._text:SetText("")
+            end
+        end
+        SetBarTickState(barFrame, tickDurObj and "buff_duration" or nil)
+        return
+    end
+
+    -- 判断是否为环形
+    local isRing = (cfg.shape == "ring")
+
+    -- 检测形状变化，强制重建
+    local needRebuild = false
+    if barFrame._segments and #barFrame._segments == 1 then
+        local seg = barFrame._segments[1]
+        if isRing and not seg._isRing then
+            needRebuild = true  -- 从条形切换到环形
+        elseif not isRing and seg._isRing then
+            needRebuild = true  -- 从环形切换到条形
+        end
+    end
+
+    -- 单段
+    if not barFrame._segments or #barFrame._segments ~= 1 or needRebuild then
+        CreateSegments(barFrame, 1, cfg, false, isRing)
+    end
+    local seg = barFrame._segments and barFrame._segments[1]
+    if not seg then
+        SetBarTickState(barFrame, nil)
+        return
+    end
+
+    if auraActive and auraInstanceID and unit then
+        barFrame._lastKnownActive = true
+
+        if isRing and seg._isRing then
+            -- 环形模式：每帧更新，与条形的SetTimerDuration行为一致
+            local durObj = C_UnitAuras.GetAuraDuration(unit, auraInstanceID)
+            if durObj and seg.SetCooldownFromDurationObject then
+                pcall(function()
+                    seg:SetCooldownFromDurationObject(durObj)
+                end)
+                local rc = cfg.ringColor or { r = 0.2, g = 0.6, b = 1, a = 1 }
+                seg:SetSwipeColor(rc.r, rc.g, rc.b, rc.a)
+                seg._needsRefresh = false
+            end
+            if barFrame._text then
+                if showText and durObj then
+                    SetRemainingText(barFrame._text, durObj)
+                    tickDurObj = durObj
+                    tickText = barFrame._text
+                else
+                    barFrame._text:SetText("")
+                end
+            end
+        else
+            -- 条形模式：使用StatusBar
+            local timerOK = pcall(function()
+                local durObj = C_UnitAuras.GetAuraDuration(unit, auraInstanceID)
+                if not durObj then return end
+                ApplyTimerDuration(seg, durObj, INTERP_EASE_OUT, FillDirection(cfg.barFillMode))
+                barFrame._lastFillMode = cfg.barFillMode
+                if barFrame._text and showText then
+                    SetRemainingText(barFrame._text, durObj)
+                    tickDurObj = durObj
+                    tickText = barFrame._text
+                elseif barFrame._text then
+                    barFrame._text:SetText("")
+                end
+            end)
+            if not timerOK then
+                seg:SetMinMaxValues(0, 1); seg:SetValue(1)
+                if barFrame._text then barFrame._text:SetText("") end
+            end
+            if BFK then BFK.SetReverseFill(seg, cfg.barReverse == true) end
+        end
+    else
+        barFrame._lastKnownActive = false
+        barFrame._trackedAuraInstanceID = nil
+        barFrame._trackedUnit           = nil
+
+        if isRing and seg._isRing then
+            if seg.Clear then
+                seg:Clear()
+            end
+            seg._needsRefresh = true  -- 下次激活时重新设置
+        else
+            seg:SetMinMaxValues(0, 1); seg:SetValue(0)
+            if BFK then BFK.SetReverseFill(seg, cfg.barReverse == true) end
+        end
+        if barFrame._text then barFrame._text:SetText("") end
+    end
+    SetBarTickState(barFrame, tickDurObj and "buff_duration" or nil)
+end
+
+-- =========================================================
+-- SECTION 13: BUFF 堆叠层数更新逻辑
+-- =========================================================
+
+UpdateStackBar = function(barFrame, spellID, barKey)
+    local cfg       = barFrame._cfg
+    local showGraphics = ShouldRenderGraphics(cfg)
+    local showText = ShouldRenderText(cfg)
+    local maxStacks = tonumber(cfg.maxStacks) or 5
+    if maxStacks < 1 then maxStacks = 1 end
+    SetBarTickState(barFrame, nil)
+
+    local stacks     = 0
+    local auraActive = false
+
+    if not _spellToCooldownID[spellID] then
+        TryMapSpellID(spellID)
+    end
+
+    local cooldownID = _spellToCooldownID[spellID]
+    local cdmFrame = cooldownID and FindCDMFrame(cooldownID) or nil
+    BindBarToCDMFrame(barFrame, cdmFrame, barKey)
+    if cdmFrame and HasAuraInstanceID(cdmFrame.auraInstanceID) then
+        local baseUnit = cdmFrame.auraDataUnit or barFrame._trackedUnit or "player"
+        local auraData, trackedUnit = GetAuraDataByInstanceID(
+            cdmFrame.auraInstanceID, baseUnit, barFrame._trackedUnit)
+        LinkBarToAura(barFrame, barKey, trackedUnit or baseUnit, cdmFrame.auraInstanceID)
+        if auraData then
+            auraActive = true
+            stacks     = auraData.applications or 0
+        end
+    end
+
+    if not auraActive and HasAuraInstanceID(barFrame._trackedAuraInstanceID) then
+        local auraData, trackedUnit = GetAuraDataByInstanceID(
+            barFrame._trackedAuraInstanceID, barFrame._trackedUnit, nil)
+        if auraData then
+            auraActive = true
+            stacks     = auraData.applications or 0
+            if trackedUnit then
+                LinkBarToAura(barFrame, barKey, trackedUnit, barFrame._trackedAuraInstanceID)
+            end
+        end
+    end
+
+    if not auraActive then
+        if barFrame._lastKnownActive then
+            local cdmInstanceGone = not (cdmFrame and HasAuraInstanceID(cdmFrame.auraInstanceID))
+            if cdmInstanceGone then
+                barFrame._nilCount = 0
+                barFrame._lastKnownActive = false
+                barFrame._lastKnownStacks = 0
+                barFrame._trackedAuraInstanceID = nil
+                barFrame._trackedUnit = nil
+                UnlinkBarFromAura(barKey)
+                stacks = 0
+            else
+                barFrame._nilCount = (barFrame._nilCount or 0) + 1
+                if barFrame._nilCount > 5 then
+                    barFrame._nilCount             = 0
+                    barFrame._lastKnownActive       = false
+                    barFrame._lastKnownStacks       = 0
+                    barFrame._trackedAuraInstanceID = nil
+                    barFrame._trackedUnit           = nil
+                    UnlinkBarFromAura(barKey)
+                    stacks = 0
+                else
+                    return
+                end
+            end
+        end
+    else
+        barFrame._nilCount = 0
+    end
+
+    if showGraphics and (not barFrame._segments or #barFrame._segments ~= maxStacks) then
+        CreateSegments(barFrame, maxStacks, cfg, true)
+    end
+    if showGraphics and not barFrame._segments then return end
+
+    local isSecret = issecretvalue and issecretvalue(stacks)
+
+    if showGraphics then
+        SetStackSegmentsValue(barFrame, stacks)
+    end
+
+    if auraActive then
+        barFrame._lastKnownActive = true
+        if not isSecret and type(stacks) == "number" then
+            barFrame._lastKnownStacks = stacks
+        end
+    end
+
+    if barFrame._text then
+        if not showText then
+            barFrame._text:SetText("")
+            return
+        end
+        if isSecret then
+            barFrame._text:SetText(stacks)
+        elseif stacks == 0 then
+            barFrame._text:SetText("")
+        else
+            barFrame._text:SetText(tostring(stacks))
+        end
+    end
+end
+
+-- =========================================================
+-- SECTION 14: 条形帧创建（技能/buff 共用）
+-- =========================================================
+
+local function CreateBarFrame(spellID, cfg, container)
+    if container._bar then container._bar:Hide() end
+
+    local showGraphics = ShouldRenderGraphics(cfg)
+    local showText = ShouldRenderText(cfg)
+    local barFrame = CreateFrame("Frame", nil, container)
+    barFrame:SetAllPoints(container)
+    barFrame:SetFrameStrata(container:GetFrameStrata())
+    barFrame:SetFrameLevel(container:GetFrameLevel() + 1)
+
+    if showGraphics then
+        local bg = barFrame:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints()
+        if cfg.shape == "ring" then
+            bg:SetColorTexture(0, 0, 0, 0)
+        else
+            local bgc = cfg.bgColor or { r = 0.1, g = 0.1, b = 0.1, a = 0.5 }
+            bg:SetColorTexture(bgc.r, bgc.g, bgc.b, bgc.a)
+        end
+        barFrame._bg = bg
+    end
+
+    if showGraphics and cfg.showIcon ~= false then
+        local iconFrame = CreateFrame("Frame", nil, container)
+        iconFrame:SetFrameStrata(container:GetFrameStrata())
+        local iconSize  = cfg.iconSize or 20
+        iconFrame:SetSize(iconSize, iconSize)
+        local pos = cfg.iconPosition or "LEFT"
+        local ox  = cfg.iconOffsetX  or 0
+        local oy  = cfg.iconOffsetY  or 0
+        local iconAnchor, relAnchor
+        if     pos == "LEFT"  then iconAnchor, relAnchor = "RIGHT",  "LEFT"
+        elseif pos == "RIGHT" then iconAnchor, relAnchor = "LEFT",   "RIGHT"
+        elseif pos == "TOP"   then iconAnchor, relAnchor = "BOTTOM", "TOP"
+        else                       iconAnchor, relAnchor = "TOP",    "BOTTOM"
+        end
+        iconFrame:SetPoint(iconAnchor, container, relAnchor, ox, oy)
+        local si = C_Spell.GetSpellInfo(spellID)
+        if si and si.iconID then
+            local t = iconFrame:CreateTexture(nil, "ARTWORK")
+            t:SetAllPoints()
+            t:SetTexture(si.iconID)
+            t:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        end
+        barFrame._iconFrame = iconFrame
+    end
+
+    local segContainer = CreateFrame("Frame", nil, barFrame)
+    segContainer:SetAllPoints(barFrame)
+    segContainer:SetFrameLevel(barFrame:GetFrameLevel() + 1)
+    segContainer:EnableMouse(false)
+    --- 勿对整条形容器 Clip：与 ResourceBars 一致；Clip 会在接缝/尾部与 PixelPerfect 1px 边框锯齿叠粗。
+    --- 充能数字溢出由 _refreshChargeClip:SetClipsChildren(true) 处理。
+    segContainer:SetClipsChildren(false)
+    barFrame._segContainer = segContainer
+
+    local textHolder = CreateFrame("Frame", nil, barFrame)
+    textHolder:SetAllPoints(barFrame)
+    textHolder:SetFrameStrata(container:GetFrameStrata())
+    textHolder:SetFrameLevel(container:GetFrameLevel() + 50)
+    textHolder:EnableMouse(false)
+    barFrame._textHolder = textHolder
+
+    local chargeTextMask = CreateFrame("Frame", nil, textHolder)
+    chargeTextMask:SetAllPoints(barFrame)
+    chargeTextMask:SetFrameStrata(container:GetFrameStrata())
+    chargeTextMask:SetFrameLevel(textHolder:GetFrameLevel())
+    chargeTextMask:SetClipsChildren(true)
+    chargeTextMask:EnableMouse(false)
+    barFrame._chargeTextMask = chargeTextMask
+
+    if showText then
+        local tf      = cfg.timerFont or {}
+        local fc      = tf.color or { r = 1, g = 1, b = 1, a = 1 }
+        local tAnchor = tf.position or "CENTER"
+
+        barFrame._text = textHolder:CreateFontString(nil, "OVERLAY")
+        ApplyConfiguredFont(barFrame._text, tf)
+        barFrame._text:SetTextColor(fc.r, fc.g, fc.b, fc.a)
+        barFrame._text:SetPoint(tAnchor, textHolder, tAnchor, tf.offsetX or 0, tf.offsetY or 0)
+        barFrame._text:SetJustifyH("CENTER")
+    end
+
+    barFrame._cfg                  = cfg
+    barFrame._spellID              = spellID
+    barFrame._segments             = {}
+    barFrame._segBGs               = {}
+    barFrame._thresholdOverlays    = {}
+    barFrame._shadowCooldown       = nil
+    -- 技能冷却/充能
+    barFrame._cachedChargeInfo     = nil
+    barFrame._cachedMaxCharges     = 0
+    barFrame._needsChargeRefresh   = true
+    barFrame._lastChargeWasFull    = false
+    barFrame._lastFillMode         = nil
+    barFrame._chargeBar            = nil  -- OctoChargeBar方案：主充能条
+    barFrame._refreshCharge        = nil  -- OctoChargeBar方案：充能进度条
+    barFrame._chargeBorders        = nil  -- OctoChargeBar方案：边框容器
+    -- buff 堆叠
+    barFrame._lastKnownActive      = false
+    barFrame._lastKnownStacks      = 0
+    barFrame._nilCount             = 0
+    barFrame._trackedAuraInstanceID = nil
+    barFrame._trackedUnit          = nil
+    -- 通用
+    barFrame._segsDirty            = false
+    barFrame._segsNeedCount        = nil
+    barFrame._tickMode             = nil
+    barFrame._isTicking            = false
+    barFrame._isVisible            = true
+
+    return barFrame
+end
+
+-- =========================================================
+-- SECTION 15: 生命周期管理
+-- =========================================================
+
+local _elapsed = 0
+local _tickScratch = {}
+local _refreshScratch = {}
+local _updateFrame = CreateFrame("Frame")
+
+--- 条件不满足时不 Hide：保持 Shown + Alpha=0，布局/API/充能等与「始终显示」同路径（避免因 Hide 跳过更新）
+local function ApplyMonitorContainerVisibility(container, shouldShow)
+    if not container then return end
+    container:Show()
+    container:SetAlpha(shouldShow and 1 or 0)
+end
 
 local function ApplyBgColor(barFrame)
     local cfg = barFrame._cfg
@@ -117,53 +1874,28 @@ local function ApplyBgColor(barFrame)
     end
 end
 
-local function ResolveBarVisibility(barFrame)
-    if not barFrame then return false end
-    local isBuffActive = (barFrame._storeKey == "buffs") and (barFrame._lastKnownActive or false) or false
-    local shouldShow = ShouldShowBar(barFrame._cfg, isBuffActive)
-    if shouldShow and IsHiddenForSystemEditOnly(barFrame._cfg) then
-        shouldShow = false
-    end
-    return shouldShow
-end
-
-local function RefreshBarSegmentsIfNeeded(barFrame, count, isStack, isRing)
-    if not barFrame or not barFrame._segsDirty then return end
-    local cw = barFrame._segContainer and barFrame._segContainer:GetWidth()
-    if cw and cw > 0 then
-        CreateSegments(barFrame, count, barFrame._cfg, isStack, isRing)
-    end
-end
-
--- =========================================================
--- SECTION 4: Tick 调度
--- =========================================================
-
-local RefreshSkillBar
-local RefreshBuffBar
-
 local function RefreshUpdateFrameState()
-    if State.tickBarCount > 0 then
-        State.updateFrame:Show()
+    if _tickBarCount > 0 then
+        _updateFrame:Show()
     else
-        State.updateFrame:Hide()
+        _updateFrame:Hide()
     end
 end
 
 local function AddTickBar(barFrame)
     if not barFrame or barFrame._isTicking then return end
-    State.tickBars[barFrame] = true
+    _tickBars[barFrame] = true
     barFrame._isTicking = true
-    State.tickBarCount = State.tickBarCount + 1
+    _tickBarCount = _tickBarCount + 1
     RefreshUpdateFrameState()
 end
 
 local function RemoveTickBar(barFrame)
     if not barFrame or not barFrame._isTicking then return end
-    State.tickBars[barFrame] = nil
+    _tickBars[barFrame] = nil
     barFrame._isTicking = false
-    if State.tickBarCount > 0 then
-        State.tickBarCount = State.tickBarCount - 1
+    if _tickBarCount > 0 then
+        _tickBarCount = _tickBarCount - 1
     end
     RefreshUpdateFrameState()
 end
@@ -176,11 +1908,50 @@ local function ReconcileBarTicker(barFrame)
     end
 end
 
+local function RemoveBuffFromDispatchIndex(barFrame)
+    if not barFrame then return end
+    local spellID = barFrame._spellID
+    if not spellID then return end
+    _buffProbeBars[spellID] = nil
+    _buffWatchedBars.player[spellID] = nil
+    _buffWatchedBars.pet[spellID] = nil
+    _buffWatchedBars.target[spellID] = nil
+end
+
+local function SyncBuffDispatchIndex(barFrame)
+    if not barFrame or barFrame._storeKey ~= "buffs" then return end
+    RemoveBuffFromDispatchIndex(barFrame)
+    local unit = barFrame._trackedUnit
+    if barFrame._lastKnownActive and unit and _buffWatchedBars[unit] then
+        _buffWatchedBars[unit][barFrame._spellID] = barFrame
+    else
+        _buffProbeBars[barFrame._spellID] = barFrame
+    end
+end
+
+local function ResolveBarVisibility(barFrame)
+    if not barFrame then return false end
+    local isBuffActive = (barFrame._storeKey == "buffs") and (barFrame._lastKnownActive or false) or false
+    local shouldShow = ShouldShowBar(barFrame._cfg, isBuffActive)
+    if shouldShow and IsHiddenForSystemEditOnly(barFrame._cfg) then
+        shouldShow = false
+    end
+    return shouldShow
+end
+
 local function ApplyBarVisibility(barFrame, shouldShow)
     if not barFrame then return end
     barFrame._isVisible = shouldShow == true
     ApplyMonitorContainerVisibility(barFrame._container, barFrame._isVisible)
     ReconcileBarTicker(barFrame)
+end
+
+local function RefreshBarSegmentsIfNeeded(barFrame, count, isStack, isRing)
+    if not barFrame or not barFrame._segsDirty then return end
+    local cw = barFrame._segContainer and barFrame._segContainer:GetWidth()
+    if cw and cw > 0 then
+        CreateSegments(barFrame, count, barFrame._cfg, isStack, isRing)
+    end
 end
 
 local function TickBar(barFrame)
@@ -202,26 +1973,23 @@ local function TickBar(barFrame)
 end
 
 local function UpdateFrameOnUpdate(_, dt)
-    State.elapsed = State.elapsed + dt
-    if State.elapsed < UPDATE_INTERVAL then return end
-    State.elapsed = 0
+    _elapsed = _elapsed + dt
+    if _elapsed < UPDATE_INTERVAL then return end
+    _elapsed = 0
 
     local count = 0
-    for barFrame in pairs(State.tickBars) do
+    for barFrame in pairs(_tickBars) do
         count = count + 1
-        State.tickScratch[count] = barFrame
+        _tickScratch[count] = barFrame
     end
     for i = 1, count do
-        local barFrame = State.tickScratch[i]
-        State.tickScratch[i] = nil
+        local barFrame = _tickScratch[i]
+        _tickScratch[i] = nil
         TickBar(barFrame)
     end
 end
-State.updateFrame:SetScript("OnUpdate", UpdateFrameOnUpdate)
-
--- =========================================================
--- SECTION 5: 单条刷新
--- =========================================================
+_updateFrame:SetScript("OnUpdate", UpdateFrameOnUpdate)
+_updateFrame:Hide()
 
 RefreshSkillBar = function(barFrame)
     if not barFrame then return end
@@ -250,17 +2018,14 @@ RefreshBuffBar = function(barFrame)
     ApplyBarVisibility(barFrame, ResolveBarVisibility(barFrame))
 end
 
--- AuraTracker 在 Hook 触发时复用上面两个 Refresh
-AuraTracker.bindRenderers(RefreshBuffBar, UpdateStackBar, UpdateDurationBar)
-
 local function UpdateSkillBars()
-    for _, barFrame in pairs(State.activeSkillBars) do
+    for _, barFrame in pairs(_activeSkillBars) do
         RefreshSkillBar(barFrame, "sweep")
     end
 end
 
 local function UpdateBuffBars()
-    for _, barFrame in pairs(State.activeBuffBars) do
+    for _, barFrame in pairs(_activeBuffBars) do
         RefreshBuffBar(barFrame, "sweep")
     end
 end
@@ -272,30 +2037,26 @@ end
 
 local function RefreshBuffBarsForUnit(unit)
     local count = 0
-    local watched = State.buffWatchedBars[unit]
+    local watched = _buffWatchedBars[unit]
     if watched then
         for _, barFrame in pairs(watched) do
             count = count + 1
-            State.refreshScratch[count] = barFrame
+            _refreshScratch[count] = barFrame
         end
     end
-    for _, barFrame in pairs(State.buffProbeBars) do
+    for _, barFrame in pairs(_buffProbeBars) do
         count = count + 1
-        State.refreshScratch[count] = barFrame
+        _refreshScratch[count] = barFrame
     end
     for i = 1, count do
-        local barFrame = State.refreshScratch[i]
-        State.refreshScratch[i] = nil
+        local barFrame = _refreshScratch[i]
+        _refreshScratch[i] = nil
         RefreshBuffBar(barFrame, "unit_aura")
     end
 end
 
--- =========================================================
--- SECTION 6: 创建 / 销毁
--- =========================================================
-
 local function DestroyBar(storeKey, spellID)
-    local tbl = (storeKey == "skills") and State.activeSkillBars or State.activeBuffBars
+    local tbl = (storeKey == "skills") and _activeSkillBars or _activeBuffBars
     local barFrame = tbl[spellID]
     if not barFrame then return end
 
@@ -352,19 +2113,19 @@ local function EnsureBar(storeKey, spellID, cfg, container)
     if storeKey == "buffs" then
         cfg.isChargeSpell = false
     end
-    local tbl = (storeKey == "skills") and State.activeSkillBars or State.activeBuffBars
+    local tbl = (storeKey == "skills") and _activeSkillBars or _activeBuffBars
     if tbl[spellID] then DestroyBar(storeKey, spellID) end
 
     local barFrame = CreateBarFrame(spellID, cfg, container)
     barFrame._container = container
     barFrame._storeKey = storeKey
-    barFrame._innerSig = InnerBarSignature(cfg)
+    barFrame._innerSig = innerBarSignature(cfg)
     barFrame._isVisible = true
     if storeKey == "buffs" then
         local monitorType = cfg.monitorType or "duration"
         barFrame._monitorType = monitorType
         barFrame._barKey = "buffs/" .. spellID
-        State.buffProbeBars[spellID] = barFrame
+        _buffProbeBars[spellID] = barFrame
     end
     tbl[spellID] = barFrame
 
@@ -375,7 +2136,7 @@ local function EnsureBar(storeKey, spellID, cfg, container)
 end
 
 -- =========================================================
--- SECTION 7: 全局可见性切换
+-- SECTION 15: 事件驱动调度
 -- =========================================================
 
 local function RefreshVisibilitySensitiveBars()
@@ -392,15 +2153,15 @@ VFlow.State.watch("inPetBattle", "CustomMonitorRuntime_Vis", RefreshVisibilitySe
 VFlow.State.watch("hasTarget", "CustomMonitorRuntime_Vis", RefreshVisibilitySensitiveBars)
 
 -- =========================================================
--- SECTION 8: 事件响应
+-- SECTION 16: 事件响应
 -- =========================================================
 
 VFlow.on("PLAYER_ENTERING_WORLD", "CustomMonitorRuntime", function()
     C_Timer.After(1.6, function()
-        if not next(State.activeSkillBars) and not next(State.activeBuffBars) then
+        if not next(_activeSkillBars) and not next(_activeBuffBars) then
             return
         end
-        for _, barFrame in pairs(State.activeSkillBars) do
+        for _, barFrame in pairs(_activeSkillBars) do
             barFrame._needsChargeRefresh = true
         end
         ClearAllHooks()
@@ -412,11 +2173,11 @@ end)
 local function HandleSpecOrTalentChange()
     ClearAllHooks()
     ScanCDMViewers()
-    for _, barFrame in pairs(State.activeSkillBars) do
+    for _, barFrame in pairs(_activeSkillBars) do
         barFrame._needsChargeRefresh = true
         barFrame._cachedMaxCharges = 0
     end
-    for _, barFrame in pairs(State.activeBuffBars) do
+    for _, barFrame in pairs(_activeBuffBars) do
         barFrame._trackedAuraInstanceID = nil
         barFrame._trackedUnit = nil
         barFrame._lastKnownActive = false
@@ -432,17 +2193,17 @@ VFlow.on("TRAIT_CONFIG_UPDATED", "CustomMonitorRuntime", HandleSpecOrTalentChang
 VFlow.on("PLAYER_REGEN_ENABLED", "CustomMonitorRuntime", function()
     ClearAllHooks()
     ScanCDMViewers()
-    for _, barFrame in pairs(State.activeSkillBars) do
+    for _, barFrame in pairs(_activeSkillBars) do
         barFrame._needsChargeRefresh = true
     end
-    for _, barFrame in pairs(State.activeBuffBars) do
+    for _, barFrame in pairs(_activeBuffBars) do
         SyncBuffDispatchIndex(barFrame)
     end
     UpdateAllBars()
 end)
 
 VFlow.on("SPELL_UPDATE_COOLDOWN", "CustomMonitorRuntime", function()
-    for _, barFrame in pairs(State.activeSkillBars) do
+    for _, barFrame in pairs(_activeSkillBars) do
         if not barFrame._cfg.isChargeSpell then
             RefreshSkillBar(barFrame, "spell_cd_event")
         end
@@ -450,7 +2211,7 @@ VFlow.on("SPELL_UPDATE_COOLDOWN", "CustomMonitorRuntime", function()
 end)
 
 VFlow.on("SPELL_UPDATE_CHARGES", "CustomMonitorRuntime", function()
-    for _, barFrame in pairs(State.activeSkillBars) do
+    for _, barFrame in pairs(_activeSkillBars) do
         if barFrame._cfg.isChargeSpell then
             barFrame._needsChargeRefresh = true
             RefreshSkillBar(barFrame, "spell_charge_event")
@@ -466,7 +2227,7 @@ VFlow.on("UNIT_AURA", "CustomMonitorRuntime", function(_, unit)
 end, "player,pet,target")
 
 -- =========================================================
--- SECTION 9: Profiler 注册
+-- SECTION 17: 公共接口（由 CustomMonitorGroups 调用）
 -- =========================================================
 
 if Profiler and Profiler.registerCount then
@@ -482,6 +2243,21 @@ if Profiler and Profiler.registerScope then
         return ScanCDMViewers
     end, function(fn)
         ScanCDMViewers = fn
+    end)
+    Profiler.registerScope("CMR:TryMapSpellID", function()
+        return TryMapSpellID
+    end, function(fn)
+        TryMapSpellID = fn
+    end)
+    Profiler.registerScope("CMR:FindCDMFrame", function()
+        return FindCDMFrame
+    end, function(fn)
+        FindCDMFrame = fn
+    end)
+    Profiler.registerScope("CMR:OnCDMFrameChanged", function()
+        return FlushCDMFrameChanges
+    end, function(fn)
+        FlushCDMFrameChanges = fn
     end)
     Profiler.registerScope("CMR:CreateSegments", function()
         return CreateSegments
@@ -507,18 +2283,14 @@ if Profiler and Profiler.registerScope then
         return UpdateFrameOnUpdate
     end, function(fn)
         UpdateFrameOnUpdate = fn
-        State.updateFrame:SetScript("OnUpdate", fn)
+        _updateFrame:SetScript("OnUpdate", fn)
     end)
 end
-
--- =========================================================
--- SECTION 10: 公共接口（由 CustomMonitorGroups 调用）
--- =========================================================
 
 --- 配置变化时按「内线框 / 分段」签名增量更新，无需 Store 键正则维护。
 local function SyncBarConfig(storeKey, spellID, cfg)
     if not cfg then return end
-    local tbl = (storeKey == "skills") and State.activeSkillBars or State.activeBuffBars
+    local tbl = (storeKey == "skills") and _activeSkillBars or _activeBuffBars
     local barFrame = tbl[spellID]
     if not barFrame then return end
 
@@ -526,7 +2298,7 @@ local function SyncBarConfig(storeKey, spellID, cfg)
         cfg.isChargeSpell = false
     end
 
-    local newInner = InnerBarSignature(cfg)
+    local newInner = innerBarSignature(cfg)
     if newInner ~= barFrame._innerSig then
         barFrame = EnsureBar(storeKey, spellID, cfg, barFrame._container)
         if not barFrame then return end
@@ -550,7 +2322,7 @@ local function SyncBarConfig(storeKey, spellID, cfg)
         barFrame._needsChargeRefresh = true
     end
 
-    local newSeg = SegmentLayoutSignature(cfg, barFrame)
+    local newSeg = segmentLayoutSignature(cfg, barFrame)
     if newSeg ~= (barFrame._segSig or "") then
         barFrame._segsDirty = true
         if barFrame._segsNeedCount == nil then
@@ -581,7 +2353,7 @@ VFlow.CustomMonitorRuntime = {
 
     --- 容器像素尺寸变化（如同步技能条宽度）：段几何需重建
     notifyContainerGeometryChanged = function(storeKey, spellID)
-        local tbl = storeKey == "skills" and State.activeSkillBars or State.activeBuffBars
+        local tbl = storeKey == "skills" and _activeSkillBars or _activeBuffBars
         local barFrame = spellID and tbl[spellID]
         if not barFrame then return end
         barFrame._segsDirty = true

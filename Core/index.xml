@@ -24,27 +24,9 @@
     <Script file="Core\Skill\SkillGroupLayoutPass.lua"/>
     <Script file="Core\Skill\SkillStylePass.lua"/>
     <Script file="Core\Skill\SkillPostPass.lua"/>
-    <!-- 样式与刷新编排（顺序：依赖 → 主入口） -->
-    <Script file="Core\Style\CustomHighlight.lua"/>
-    <Script file="Core\Skill\SkillRefreshOrchestrator.lua"/>
-    <Script file="Core\Buff\BuffRuntime.lua"/>
-    <Script file="Core\Buff\BuffBarRuntime.lua"/>
-    <Script file="Core\Style\ViewerHooks.lua"/>
     <Script file="Core\Style\CooldownStyle.lua"/>
     <Script file="Core\EditModeBridge.lua"/>
     <Script file="Core\CustomMonitor\CustomMonitorGroups.lua"/>
-    <!-- CustomMonitor Runtime（按职责拆分：公共内核 + 三种渲染模式） -->
-    <Script file="Core\CustomMonitor\Runtime\Constants.lua"/>
-    <Script file="Core\CustomMonitor\Runtime\State.lua"/>
-    <Script file="Core\CustomMonitor\Runtime\Visibility.lua"/>
-    <Script file="Core\CustomMonitor\Runtime\Fonts.lua"/>
-    <Script file="Core\CustomMonitor\Runtime\CdmRegistry.lua"/>
-    <Script file="Core\CustomMonitor\Runtime\AuraTracker.lua"/>
-    <Script file="Core\CustomMonitor\Runtime\Segments.lua"/>
-    <Script file="Core\CustomMonitor\Runtime\BarFrame.lua"/>
-    <Script file="Core\CustomMonitor\Runtime\Renderers\CooldownRenderer.lua"/>
-    <Script file="Core\CustomMonitor\Runtime\Renderers\DurationRenderer.lua"/>
-    <Script file="Core\CustomMonitor\Runtime\Renderers\StackRenderer.lua"/>
     <Script file="Core\CustomMonitor\CustomMonitorRuntime.lua"/>
     <Script file="Core\VisibilityControl.lua"/>
     <Script file="Core\Minimap.lua"/>
