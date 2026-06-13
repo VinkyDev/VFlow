@@ -1030,12 +1030,55 @@ end
 -- SECTION 4: 布局与显隐刷新
 -- =========================================================
 
-local function GetBarHostPixelDimensions(cfg)
-    local along = Utils.ResolveSyncedBarSpan(cfg, {
-        manualKey = "barWidth",
-        modeKey = "barWidthMode",
-        defaultMode = "sync_essential",
-    })
+local function AcceptValidAlongSpan(span)
+    if type(span) == "number" and span > 1 then
+        return span
+    end
+    return nil
+end
+
+local function GetSyncViewerForBarMode(mode)
+    if mode == "sync_essential" then
+        return _G.EssentialCooldownViewer
+    end
+    if mode == "sync_utility" then
+        return _G.UtilityCooldownViewer
+    end
+    return nil
+end
+
+--- 同步宽度：优先 SkillLayoutPass 写入的 _vf_layoutSpan（隐藏时仍有效），其次 Viewer 实时尺寸，再保留本 host 上次成功值，避免退回 barWidth 手动默认。
+local function ResolveBarAlongSpan(cfg, host)
+    local manual = tonumber(cfg and cfg.barWidth) or 200
+    if not cfg then
+        return manual
+    end
+    local mode = cfg.barWidthMode or "sync_essential"
+    if mode ~= "sync_essential" and mode ~= "sync_utility" then
+        return manual
+    end
+
+    local viewer = GetSyncViewerForBarMode(mode)
+    local span = AcceptValidAlongSpan(viewer and viewer._vf_layoutSpan)
+        or AcceptValidAlongSpan(viewer and viewer.GetWidth and viewer:GetWidth())
+        or AcceptValidAlongSpan(host and host._vf_syncedAlong)
+
+    if not span and host then
+        local current = (cfg.barDirection == "vertical") and host:GetHeight() or host:GetWidth()
+        span = AcceptValidAlongSpan(current)
+    end
+
+    if not span then
+        return manual
+    end
+    if host then
+        host._vf_syncedAlong = span
+    end
+    return span
+end
+
+local function GetBarHostPixelDimensions(cfg, host)
+    local along = ResolveBarAlongSpan(cfg, host)
     local thick = cfg.barHeight or 16
     if cfg and cfg.barDirection == "vertical" then
         return thick, along
@@ -1050,7 +1093,7 @@ end
 local function ApplyLayoutHost(host, layoutCfg, anchorCfg)
     if not host or not layoutCfg then return end
     anchorCfg = anchorCfg or layoutCfg
-    local w, h = GetBarHostPixelDimensions(layoutCfg)
+    local w, h = GetBarHostPixelDimensions(layoutCfg, host)
     if PP and PP.SetSize then
         PP.SetSize(host, w, h)
     else

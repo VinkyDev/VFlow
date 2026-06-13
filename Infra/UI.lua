@@ -512,10 +512,16 @@ end
 -- @param label string 标签文本
 -- @param value boolean 初始值
 -- @param onChange function 变更回调 function(checked)
+-- @param options table|nil 额外配置 { compact = boolean } 与 labelOnLeft 输入框同行时使用
 -- @return Frame 容器帧（包含checkbox和label）
-function UI.checkbox(parent, label, value, onChange)
+function UI.checkbox(parent, label, value, onChange, options)
     local container = Pool.acquire("VFlowCheckbox", parent)
     container._vf_poolType = "VFlowCheckbox"
+
+    options = options or {}
+    if options.compact then
+        container:SetHeight(24)
+    end
 
     -- 设置标签
     container.label:SetText(label or "")

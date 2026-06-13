@@ -136,10 +136,16 @@ function Utils.ResolveSyncedBarSpan(cfg, options)
     if mode == "sync_essential" or mode == "sync_utility" then
         local viewer = mode == "sync_essential" and _G.EssentialCooldownViewer
             or _G.UtilityCooldownViewer
-        if viewer and viewer.GetWidth then
-            local w = viewer:GetWidth()
-            if type(w) == "number" and w > 1 then
-                return w
+        if viewer then
+            local layoutSpan = viewer._vf_layoutSpan
+            if type(layoutSpan) == "number" and layoutSpan > 1 then
+                return layoutSpan
+            end
+            if viewer.GetWidth then
+                local w = viewer:GetWidth()
+                if type(w) == "number" and w > 1 then
+                    return w
+                end
             end
         end
     end

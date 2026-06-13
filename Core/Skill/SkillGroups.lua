@@ -190,8 +190,15 @@ end
 -- SECTION 5: 容器管理
 -- =========================================================
 
+local function RegisterGroupContainerVisibility(container)
+    if VFlow.VisibilityControl and VFlow.VisibilityControl.RegisterFrame and container then
+        VFlow.VisibilityControl.RegisterFrame(container, "importantSkills")
+    end
+end
+
 local function EnsureGroupContainer(groupIdx)
     if _groupContainers[groupIdx] then
+        RegisterGroupContainerVisibility(_groupContainers[groupIdx])
         return _groupContainers[groupIdx]
     end
 
@@ -228,6 +235,9 @@ local function EnsureGroupContainer(groupIdx)
         VFlow.DragFrame.applyRegisteredPosition(container)
     end
 
+    -- 自定义组在 UIParent 上，需与 EssentialCooldownViewer 共用「重要技能」显示条件
+    RegisterGroupContainerVisibility(container)
+
     _groupContainers[groupIdx] = container
     return container
 end
@@ -235,6 +245,9 @@ end
 local function ReleaseGroupContainer(groupIdx)
     local container = _groupContainers[groupIdx]
     if not container then return end
+    if VFlow.VisibilityControl and VFlow.VisibilityControl.UnregisterFrame then
+        VFlow.VisibilityControl.UnregisterFrame(container)
+    end
     VFlow.DragFrame.unregister(container)
     container:Hide()
     container:SetParent(nil)
@@ -259,21 +272,34 @@ end
 local function SyncGroupContainers()
     local db = VFlow.getDB(MODULE_KEY)
     local groups = db and db.customGroups
+    local containersChanged = false
 
     for groupIdx in pairs(_groupContainers) do
         if not (groups and groups[groupIdx] and groups[groupIdx].config) then
             ReleaseGroupContainer(groupIdx)
+            containersChanged = true
         end
     end
 
     if not groups then
+        if containersChanged and VFlow.VisibilityControl and VFlow.VisibilityControl.EvaluateAll then
+            VFlow.VisibilityControl.EvaluateAll()
+        end
         return
     end
 
     for i, group in ipairs(groups) do
         if group and group.config then
+            local existed = _groupContainers[i] ~= nil
             EnsureGroupContainer(i)
+            if not existed then
+                containersChanged = true
+            end
         end
+    end
+
+    if containersChanged and VFlow.VisibilityControl and VFlow.VisibilityControl.EvaluateAll then
+        VFlow.VisibilityControl.EvaluateAll()
     end
 end
 

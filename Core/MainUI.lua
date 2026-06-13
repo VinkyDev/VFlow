@@ -201,7 +201,7 @@ local menuItems = {
             { key = "buff_settings", label = L["BUFF Settings"], module = "Buffs" },
             { key = "buff_monitor", label = L["Main BUFF Group"], module = "Buffs" },
             { key = "buff_bar", label = L["BUFF Bar"], module = "BuffBar" },
-            { key = "buff_trinket_potion", label = L["Trinkets & Potions"], module = "Buffs" },
+            { key = "buff_other", label = L["Other BUFF"], module = "Buffs" },
             -- 自定义BUFF组会动态添加
         }
     },
@@ -311,7 +311,7 @@ local STATIC_BUFF_CHILDREN = {
     { key = "buff_settings", label = L["BUFF Settings"], module = "Buffs" },
     { key = "buff_monitor", label = L["Main BUFF Group"], module = "Buffs" },
     { key = "buff_bar", label = L["BUFF Bar"], module = "BuffBar" },
-    { key = "buff_trinket_potion", label = L["Trinkets & Potions"], module = "Buffs" },
+    { key = "buff_other", label = L["Other BUFF"], module = "Buffs" },
 }
 
 local STATIC_ITEM_CHILDREN = {
