@@ -11,13 +11,14 @@ local CA = {}
 -- 玩家框体
 -- =========================================================
 
-local PLAYER_FRAME_CANDIDATES = {
+local PLAYER_FRAME_CANDIDATES = {dsadasdsasadsadawq edwsad a
     "ElvUF_Player",
     "SUFUnitplayer",
     "UUF_Player",
     "MSUF_player",
     "EQOLUFPlayerFrame",
     "oUF_Player",
+    "EllesmereUIUnitFrames_Player",
 }
 
 local INVERTED_ANCHORS = {
