@@ -53,11 +53,59 @@ local MANUAL_ITEM_ALTERNATE_EXCEPTION_GROUPS = {
 }
 
 local manualItemAlternateExceptionGroupById = {}
+local manualItemCombatLockoutConfigById = {}
+local manualItemCombatLockoutSpellById = {}
 for _, group in ipairs(MANUAL_ITEM_ALTERNATE_EXCEPTION_GROUPS) do
     for _, itemID in ipairs(group) do
         if type(itemID) == "number" and itemID > 0 then
             manualItemAlternateExceptionGroupById[itemID] = group
+            manualItemCombatLockoutConfigById[itemID] = true
+            C_Item.RequestLoadItemDataByID(itemID)
+            local _, spellID = C_Item.GetItemSpell(itemID)
+            if spellID and spellID > 0 then
+                manualItemCombatLockoutSpellById[spellID] = true
+            end
         end
+    end
+end
+
+local function getManualItemVariantIds(configItemID)
+    if not configItemID or configItemID <= 0 then return {} end
+    local group = manualItemAlternateExceptionGroupById[configItemID]
+    if not group then return { configItemID } end
+    local out = {}
+    local seen = {}
+    for _, iid in ipairs(group) do
+        if type(iid) == "number" and iid > 0 and not seen[iid] then
+            seen[iid] = true
+            out[#out + 1] = iid
+        end
+    end
+    return out
+end
+
+local function getManualItemTotalCount(configItemID)
+    if not configItemID or configItemID <= 0 then return 0 end
+    local total = 0
+    for _, iid in ipairs(getManualItemVariantIds(configItemID)) do
+        C_Item.RequestLoadItemDataByID(iid)
+        total = total + (C_Item.GetItemCount(iid, false, true) or 0)
+    end
+    return total
+end
+
+local function isManualItemCombatLockoutConfig(configItemID)
+    return configItemID and manualItemCombatLockoutConfigById[configItemID] == true
+end
+
+local function isManualItemCombatLockoutSpell(spellID)
+    return spellID and manualItemCombatLockoutSpellById[spellID] == true
+end
+
+local function forEachManualItemVariant(configItemID, fn)
+    if not fn then return end
+    for _, iid in ipairs(getManualItemVariantIds(configItemID)) do
+        fn(iid)
     end
 end
 
@@ -172,6 +220,11 @@ VFlow.ItemAutoData = {
     forEachOnUseTrinketSlot = forEachOnUseTrinketSlot,
     collectRacialSpellIDs = collectRacialSpellIDs,
     manualItemAlternateExceptionGroups = MANUAL_ITEM_ALTERNATE_EXCEPTION_GROUPS,
+    getManualItemVariantIds = getManualItemVariantIds,
+    getManualItemTotalCount = getManualItemTotalCount,
+    isManualItemCombatLockoutConfig = isManualItemCombatLockoutConfig,
+    isManualItemCombatLockoutSpell = isManualItemCombatLockoutSpell,
+    forEachManualItemVariant = forEachManualItemVariant,
     resolveManualCarriedItemID = resolveManualCarriedItemID,
     resolveManualInventoryItem = resolveManualInventoryItem,
 }

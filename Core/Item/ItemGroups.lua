@@ -32,6 +32,7 @@ local _standaloneRefreshPending = false
 local RefreshAllStandaloneLayouts
 local RefreshAllAppendCooldowns
 local StandaloneRefreshOnUpdate
+local _itemCombatLockoutSpells = {}
 
 local _standaloneRefreshFrame = CreateFrame("Frame")
 _standaloneRefreshFrame:Hide()
@@ -441,7 +442,7 @@ local function BuildTrackedEntries(cfg)
             elseif e.t == "item" and cfg.itemIDs and cfg.itemIDs[e.id] then
                 local rid, sid = ResolveManualItemForTracking(e.id)
                 if sid and sid > 0 then
-                    add({ kind = "item_inventory", itemID = rid, spellID = sid })
+                    add({ kind = "item_inventory", configItemID = e.id, itemID = rid, spellID = sid })
                 end
             elseif e.t == "spell" and cfg.spellIDs and cfg.spellIDs[e.id] then
                 add({ kind = "spell", spellID = e.id })
@@ -465,7 +466,7 @@ local function BuildTrackedEntries(cfg)
         for _, iid in ipairs(itemList) do
             local rid, sid = ResolveManualItemForTracking(iid)
             if sid and sid > 0 then
-                add({ kind = "item_inventory", itemID = rid, spellID = sid })
+                add({ kind = "item_inventory", configItemID = iid, itemID = rid, spellID = sid })
             end
         end
         local spellList = {}
@@ -492,11 +493,20 @@ local function BuildAppendEntries(cfg)
     return BuildTrackedEntries(cfg)
 end
 
---- 手动物品：背包数量 0；饰品槽：栏位未装备
+--- 手动物品：背包数量 0（含治疗石等备选 ID 合计）；饰品槽：栏位未装备
+local function GetInventoryItemTotalCount(entry)
+    if not entry or entry.kind ~= "item_inventory" then return 0 end
+    local IAD = VFlow.ItemAutoData
+    if entry.configItemID and IAD and IAD.getManualItemTotalCount then
+        return IAD.getManualItemTotalCount(entry.configItemID) or 0
+    end
+    return C_Item.GetItemCount(entry.itemID, false, true) or 0
+end
+
 local function ItemEntryIsUnavailable(entry)
     if not entry then return false end
     if entry.kind == "item_inventory" then
-        return (C_Item.GetItemCount(entry.itemID, false, true) or 0) <= 0
+        return GetInventoryItemTotalCount(entry) <= 0
     end
     if entry.kind == "trinket_slot" then
         local id = GetInventoryItemID("player", entry.slot)
@@ -544,6 +554,10 @@ local Utils = VFlow.Utils
 -- 前向引用：OnCooldownDone 里需同步灰度/swipe（CD 自然结束时未必触发 SPELL_UPDATE_COOLDOWNS）
 local ApplyEntryCooldown
 
+local function EntryInCombatItemLockout(entry)
+    return entry and entry.spellID and _itemCombatLockoutSpells[entry.spellID]
+end
+
 local function ApplyItemZeroCountPresentation(frame, entry, cfg)
     if not frame then return end
     local mode = (cfg and cfg.itemZeroCountBehavior) or "gray"
@@ -551,21 +565,21 @@ local function ApplyItemZeroCountPresentation(frame, entry, cfg)
         frame:Show()
         return
     end
-    local bad = ItemEntryIsUnavailable(entry)
+    local unavailable = ItemEntryIsUnavailable(entry)
+    local combatLock = EntryInCombatItemLockout(entry)
     local icon = frame.Icon
     local cd = frame.Cooldown
-    if not bad then
-        frame:Show()
-        return
-    end
-    if cd then cd:Clear() end
-    if mode == "hide" then
+    if unavailable and mode == "hide" then
+        if cd then cd:Clear() end
         frame:Hide()
         if icon and icon.SetDesaturation then icon:SetDesaturation(0) end
         return
     end
     frame:Show()
-    if icon and icon.SetDesaturation then icon:SetDesaturation(1) end
+    if unavailable or combatLock then
+        if cd then cd:Clear() end
+        if icon and icon.SetDesaturation then icon:SetDesaturation(1) end
+    end
 end
 
 local function CreateStandaloneIconFrame(container)
@@ -737,6 +751,23 @@ local function TryApplyItemCooldownById(cd, hostFrame, itemID)
     return false
 end
 
+local function TryApplyInventoryItemCooldown(cd, frame, entry)
+    if not entry then return false end
+    if TryApplyItemCooldownById(cd, frame, entry.itemID) then return true end
+    local configItemID = entry.configItemID
+    local IAD = VFlow.ItemAutoData
+    if configItemID and IAD and IAD.forEachManualItemVariant then
+        local applied = false
+        IAD.forEachManualItemVariant(configItemID, function(iid)
+            if not applied and iid ~= entry.itemID then
+                applied = TryApplyItemCooldownById(cd, frame, iid)
+            end
+        end)
+        if applied then return true end
+    end
+    return false
+end
+
 ApplyEntryCooldown = function(frame, entry)
     local cd = frame.Cooldown
     local iconTex = frame.Icon
@@ -753,7 +784,7 @@ ApplyEntryCooldown = function(frame, entry)
             TryApplyItemCooldownById(cd, frame, entry.itemID)
         end
     elseif entry.kind == "item_inventory" then
-        if not TryApplyItemCooldownById(cd, frame, entry.itemID) then
+        if not TryApplyInventoryItemCooldown(cd, frame, entry) then
             ApplySpellCooldownSwipe(cd, entry.spellID)
         end
     else
@@ -761,6 +792,26 @@ ApplyEntryCooldown = function(frame, entry)
     end
 
     SyncIconDesatFromCooldown(cd, iconTex)
+end
+
+local function ResolveItemStackDisplayCount(entry)
+    if not entry or (entry.kind ~= "trinket_slot" and entry.kind ~= "item_inventory") then
+        return nil
+    end
+    local total = GetInventoryItemTotalCount(entry)
+    if total > 1 then return total end
+    if total == 1 then
+        local IAD = VFlow.ItemAutoData
+        if entry.configItemID and IAD and IAD.isManualItemCombatLockoutConfig
+            and IAD.isManualItemCombatLockoutConfig(entry.configItemID) then
+            return total
+        end
+        if entry.spellID and IAD and IAD.isManualItemCombatLockoutSpell
+            and IAD.isManualItemCombatLockoutSpell(entry.spellID) then
+            return total
+        end
+    end
+    return nil
 end
 
 local function UpdateItemStackDisplay(frame, entry, cfg)
@@ -771,14 +822,9 @@ local function UpdateItemStackDisplay(frame, entry, cfg)
         fs:Hide()
         return
     end
-    if not entry or (entry.kind ~= "trinket_slot" and entry.kind ~= "item_inventory") then
-        fs:SetText("")
-        fs:Hide()
-        return
-    end
-    local cnt = C_Item.GetItemCount(entry.itemID, false, true)
-    if cnt and cnt > 1 then
-        fs:SetText(tostring(cnt))
+    local displayCount = ResolveItemStackDisplayCount(entry)
+    if displayCount then
+        fs:SetText(tostring(displayCount))
         fs:Show()
     else
         fs:SetText("")
@@ -790,14 +836,9 @@ end
 local function UpdateAppendItemStackDisplay(frame, entry)
     if not frame or not frame.ChargeCount or not frame.ChargeCount.Current then return end
     local fs = frame.ChargeCount.Current
-    if not entry or (entry.kind ~= "trinket_slot" and entry.kind ~= "item_inventory") then
-        fs:SetText("")
-        fs:Hide()
-        return
-    end
-    local cnt = C_Item.GetItemCount(entry.itemID, false, true)
-    if cnt and cnt > 1 then
-        fs:SetText(tostring(cnt))
+    local displayCount = ResolveItemStackDisplayCount(entry)
+    if displayCount then
+        fs:SetText(tostring(displayCount))
         fs:Show()
     else
         fs:SetText("")
@@ -1387,14 +1428,30 @@ VFlow.on("SPELL_UPDATE_COOLDOWNS", "ItemGroups", function()
     end
 end)
 
-VFlow.on("UNIT_SPELLCAST_SUCCEEDED", "ItemGroups_ItemUse", function(_, unitTarget)
+VFlow.on("UNIT_SPELLCAST_SUCCEEDED", "ItemGroups_ItemUse", function(_, unitTarget, _, spellID)
     if unitTarget ~= "player" then return end
+    local IAD = VFlow.ItemAutoData
+    if spellID and IAD and IAD.isManualItemCombatLockoutSpell
+        and IAD.isManualItemCombatLockoutSpell(spellID) and InCombatLockdown() then
+        _itemCombatLockoutSpells[spellID] = true
+    end
     if VFlow.RefreshBus and VFlow.RefreshBus.request then
         VFlow.RefreshBus.request(VFlow.RefreshBus.SCOPES.SKILL_COOLDOWN, { allSkillViewers = true })
     else
         ScheduleStandaloneRefresh()
     end
 end, "player")
+
+VFlow.on("PLAYER_REGEN_ENABLED", "ItemGroups_CombatLockout", function()
+    if next(_itemCombatLockoutSpells) then
+        wipe(_itemCombatLockoutSpells)
+        if VFlow.RefreshBus and VFlow.RefreshBus.request then
+            VFlow.RefreshBus.request(VFlow.RefreshBus.SCOPES.SKILL_COOLDOWN, { allSkillViewers = true })
+        else
+            ScheduleStandaloneRefresh()
+        end
+    end
+end)
 
 VFlow.on("BAG_UPDATE_DELAYED", "ItemGroups_Bag", function()
     if VFlow.RefreshBus and VFlow.RefreshBus.request then
