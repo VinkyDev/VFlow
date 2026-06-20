@@ -11,7 +11,7 @@ local CA = {}
 -- 玩家框体
 -- =========================================================
 
-local PLAYER_FRAME_CANDIDATES = {dsadasdsasadsadawq edwsad a
+local PLAYER_FRAME_CANDIDATES = {
     "ElvUF_Player",
     "SUFUnitplayer",
     "UUF_Player",
