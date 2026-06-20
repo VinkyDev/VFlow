@@ -123,6 +123,12 @@ local function cloneStyleEntry(entry)
     if entry.overchargedBarColor then
         out.overchargedBarColor = copyColor(entry.overchargedBarColor)
     end
+    if entry.overflowBarColor then
+        out.overflowBarColor = copyColor(entry.overflowBarColor)
+    end
+    if entry.foldedFiveBar ~= nil then
+        out.foldedFiveBar = entry.foldedFiveBar == true
+    end
     applyThresholdFields(out, entry, false)
     return out
 end
@@ -140,6 +146,12 @@ local function baseEntry(barColor, opts)
     end
     if opts.overchargedBarColor then
         out.overchargedBarColor = copyColor(opts.overchargedBarColor)
+    end
+    if opts.overflowBarColor then
+        out.overflowBarColor = copyColor(opts.overflowBarColor)
+    end
+    if opts.foldedFiveBar ~= nil then
+        out.foldedFiveBar = opts.foldedFiveBar == true
     end
     applyThresholdFields(out, opts, false)
     return out
@@ -186,7 +198,11 @@ local DEFAULT_ENTRY = {
         thresholdColor2 = { r = 0.96, g = 0.34, b = 0.34, a = 1 },
     }),
     ICICLES = baseEntry({ r = 0.98, g = 1.00, b = 1.00, a = 1 }, { showText = false }),
-    MAELSTROM_WEAPON = baseEntry({ r = 0.18, g = 0.67, b = 0.96, a = 1 }, { showText = false }),
+    MAELSTROM_WEAPON = baseEntry({ r = 0.18, g = 0.67, b = 0.96, a = 1 }, {
+        showText = false,
+        foldedFiveBar = false,
+        overflowBarColor = { r = 1.0, g = 0.6, b = 0.2, a = 1 },
+    }),
     SOUL_FRAGMENTS_VENGEANCE = baseEntry({ r = 0.50, g = 0.25, b = 0.70, a = 1 }, { showText = false }),
     DEVOURER_SOUL = baseEntry({ r = 0.38, g = 0.40, b = 0.90, a = 1 }, { showText = false }),
     TIP_OF_THE_SPEAR = baseEntry({ r = 0.62, g = 0.85, b = 0.32, a = 1 }, { showText = false }),
@@ -221,6 +237,11 @@ local function buildResolvedStyle(defaults, entry)
     if overchargedBarColor then
         out.overchargedBarColor = copyColor(overchargedBarColor)
     end
+    local overflowBarColor = entry and entry.overflowBarColor or defaults.overflowBarColor
+    if overflowBarColor then
+        out.overflowBarColor = copyColor(overflowBarColor)
+    end
+    out.foldedFiveBar = resolveEntryFlag(entry, "foldedFiveBar", defaults.foldedFiveBar)
     applyThresholdFields(out, defaults, false)
     applyThresholdFields(out, entry, true)
     return out
@@ -474,6 +495,18 @@ end
 
 function RS.StyleKeyHasOverchargedColorOption(styleKey)
     return styleKey == "COMBO_POINTS"
+end
+
+function RS.StyleKeyHasFoldedFiveBarOption(styleKey)
+    return styleKey == "MAELSTROM_WEAPON"
+end
+
+function RS.UsesMaelstromWeaponFoldedFiveBar(style, realMax)
+    return style and style.foldedFiveBar == true and type(realMax) == "number" and realMax > 5
+end
+
+function RS.ResolveOverflowBarColor(style, baseColor)
+    return copyColor(style and style.overflowBarColor, baseColor or (style and style.barColor) or nil)
 end
 
 function RS.ResolveRechargeBarColor(entry, barColor)

@@ -337,7 +337,11 @@ local function GetSecondaryResourceValue(resource)
     if resource == "MAELSTROM_WEAPON" then
         local auraData = C_UnitAuras.GetPlayerAuraBySpellID(344179)
         local current = auraData and auraData.applications or 0
-        return 10, current
+        local maxStacks = 5
+        if C_SpellBook and C_SpellBook.IsSpellKnown(384143) then
+            maxStacks = 10
+        end
+        return maxStacks, current
     end
 
     if resource == "TIP_OF_THE_SPEAR" then
@@ -760,6 +764,37 @@ local function ClearSegmentUI(host)
     end
 end
 
+local function UsesMaelstromFoldedFiveBar(resource, style, realMax)
+    return RS and RS.UsesMaelstromWeaponFoldedFiveBar(style, realMax)
+        and resource == "MAELSTROM_WEAPON"
+end
+
+local function ResolveDiscreteSegmentMax(resource, style, realMax)
+    if UsesMaelstromFoldedFiveBar(resource, style, realMax) then
+        return 5
+    end
+    return realMax
+end
+
+local function StyleMaelstromFoldedSegment(segSb, gameSlot, cur, style, fillCol, useSmoothSeg)
+    local baseCol = style and style.barColor or fillCol
+    local overflowCol = RS and RS.ResolveOverflowBarColor(style, baseCol) or baseCol
+    local stacks = tonumber(cur) or 0
+    local litCount = stacks > 5 and 5 or stacks
+    local overflowCount = stacks > 5 and (stacks - 5) or 0
+    if gameSlot <= litCount then
+        ApplyBarProgressCached(segSb, 0, 1, 1, useSmoothSeg)
+        if overflowCount > 0 and gameSlot <= overflowCount then
+            ApplyStatusBarColorCached(segSb, overflowCol, 1, 1, 1, 1)
+        else
+            ApplyStatusBarColorCached(segSb, baseCol, 1, 1, 1, 1)
+        end
+    else
+        ApplyBarProgressCached(segSb, 0, 1, 0, useSmoothSeg)
+        ApplyStatusBarColorCached(segSb, baseCol, 1, 1, 1, 1)
+    end
+end
+
 --- @param skipLayout boolean|nil
 local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, style, skipLayout)
     local sb = host._vf_sb
@@ -768,18 +803,22 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
         return false
     end
 
-    local wantSeg = UsesDiscreteSegments(resource) and type(max) == "number" and max >= 2 and not CurTooOpaqueForDiscretePips(cur, resource)
+    local realMax = max
+    local displayMax = ResolveDiscreteSegmentMax(resource, style, realMax)
+    local foldedFive = UsesMaelstromFoldedFiveBar(resource, style, realMax)
+
+    local wantSeg = UsesDiscreteSegments(resource) and type(displayMax) == "number" and displayMax >= 2 and not CurTooOpaqueForDiscretePips(cur, resource)
     if not wantSeg then
         ClearSegmentUI(host)
         return false
     end
 
-    if host._vf_segLastMax ~= max or host._vf_segLastResource ~= resource then
+    if host._vf_segLastMax ~= displayMax or host._vf_segLastResource ~= resource then
         skipLayout = false
     end
 
     local fullLayout = (not skipLayout) or (not host._vf_segmentMode)
-    host._vf_segLastMax = max
+    host._vf_segLastMax = displayMax
     host._vf_segLastResource = resource
 
     if fullLayout then
@@ -800,21 +839,22 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
         local reverse = cfg.barReverse == true
         local texPath = BFK.ResolveBarTexture(cfg.barTexture)
 
-        for pos = 1, max do
+        for pos = 1, displayMax do
             GetOrCreateSegFrame(host, pos)
         end
-        BFK.LayoutDiscreteBarSegmentFrames(container, cfg, max, dir, host._vf_segFrames, host)
+        BFK.LayoutDiscreteBarSegmentFrames(container, cfg, displayMax, dir, host._vf_segFrames, host)
 
         local curInt = (not IsSecretNumber(cur)) and math.floor(tonumber(cur) or 0) or nil
-        local maxInt = (not IsSecretNumber(max)) and math.floor(tonumber(max) or 0) or nil
+        local maxInt = (not IsSecretNumber(displayMax)) and math.floor(tonumber(displayMax) or 0) or nil
         if RS.RuntimeUsesEssenceRechargeTicker(resource) and curInt and maxInt then
-            SyncEssenceRechargeClock(host, cur, max)
+            SyncEssenceRechargeClock(host, cur, realMax)
         end
         local runeOrder, runeFill
         if resource == E_PT.Runes and maxInt and maxInt > 0 then
             runeOrder, runeFill = BuildRuneSegmentState(maxInt)
         end
-        local fillCol = ResolveBarTierFillColor(resource, style, cur, max)
+        local fillCol = foldedFive and (style.barColor or { r = 0.18, g = 0.67, b = 0.96, a = 1 })
+            or ResolveBarTierFillColor(resource, style, cur, realMax)
         local rechargeCol = RS.ResolveRechargeColorForBase(style, fillCol)
         local readyCol = fillCol
         local useSmoothSeg = cfg and (cfg.smoothProgress == nil or cfg.smoothProgress == true)
@@ -840,12 +880,14 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
             end
             BFK.ApplySegmentCellBorder(segFrame._border, cfg)
 
-            local gameSlot = reverse and (max - pos + 1) or pos
-            local fill = (not isSecret) and ComputeDiscretePipFill(resource, host, gameSlot, cur, max, runeOrder, runeFill) or 0
+            local gameSlot = reverse and (displayMax - pos + 1) or pos
+            local fill = (not isSecret) and ComputeDiscretePipFill(resource, host, gameSlot, cur, realMax, runeOrder, runeFill) or 0
             local isCharged = chargedLookup and chargedLookup[gameSlot] and chargedColor
             segFrame._bg:SetColorTexture(0, 0, 0, 0)
             local didDual = false
-            if useOverchargedCombo then
+            if foldedFive then
+                StyleMaelstromFoldedSegment(segSb, gameSlot, cur, style, fillCol, useSmoothSeg)
+            elseif useOverchargedCombo then
                 if isCharged then
                     ApplyBarProgressCached(segSb, 0, 1, 1, useSmoothSeg)
                     if gameSlot <= comboCurrent then
@@ -866,22 +908,22 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
             elseif useDual then
                 didDual = SetDualColorForDiscreteSeg(segSb, resource, fill, gameSlot, cur, curInt, rechargeCol, readyCol)
             end
-            if not didDual and not isSecret then
+            if not didDual and not isSecret and not foldedFive then
                 if not isCharged and not useOverchargedCombo then
                     ApplyBarProgressCached(segSb, 0, 1, fill, useSmoothSeg)
-                    ApplyMainBarFillColor(segSb, resource, style, cur, max)
+                    ApplyMainBarFillColor(segSb, resource, style, cur, realMax)
                 end
-            elseif not isSecret then
+            elseif not isSecret and not foldedFive then
                 ApplyBarProgressCached(segSb, 0, 1, fill, useSmoothSeg)
             end
             segFrame:Show()
         end
 
-        for pos = 1, max do
+        for pos = 1, displayMax do
             StyleAndShowSegment(host._vf_segFrames[pos], pos)
         end
 
-        for i = max + 1, #(host._vf_segFrames or {}) do
+        for i = displayMax + 1, #(host._vf_segFrames or {}) do
             local f = host._vf_segFrames[i]
             if f then
                 f:Hide()
@@ -896,15 +938,16 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
     end
 
     local curInt = (not IsSecretNumber(cur)) and math.floor(tonumber(cur) or 0) or nil
-    local maxInt = (not IsSecretNumber(max)) and math.floor(tonumber(max) or 0) or nil
+    local maxInt = (not IsSecretNumber(displayMax)) and math.floor(tonumber(displayMax) or 0) or nil
     if RS.RuntimeUsesEssenceRechargeTicker(resource) and curInt and maxInt then
-        SyncEssenceRechargeClock(host, cur, max)
+        SyncEssenceRechargeClock(host, cur, realMax)
     end
     local runeOrder, runeFill
     if resource == E_PT.Runes and maxInt and maxInt > 0 then
         runeOrder, runeFill = BuildRuneSegmentState(maxInt)
     end
-    local fillCol = ResolveBarTierFillColor(resource, style, cur, max)
+    local fillCol = foldedFive and (style.barColor or { r = 0.18, g = 0.67, b = 0.96, a = 1 })
+        or ResolveBarTierFillColor(resource, style, cur, realMax)
     local rechargeCol = RS.ResolveRechargeColorForBase(style, fillCol)
     local readyCol = fillCol
     local useSmoothSeg = cfg and (cfg.smoothProgress == nil or cfg.smoothProgress == true)
@@ -918,15 +961,17 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
     local isSecret = IsSecretNumber(cur)
 
     local reverse = cfg.barReverse == true
-    for pos = 1, max do
+    for pos = 1, displayMax do
         local segFrame = host._vf_segFrames and host._vf_segFrames[pos]
         if segFrame and segFrame._sb then
-            local gameSlot = reverse and (max - pos + 1) or pos
-            local fill = (not isSecret) and ComputeDiscretePipFill(resource, host, gameSlot, cur, max, runeOrder, runeFill) or 0
+            local gameSlot = reverse and (displayMax - pos + 1) or pos
+            local fill = (not isSecret) and ComputeDiscretePipFill(resource, host, gameSlot, cur, realMax, runeOrder, runeFill) or 0
             local isCharged = chargedLookup and chargedLookup[gameSlot] and chargedColor
             segFrame._bg:SetColorTexture(0, 0, 0, 0)
             local didDual = false
-            if useOverchargedCombo then
+            if foldedFive then
+                StyleMaelstromFoldedSegment(segFrame._sb, gameSlot, cur, style, fillCol, useSmoothSeg)
+            elseif useOverchargedCombo then
                 if isCharged then
                     ApplyBarProgressCached(segFrame._sb, 0, 1, 1, useSmoothSeg)
                     if gameSlot <= comboCurrent then
@@ -947,12 +992,12 @@ local function UpdateDiscreteSegmentDisplay(host, cfg, db, resource, max, cur, s
             elseif useDual then
                 didDual = SetDualColorForDiscreteSeg(segFrame._sb, resource, fill, gameSlot, cur, curInt, rechargeCol, readyCol)
             end
-            if not didDual and not isSecret then
+            if not didDual and not isSecret and not foldedFive then
                 if not isCharged and not useOverchargedCombo then
                     ApplyBarProgressCached(segFrame._sb, 0, 1, fill, useSmoothSeg)
-                    ApplyMainBarFillColor(segFrame._sb, resource, style, cur, max)
+                    ApplyMainBarFillColor(segFrame._sb, resource, style, cur, realMax)
                 end
-            elseif not isSecret then
+            elseif not isSecret and not foldedFive then
                 ApplyBarProgressCached(segFrame._sb, 0, 1, fill, useSmoothSeg)
             end
         end

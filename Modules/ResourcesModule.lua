@@ -488,52 +488,7 @@ local function refreshResourceStylesLayout()
     end
 end
 
-local function appendResourceStyleDetailRows(layout, token)
-    local base = "resourceStyles." .. token
-    if RS.StyleKeyHasRechargeColorOption(token) then
-        layout[#layout + 1] = {
-            type = "checkbox",
-            key = base .. ".rechargeColorCustom",
-            label = L["Custom recharging color"],
-            cols = 12,
-        }
-        layout[#layout + 1] = {
-            type = "if",
-            dependsOn = base .. ".rechargeColorCustom",
-            condition = function(cfg)
-                local e = cfg.resourceStyles and cfg.resourceStyles[token]
-                return e and e.rechargeColorCustom == true
-            end,
-            children = {
-                {
-                    type = "colorPicker",
-                    key = base .. ".rechargeBarColor",
-                    label = L["Recharging state color"],
-                    hasAlpha = true,
-                    cols = 12,
-                },
-            },
-        }
-    end
-    if RS.StyleKeyHasOverchargedColorOption(token) then
-        layout[#layout + 1] = {
-            type = "colorPicker",
-            key = base .. ".overchargedBarColor",
-            label = L["Overcharged combo point color"],
-            hasAlpha = true,
-            cols = 12,
-        }
-    end
-
-    if token == "SOUL_FRAGMENTS_VENGEANCE" then
-        layout[#layout + 1] = {
-            type = "description",
-            text = L["Threshold colors unsupported"],
-            cols = 24,
-        }
-        return
-    end
-
+local function appendThresholdColorRows(layout, base, token)
     layout[#layout + 1] = {
         type = "checkbox",
         key = base .. ".thresholdColorsEnabled",
@@ -660,20 +615,144 @@ local function appendResourceStyleDetailRows(layout, token)
     }
 end
 
+local function appendMaelstromWeaponStyleRows(layout, base, options)
+    options = options or {}
+    local includeBarColor = options.includeBarColor == true
+    layout[#layout + 1] = {
+        type = "checkbox",
+        key = base .. ".foldedFiveBar",
+        label = L["Enhance 5-bar style (fold 10 stacks)"],
+        cols = 24,
+    }
+    layout[#layout + 1] = {
+        type = "if",
+        dependsOn = base .. ".foldedFiveBar",
+        condition = function(cfg)
+            local e = cfg.resourceStyles and cfg.resourceStyles.MAELSTROM_WEAPON
+            return e and e.foldedFiveBar == true
+        end,
+        children = (function()
+            local children = {}
+            if includeBarColor then
+                children[#children + 1] = {
+                    type = "colorPicker",
+                    key = base .. ".barColor",
+                    label = L["First 5 stacks color"],
+                    hasAlpha = true,
+                    cols = 12,
+                }
+            else
+                children[#children + 1] = {
+                    type = "description",
+                    text = L["First 5 stacks use bar color above"],
+                    cols = 24,
+                }
+            end
+            children[#children + 1] = {
+                type = "colorPicker",
+                key = base .. ".overflowBarColor",
+                label = L["Stacks 6-10 color"],
+                hasAlpha = true,
+                cols = 12,
+            }
+            return children
+        end)(),
+    }
+    layout[#layout + 1] = {
+        type = "if",
+        dependsOn = base .. ".foldedFiveBar",
+        condition = function(cfg)
+            local e = cfg.resourceStyles and cfg.resourceStyles.MAELSTROM_WEAPON
+            return not e or e.foldedFiveBar ~= true
+        end,
+        children = (function()
+            local children = {}
+            if includeBarColor then
+                children[#children + 1] = {
+                    type = "colorPicker",
+                    key = base .. ".barColor",
+                    label = CR.FormatResourceToken(L, "MAELSTROM_WEAPON"),
+                    hasAlpha = true,
+                    cols = 12,
+                }
+            end
+            appendThresholdColorRows(children, base, "MAELSTROM_WEAPON")
+            return children
+        end)(),
+    }
+end
+
+local function appendResourceStyleDetailRows(layout, token)
+    local base = "resourceStyles." .. token
+    if RS.StyleKeyHasRechargeColorOption(token) then
+        layout[#layout + 1] = {
+            type = "checkbox",
+            key = base .. ".rechargeColorCustom",
+            label = L["Custom recharging color"],
+            cols = 12,
+        }
+        layout[#layout + 1] = {
+            type = "if",
+            dependsOn = base .. ".rechargeColorCustom",
+            condition = function(cfg)
+                local e = cfg.resourceStyles and cfg.resourceStyles[token]
+                return e and e.rechargeColorCustom == true
+            end,
+            children = {
+                {
+                    type = "colorPicker",
+                    key = base .. ".rechargeBarColor",
+                    label = L["Recharging state color"],
+                    hasAlpha = true,
+                    cols = 12,
+                },
+            },
+        }
+    end
+    if RS.StyleKeyHasOverchargedColorOption(token) then
+        layout[#layout + 1] = {
+            type = "colorPicker",
+            key = base .. ".overchargedBarColor",
+            label = L["Overcharged combo point color"],
+            hasAlpha = true,
+            cols = 12,
+        }
+    end
+
+    if token == "SOUL_FRAGMENTS_VENGEANCE" then
+        layout[#layout + 1] = {
+            type = "description",
+            text = L["Threshold colors unsupported"],
+            cols = 24,
+        }
+        return
+    end
+
+    if token == "MAELSTROM_WEAPON" then
+        appendMaelstromWeaponStyleRows(layout, base, { includeBarColor = false })
+        return
+    end
+
+    appendThresholdColorRows(layout, base, token)
+end
+
 local function appendResourceStyleRows(layout, token, options)
     options = options or {}
     local isCurrentClass = options.isCurrentClass == true
     local base = "resourceStyles." .. token
     local expanded = isResourceStyleExpanded(token, isCurrentClass)
+    local skipTopBarColor = token == "MAELSTROM_WEAPON" and isCurrentClass
 
-    layout[#layout + 1] = {
-        type = "colorPicker",
-        key = base .. ".barColor",
-        label = CR.FormatResourceToken(L, token),
-        hasAlpha = true,
-        cols = 12,
-    }
-    layout[#layout + 1] = { type = "spacer", height = 1, cols = 24 }
+    if not skipTopBarColor then
+        layout[#layout + 1] = {
+            type = "colorPicker",
+            key = base .. ".barColor",
+            label = CR.FormatResourceToken(L, token),
+            hasAlpha = true,
+            cols = 12,
+        }
+        layout[#layout + 1] = { type = "spacer", height = 1, cols = 24 }
+    end
 
     if isCurrentClass then
         layout[#layout + 1] = {
@@ -688,7 +767,11 @@ local function appendResourceStyleRows(layout, token, options)
             label = L["Show as percent"],
             cols = 6,
         }
-        appendResourceStyleDetailRows(layout, token)
+        if token == "MAELSTROM_WEAPON" then
+            appendMaelstromWeaponStyleRows(layout, base, { includeBarColor = true })
+        else
+            appendResourceStyleDetailRows(layout, token)
+        end
     else
         layout[#layout + 1] = {
             type = "interactiveText",
@@ -714,7 +797,11 @@ local function appendResourceStyleRows(layout, token, options)
                 label = L["Show as percent"],
                 cols = 12,
             }
-            appendResourceStyleDetailRows(layout, token)
+            if token == "MAELSTROM_WEAPON" then
+                appendMaelstromWeaponStyleRows(layout, base, { includeBarColor = false })
+            else
+                appendResourceStyleDetailRows(layout, token)
+            end
         end
     end
 
