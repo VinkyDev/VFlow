@@ -364,13 +364,52 @@ local function GetSpellOnlyDesatCurve()
     return spellOnlyDesatCurve
 end
 
---- StyleIcon.hideIconGCD
-local function StyleIconWantsHideGcdSwipe()
+local function HideIconGcdEnabled()
     if not CORE_ENABLED then
         return false
     end
     local db = VFlow.Store and VFlow.Store.getModuleRef and VFlow.Store.getModuleRef("VFlow.StyleIcon")
     return db and db.hideIconGCD == true
+end
+
+local function IsAuraDurationIcon(button)
+    if not button then return false end
+    if button._vf_cdmKind == "buff" then return true end
+    if button.cooldownUseAuraDisplayTime then return true end
+    local p = button
+    for _ = 1, 18 do
+        if not p then break end
+        local n = p.GetName and p:GetName()
+        if type(n) == "string" then
+            if n == "BuffIconCooldownViewer" or n == "BuffBarCooldownViewer" then
+                return true
+            end
+            if n:match("^VFlow_BuffGroup_%d+$") then
+                return true
+            end
+        end
+        p = p.GetParent and p:GetParent()
+    end
+    return false
+end
+
+local function ShouldHideGcdSwipe(button, chargeRechargeActive)
+    if not HideIconGcdEnabled() or not button or chargeRechargeActive then
+        return false
+    end
+    if IsAuraDurationIcon(button) or IsVFItemAppendSkillSlot(button) then
+        return false
+    end
+    if type(button.HasVisualDataSource_Charges) == "function" and button:HasVisualDataSource_Charges() then
+        local spellID = GetButtonSpellIDForGcd(button)
+        if spellID and C_Spell and C_Spell.GetSpellChargeDuration then
+            local ok, chargeDur = pcall(C_Spell.GetSpellChargeDuration, spellID)
+            if ok and chargeDur ~= nil then
+                return false
+            end
+        end
+    end
+    return button.isOnGCD == true
 end
 
 local SPELL_ONLY_GCD_SPELL_ID = 61304
@@ -528,7 +567,7 @@ local function ApplySpellOnlyCooldownDisplay(button, state)
     end
 
     if not appliedSpellCd then
-        if wantGcdRing and not StyleIconWantsHideGcdSwipe() then
+        if wantGcdRing and not HideIconGcdEnabled() then
             local gcdInfoG
             pcall(function()
                 gcdInfoG = C_Spell.GetSpellCooldown(SPELL_ONLY_GCD_SPELL_ID)
@@ -599,31 +638,29 @@ RequestSpellOnlyCooldownRefresh = function(button)
     spellOnlyCooldownFlushFrame:Show()
 end
 
--- Blizzard 在增益驱动的 Refresh* 链路里仍会重写 Cooldown 的显示时间与遮罩色。
--- 这里保留极轻量 hook：不做任何 C_Spell 查询，只同步把颜色压回正确值，
--- 再合帧排一次完整 spell-only 刷新，避免出现 buffMask / cooldownMask 来回闪。
-local function EnsureSpellOnlyRefreshHooks(button)
-    if not button or button._vf_spellOnlyRefreshHooked or not hooksecurefunc then
+local function EnsureSpellOnlyDesatHook(button)
+    if not button or not button._vf_hideBuffCooldownOverlay then
         return
     end
-    button._vf_spellOnlyRefreshHooked = true
-
-    local function reconcileAfterSystemRefresh(self)
-        if not self
-            or not self._vf_hideBuffCooldownOverlay
-            or not IsSkillCooldownManagerIcon(self)
-            or IsVFItemAppendSkillSlot(self) then
+    local tex = button.Icon
+    if not tex or tex._vf_spellOnlyDesatHooked or not hooksecurefunc then
+        return
+    end
+    tex._vf_spellOnlyDesatHooked = true
+    local function onDesatChanged()
+        if button._vf_spellOnlyDesatApplying then
             return
         end
-        ApplyCooldownMaskSwipeNow(self, self._vf_spellOnlyChargeRechargeActive == true)
-        RequestSpellOnlyCooldownRefresh(self)
+        if not button._vf_hideBuffCooldownOverlay then
+            return
+        end
+        RequestSpellOnlyCooldownRefresh(button)
     end
-
-    if type(button.RefreshSpellCooldownInfo) == "function" then
-        hooksecurefunc(button, "RefreshSpellCooldownInfo", reconcileAfterSystemRefresh)
+    if tex.SetDesaturation then
+        hooksecurefunc(tex, "SetDesaturation", onDesatChanged)
     end
-    if type(button.RefreshCooldownInfo) == "function" then
-        hooksecurefunc(button, "RefreshCooldownInfo", reconcileAfterSystemRefresh)
+    if tex.SetDesaturated then
+        hooksecurefunc(tex, "SetDesaturated", onDesatChanged)
     end
 end
 
@@ -693,28 +730,64 @@ spellOnlyCooldownFlushFrame:SetScript("OnUpdate", function(self)
     end
 end)
 
+--- 是否正在以关联增益剩余时间驱动遮罩（与 ApplyCooldownMaskSwipeNow 一致）
+local function ButtonShowsAuraDisplayTime(button)
+    if not button then
+        return false
+    end
+    if button.cooldownUseAuraDisplayTime then
+        return true
+    end
+    -- 暴雪在 Refresh 链路里可能尚未同步 cooldownUseAuraDisplayTime；读 CDM 帧上的 swipe 色做轻量判定。
+    local sc = button.cooldownSwipeColor
+    if sc and type(sc) ~= "number" and sc.GetRGBA then
+        local ok, r = pcall(sc.GetRGBA, sc)
+        if ok and type(r) == "number" and (not issecretvalue or not issecretvalue(r)) then
+            return r ~= 0
+        end
+    end
+    return false
+end
+
+--- 按当前 CD 显示模式解析遮罩色（冷却 / 增益 / 充能恢复）
+local function ResolveCooldownMaskColor(button, chargeRechargeActive)
+    if not button then
+        return nil
+    end
+    if ShouldHideGcdSwipe(button, chargeRechargeActive) then
+        return { r = 0, g = 0, b = 0, a = 0 }
+    end
+    local hideBuff = button._vf_hideBuffCooldownOverlay and IsSkillCooldownManagerIcon(button)
+    if hideBuff and chargeRechargeActive then
+        return button._vf_chargeRechargeMaskColor or button._vf_cooldownMaskColor
+    end
+    if hideBuff then
+        return button._vf_cooldownMaskColor
+    end
+    if ButtonShowsAuraDisplayTime(button) and button._vf_buffMaskColor then
+        return button._vf_buffMaskColor
+    end
+    return button._vf_cooldownMaskColor
+end
+
+local function ApplyResolvedSwipeColor(cd, color)
+    if not cd or not cd.SetSwipeColor or type(color) ~= "table" then
+        return
+    end
+    cd._vf_reapplyingSwipeColor = true
+    cd:SetSwipeColor(color.r or 1, color.g or 1, color.b or 1, color.a or 1)
+    cd._vf_reapplyingSwipeColor = nil
+end
+
 --- 技能监视器上主 Cooldown 是否正在显示「充能恢复」扇形（与充能层数恢复中的 DurationObject 一致）
 ApplyCooldownMaskSwipeNow = function(self, state)
     local cd = self.Cooldown
     if not cd or not cd.SetSwipeColor then return end
-    local hideBuff = self._vf_hideBuffCooldownOverlay and IsSkillCooldownManagerIcon(self)
-    local color
-    if self._vf_hideBuffCooldownOverlay and IsSkillCooldownManagerIcon(self)
-        and state == true then
-        color = self._vf_chargeRechargeMaskColor or self._vf_cooldownMaskColor
-    elseif hideBuff then
-        color = self._vf_cooldownMaskColor
-    elseif self.cooldownUseAuraDisplayTime and self._vf_buffMaskColor then
-        color = self._vf_buffMaskColor
-    else
-        color = self._vf_cooldownMaskColor
-    end
-    if type(color) == "table" then
-        cd:SetSwipeColor(color.r or 1, color.g or 1, color.b or 1, color.a or 1)
-    end
+    ApplyResolvedSwipeColor(cd, ResolveCooldownMaskColor(self, state == true))
 end
 
-local function EnsureBuffCooldownSwipeColorHook(button)
+--- hook SetSwipeColor：暴雪重写颜色后立即压回自定义值
+local function EnsureCooldownSwipeColorHook(button)
     local cd = button and button.Cooldown
     if not cd or cd._vf_swipeColorHooked or not hooksecurefunc or not cd.SetSwipeColor then
         return
@@ -726,22 +799,19 @@ local function EnsureBuffCooldownSwipeColorHook(button)
             return
         end
 
-        local parent = button
-        if not parent or parent._vf_hideBuffCooldownOverlay then
+        local parent = self:GetParent()
+        if not parent then
             return
         end
-        if parent._vf_cdmKind ~= "buff" then
-            return
-        end
-
-        local color = parent._vf_cooldownMaskColor
-        if type(color) ~= "table" then
-            return
+        if not parent._vf_cooldownMaskColor and not parent._vf_buffMaskColor then
+            if not HideIconGcdEnabled() or IsAuraDurationIcon(parent) or IsVFItemAppendSkillSlot(parent) then
+                return
+            end
         end
 
-        self._vf_reapplyingSwipeColor = true
-        self:SetSwipeColor(color.r or 1, color.g or 1, color.b or 1, color.a or 1)
-        self._vf_reapplyingSwipeColor = nil
+        local chargeRechargeActive = parent._vf_spellOnlyChargeRechargeActive == true
+        local color = ResolveCooldownMaskColor(parent, chargeRechargeActive)
+        ApplyResolvedSwipeColor(self, color)
     end)
 end
 
@@ -762,7 +832,7 @@ end
 function StyleApply.ApplyAuraSwipeColor(button, groupCfg)
     if not button or not groupCfg then return end
 
-    EnsureBuffCooldownSwipeColorHook(button)
+    EnsureCooldownSwipeColorHook(button)
     button._vf_buffMaskColor = groupCfg.buffMaskColor
     button._vf_cooldownMaskColor = groupCfg.cooldownMaskColor
     button._vf_chargeRechargeMaskColor = groupCfg.chargeRechargeMaskColor
@@ -770,7 +840,7 @@ function StyleApply.ApplyAuraSwipeColor(button, groupCfg)
 
     if button._vf_hideBuffCooldownOverlay then
         EnsureSpellOnlyLifecycleHooks(button)
-        EnsureSpellOnlyRefreshHooks(button)
+        EnsureSpellOnlyDesatHook(button)
         SyncSpellOnlyCooldownWatcher(button)
     else
         pendingSpellOnlyButtons[button] = nil
@@ -820,6 +890,10 @@ function StyleApply.ApplyButtonStyle(button, cfg)
     if cfg.buffMaskColor or cfg.cooldownMaskColor or cfg.chargeRechargeMaskColor then
         StyleApply.ApplyAuraSwipeColor(button, cfg)
         OnCooldownMaskDriverRefresh(button)
+    elseif HideIconGcdEnabled()
+        and IsSkillCooldownManagerIcon(button)
+        and not IsVFItemAppendSkillSlot(button) then
+        EnsureCooldownSwipeColorHook(button)
     end
 
     -- 全局美化
@@ -905,7 +979,8 @@ local function ApplyIconZoom(button, groupCfg)
         end
     end
 
-    if cd.SetSwipeColor then
+    -- 遮罩色由 EnsureCooldownSwipeColorHook 接管，避免与 buff/cooldown 双色逻辑冲突
+    if cd.SetSwipeColor and not cd._vf_swipeColorHooked then
         local r, g, b, a = GetMaskColorForButton(groupCfg)
         if button._vf_swR ~= r or button._vf_swG ~= g or button._vf_swB ~= b or button._vf_swA ~= a then
             cd:SetSwipeColor(r, g, b, a)
@@ -1024,104 +1099,6 @@ local function ApplyBorder(button)
     b:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", anchorOffsetX, -anchorOffsetY)
 end
 
--- GCD 转圈隐藏：仅剥 isOnGCD；充能恢复中 GetSpellChargeDuration 有值时不剥（避免误伤充能圈）
-local pendingHideGcdButtons = {}
-local hideGcdFlushFrame = CreateFrame("Frame")
-hideGcdFlushFrame:Hide()
-
-local function HideIconGcdOptionEnabled()
-    if not CORE_ENABLED then
-        return false
-    end
-    local db = VFlow.Store and VFlow.Store.getModuleRef and VFlow.Store.getModuleRef("VFlow.StyleIcon")
-    return db and db.hideIconGCD == true
-end
-
---- BUFF / 光环类 CD 不按GCD隐藏遮罩层
-local function IsBuffAuraDurationCooldownIcon(button)
-    if not button then return false end
-    if button._vf_cdmKind == "buff" then return true end
-    if button.cooldownUseAuraDisplayTime then return true end
-    local p = button
-    for _ = 1, 18 do
-        if not p then break end
-        local n = p.GetName and p:GetName()
-        if type(n) == "string" then
-            if n == "BuffIconCooldownViewer" or n == "BuffBarCooldownViewer" then
-                return true
-            end
-            if n:match("^VFlow_BuffGroup_%d+$") then
-                return true
-            end
-        end
-        p = p.GetParent and p:GetParent()
-    end
-    return false
-end
-
-local function ApplyHideGcdSwipeIfNeeded(button)
-    if not HideIconGcdOptionEnabled() or not button then return end
-    if IsBuffAuraDurationCooldownIcon(button) then return end
-    local cd = button.Cooldown
-    if not cd or not cd.IsShown or not cd:IsShown() then return end
-    local spellID = GetButtonSpellIDForGcd(button)
-    if not spellID then return end
-    if C_Spell and C_Spell.GetSpellChargeDuration then
-        local okCh, chargeDur = pcall(function()
-            return C_Spell.GetSpellChargeDuration(spellID)
-        end)
-        if okCh and chargeDur ~= nil then return end
-    end
-    local ok, cooldown = pcall(function()
-        return C_Spell.GetSpellCooldown(spellID)
-    end)
-    if not ok or type(cooldown) ~= "table" or not cooldown.isOnGCD then return end
-    if button.CooldownFlash and button.CooldownFlash:IsShown() then return end
-    if cd.SetCooldownFromDurationObject and C_DurationUtil and C_DurationUtil.CreateDuration then
-        cd:SetCooldownFromDurationObject(C_DurationUtil.CreateDuration())
-    elseif cd.Clear then
-        pcall(function()
-            cd:Clear()
-        end)
-    end
-end
-
-local function QueueHideGcdSwipeApply(button)
-    if not button then return end
-    pendingHideGcdButtons[button] = true
-    hideGcdFlushFrame:Show()
-end
-
-hideGcdFlushFrame:SetScript("OnUpdate", function(self)
-    self:Hide()
-    local batch = pendingHideGcdButtons
-    pendingHideGcdButtons = {}
-    for b in pairs(batch) do
-        if b and b.Icon then
-            ApplyHideGcdSwipeIfNeeded(b)
-        end
-    end
-end)
-
-local function EnsureHideGcdCooldownHooks(button)
-    if not button or button._vf_hook_hide_gcd_cd or not hooksecurefunc then return end
-    local cd = button.Cooldown
-    if not cd then return end
-    button._vf_hook_hide_gcd_cd = true
-    if cd.SetCooldown then
-        hooksecurefunc(cd, "SetCooldown", function()
-            QueueHideGcdSwipeApply(button)
-        end)
-    end
-    if cd.SetCooldownFromDurationObject then
-        hooksecurefunc(cd, "SetCooldownFromDurationObject", function()
-            QueueHideGcdSwipeApply(button)
-        end)
-    end
-end
-
--- 视觉隐藏（DebuffBorder / PandemicIcon / CooldownFlash）
--- hook 回调直接读 styleCache，不再调用 GetBeautifyConfig()
 local function SetupVisualHideHooks(button)
     if button.DebuffBorder and not button._vf_hook_debuff then
         hooksecurefunc(button.DebuffBorder, "Show", function(self)
@@ -1165,7 +1142,6 @@ end
 
 local function ApplyVisualHides(button)
     SetupVisualHideHooks(button)
-    EnsureHideGcdCooldownHooks(button)
 
     if button.DebuffBorder and styleCache.hideDebuffBorder then
         button.DebuffBorder:Hide()
@@ -1186,12 +1162,6 @@ function StyleApply.ApplyViewerItemVisualHides(itemFrame)
     if icon and icon ~= itemFrame then
         ApplyVisualHides(icon)
     end
-    if styleCache.hideIconGCD then
-        QueueHideGcdSwipeApply(itemFrame)
-        if icon and icon ~= itemFrame then
-            QueueHideGcdSwipeApply(icon)
-        end
-    end
 end
 
 -- =========================================================
@@ -1208,9 +1178,6 @@ function StyleApply.ApplyBeautify(button, groupCfg)
     ApplyOverlayHides(button)
     ApplyBorder(button)
     ApplyVisualHides(button)
-    if styleCache.hideIconGCD then
-        QueueHideGcdSwipeApply(button)
-    end
 end
 
 -- =========================================================

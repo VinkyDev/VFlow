@@ -109,9 +109,11 @@ function SkillStylePass.Apply(context)
 
     local hasLayoutResults = context.viewerLayoutResults and #context.viewerLayoutResults > 0
     for _, layoutResult in ipairs(context.viewerLayoutResults or {}) do
-        for _, row in ipairs(layoutResult.rowCells or {}) do
-            for _, cell in ipairs(row) do
-                applyFrameStyle(cell.frame, layoutResult.cfg, cell.isItem == true, cell.entry)
+        if layoutResult.iconsChanged ~= false then
+            for _, row in ipairs(layoutResult.rowCells or {}) do
+                for _, cell in ipairs(row) do
+                    applyFrameStyle(cell.frame, layoutResult.cfg, cell.isItem == true, cell.entry)
+                end
             end
         end
     end

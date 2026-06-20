@@ -69,7 +69,10 @@ function SkillLayoutPass.LayoutViewer(viewModel)
     end
 
     local rowCells = viewModel.rowCells or {}
-    if not viewModel.hasItemCells then
+    local iconsChanged = StyleLayout.IconSetChanged(viewer, mainVisible)
+    result.iconsChanged = iconsChanged
+
+    if not viewModel.hasItemCells and iconsChanged then
         for _, icon in ipairs(mainVisible) do
             if not icon._vf_itemAppendFrame then
                 if icon._vf_skillGroupOwner ~= nil then
@@ -288,6 +291,9 @@ function SkillLayoutPass.LayoutViewer(viewModel)
         tostring(maxRowWidth),
         tostring(viewer:GetHeight() or 0),
     }, ":")
+    if iconsChanged then
+        StyleLayout.SaveIconSetSnapshot(viewer, mainVisible)
+    end
 
     return result
 end

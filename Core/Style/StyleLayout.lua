@@ -39,6 +39,11 @@ function StyleLayout.InvalidateCollectIconsCache(viewer)
     viewer._vf_sl_icons = nil
     viewer._vf_sl_cn = nil
     viewer._vf_sl_pn = nil
+    viewer._vf_iconSetRefs = nil
+    viewer._vf_iconSetCount = nil
+    viewer._vf_groupSetRefs = nil
+    viewer._vf_groupSetCount = nil
+    viewer._vf_groupDynSnap = nil
 end
 
 --- CooldownViewer 帧上 cooldownID → info 的轻量缓存（分类/高亮链路同一帧内会多次读）
@@ -72,8 +77,42 @@ end
 -- SECTION 2: 工具函数
 -- =========================================================
 
--- 缓存SetPoint，只在值变化时调用
+function StyleLayout.StampLayoutAnchor(frame, point, relativeTo, relativePoint, x, y)
+    if not frame then return end
+    frame._vf_layoutAnchor = { point, relativeTo, relativePoint or point, x, y }
+end
+
+function StyleLayout.ClearLayoutAnchor(frame)
+    if not frame then return end
+    frame._vf_layoutAnchor = nil
+end
+
+function StyleLayout.EnsureLayoutAnchorHook(frame)
+    if not frame or frame._vf_layoutAnchorHooked or not hooksecurefunc then
+        return
+    end
+    frame._vf_layoutAnchorHooked = true
+    hooksecurefunc(frame, "SetPoint", function(self, _, relativeTo)
+        if self._vf_layoutAnchorApplying then
+            return
+        end
+        local anchor = self._vf_layoutAnchor
+        if not anchor then
+            return
+        end
+        if relativeTo == anchor[2] then
+            return
+        end
+        self._vf_layoutAnchorApplying = true
+        self:ClearAllPoints()
+        self:SetPoint(anchor[1], anchor[2], anchor[3], anchor[4], anchor[5])
+        self._vf_layoutAnchorApplying = nil
+    end)
+end
+
 function StyleLayout.SetPointCached(frame, point, relativeTo, relativePoint, x, y)
+    StyleLayout.StampLayoutAnchor(frame, point, relativeTo, relativePoint, x, y)
+    StyleLayout.EnsureLayoutAnchorHook(frame)
     if frame:GetNumPoints() == 1 then
         local p, rel, relP, cx, cy = frame:GetPoint(1)
         if p == point and rel == relativeTo and relP == relativePoint
@@ -82,7 +121,9 @@ function StyleLayout.SetPointCached(frame, point, relativeTo, relativePoint, x, 
         end
     end
     frame:ClearAllPoints()
+    frame._vf_layoutAnchorApplying = true
     frame:SetPoint(point, relativeTo, relativePoint, x, y)
+    frame._vf_layoutAnchorApplying = nil
 end
 
 -- 收集viewer下所有图标帧（轻量缓存：仅子级数 + 池活动数；排序在池成员不变时复用）
@@ -121,6 +162,117 @@ function StyleLayout.CollectIcons(viewer)
     viewer._vf_sl_cn = childN
     viewer._vf_sl_pn = poolN
     return icons
+end
+
+function StyleLayout.IconSetChanged(viewer, icons)
+    if not viewer then
+        return true
+    end
+    local count = icons and #icons or 0
+    if viewer._vf_iconSetCount ~= count then
+        return true
+    end
+    local prev = viewer._vf_iconSetRefs
+    if not prev then
+        return true
+    end
+    for i = 1, count do
+        if prev[i] ~= icons[i] then
+            return true
+        end
+    end
+    return false
+end
+
+function StyleLayout.SaveIconSetSnapshot(viewer, icons)
+    if not viewer then
+        return
+    end
+    local refs = viewer._vf_iconSetRefs
+    if not refs then
+        refs = {}
+        viewer._vf_iconSetRefs = refs
+    end
+    local count = icons and #icons or 0
+    for i = 1, count do
+        refs[i] = icons[i]
+    end
+    for i = count + 1, #refs do
+        refs[i] = nil
+    end
+    viewer._vf_iconSetCount = count
+end
+
+local function FlattenGroupBuckets(viewer, groupBuckets)
+    local refs = viewer._vf_groupFlattenWork
+    if not refs then
+        refs = {}
+        viewer._vf_groupFlattenWork = refs
+    else
+        wipe(refs)
+    end
+    if not groupBuckets then
+        return refs
+    end
+    local indices = viewer._vf_groupIdxWork
+    if not indices then
+        indices = {}
+        viewer._vf_groupIdxWork = indices
+    else
+        wipe(indices)
+    end
+    for groupIdx in pairs(groupBuckets) do
+        indices[#indices + 1] = groupIdx
+    end
+    table.sort(indices)
+    for _, groupIdx in ipairs(indices) do
+        local bucket = groupBuckets[groupIdx]
+        for i = 1, #bucket do
+            refs[#refs + 1] = bucket[i]
+        end
+    end
+    return refs
+end
+
+function StyleLayout.GroupBucketsChanged(viewer, groupBuckets)
+    if not viewer then
+        return true
+    end
+    local flat = FlattenGroupBuckets(viewer, groupBuckets)
+    local count = #flat
+    if viewer._vf_groupSetCount ~= count then
+        return true
+    end
+    local prev = viewer._vf_groupSetRefs
+    if not prev then
+        return true
+    end
+    for i = 1, count do
+        if prev[i] ~= flat[i] then
+            return true
+        end
+    end
+    return false
+end
+
+function StyleLayout.SaveGroupBucketsSnapshot(viewer, groupBuckets)
+    if not viewer then
+        return
+    end
+    local flat = FlattenGroupBuckets(viewer, groupBuckets)
+    local refs = viewer._vf_groupSetRefs
+    if not refs then
+        refs = {}
+        viewer._vf_groupSetRefs = refs
+    end
+    local count = #flat
+    for i = 1, count do
+        refs[i] = flat[i]
+    end
+    for i = count + 1, #refs do
+        refs[i] = nil
+    end
+    viewer._vf_groupSetCount = count
 end
 
 -- 过滤可见图标
