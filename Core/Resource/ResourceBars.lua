@@ -291,9 +291,18 @@ local function GetSecondaryResourceValue(resource)
     end
 
     if resource == "SOUL_FRAGMENTS" or resource == "DEVOURER_SOUL" then
-        local auraData = C_UnitAuras.GetPlayerAuraBySpellID(1225789) or C_UnitAuras.GetPlayerAuraBySpellID(1227702)
+        -- 噬灭：虚空变身(1217607) 用 1227702、上限 40；常态用 1225789、上限 50（天赋 1247534 为 35）
+        local inMeta = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID(1217607)
+        local auraData
+        local max
+        if inMeta then
+            auraData = C_UnitAuras.GetPlayerAuraBySpellID(1227702)
+            max = 40
+        else
+            auraData = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID(1225789)
+            max = (C_SpellBook and C_SpellBook.IsSpellKnown(1247534)) and 35 or 50
+        end
         local current = auraData and auraData.applications or 0
-        local max = (C_SpellBook and C_SpellBook.IsSpellKnown(1247534)) and 35 or 50
         return max, current
     end
 
