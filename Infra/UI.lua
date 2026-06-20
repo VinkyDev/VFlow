@@ -507,6 +507,9 @@ function UI.button(parent, text, onClick)
     return btn
 end
 
+local CHECKBOX_LABEL_X_GAP = 8
+local CHECKBOX_LABEL_Y_OFFSET = -2
+
 --- 创建复选框
 -- @param parent Frame 父帧
 -- @param label string 标签文本
@@ -521,7 +524,16 @@ function UI.checkbox(parent, label, value, onChange, options)
     options = options or {}
     if options.compact then
         container:SetHeight(24)
+    else
+        container:SetHeight(40)
     end
+
+    container.checkbox:ClearAllPoints()
+    container.checkbox:SetPoint("LEFT", container, "LEFT", 0, 0)
+    container.label:ClearAllPoints()
+    container.label:SetPoint("LEFT", container.checkbox, "RIGHT", CHECKBOX_LABEL_X_GAP, CHECKBOX_LABEL_Y_OFFSET)
+    container.label:SetJustifyH("LEFT")
+    container.label:SetJustifyV("MIDDLE")
 
     -- 设置标签
     container.label:SetText(label or "")

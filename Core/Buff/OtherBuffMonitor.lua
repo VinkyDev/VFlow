@@ -35,6 +35,18 @@ local _activeScanTimer = nil
 -- 被动池：SPELL_UPDATE_COOLDOWN，支持层数
 local _passiveIconPool = {}
 
+-- 嗜血监控：通过疲弱 debuff 确认触发，固定 40 秒倒计时
+local BLOODLUST_DISPLAY_SPELL_ID = 2825
+local BLOODLUST_ICON_PRESET_SPELL_IDS = { 2825, 32182, 80353, 90355 }
+local BLOODLUST_DISPLAY_DURATION = 40
+local BLOODLUST_FALLBACK_ICON = 132313
+local EXHAUSTION_IDS = { 57723, 57724, 80354, 95809, 160455, 207400, 264689, 390435 }
+local EXHAUSTION_DURATION = 600
+local EXHAUSTION_FRESH_WINDOW = 5
+local _bloodlustPoolData = nil
+local _bloodlustReady = false
+local _lastExhaustionExpiration = 0
+
 -- =========================================================
 -- SECTION 3: 持续时间解析
 -- =========================================================
@@ -333,6 +345,148 @@ local function ActivateActiveIcon(spellID)
     RefreshLayout()
 end
 
+local function ResolveBloodlustMonitorIcon(config)
+    config = config or {}
+    if config.bloodlustUseCustomIcon then
+        local customID = tonumber(config.bloodlustCustomIconID)
+        if customID and customID > 0 then
+            return customID
+        end
+    end
+
+    local preset = config.bloodlustIconPreset or BLOODLUST_DISPLAY_SPELL_ID
+    local spellInfo = C_Spell.GetSpellInfo(preset)
+    if spellInfo and spellInfo.iconID then
+        return spellInfo.iconID
+    end
+    return BLOODLUST_FALLBACK_ICON
+end
+
+local function GetBloodlustMonitorIcon(config)
+    local db = getBuffsDB()
+    return ResolveBloodlustMonitorIcon(db and db.trinketPotion or config)
+end
+
+local function UpdateBloodlustPoolIcon(config)
+    if not _bloodlustPoolData or not config then return end
+    _bloodlustPoolData.icon = ResolveBloodlustMonitorIcon(config)
+    if _bloodlustPoolData.frame and _bloodlustPoolData.icon then
+        _bloodlustPoolData.frame.icon:SetTexture(_bloodlustPoolData.icon)
+    end
+end
+
+local function GetBloodlustMonitorName()
+    local spellInfo = C_Spell.GetSpellInfo(BLOODLUST_DISPLAY_SPELL_ID)
+    if spellInfo and spellInfo.name then
+        return spellInfo.name
+    end
+    return L["Monitor bloodlust"]
+end
+
+local function ClearBloodlustRuntimeState()
+    if not _bloodlustPoolData then return end
+    local frame = _bloodlustPoolData.frame
+    if frame and frame.hideTimer then
+        frame.hideTimer:Cancel()
+        frame.hideTimer = nil
+    end
+    if frame then
+        if frame.cooldown and frame.cooldown.Clear then
+            frame.cooldown:Clear()
+        end
+        frame:Hide()
+    end
+end
+
+local function ActivateBloodlustIcon()
+    if not _bloodlustPoolData then return end
+
+    local frame = _bloodlustPoolData.frame
+    local duration = _bloodlustPoolData.duration
+    if not frame or not duration then return end
+
+    if _bloodlustPoolData.icon then
+        frame.icon:SetTexture(_bloodlustPoolData.icon)
+    end
+
+    if not (Utils and Utils.setCooldownFromStartAndDuration(frame.cooldown, frame, GetTime(), duration)) then
+        if frame.cooldown and frame.cooldown.Clear then
+            frame.cooldown:Clear()
+        end
+    end
+    frame:Show()
+
+    if frame.hideTimer then
+        frame.hideTimer:Cancel()
+        frame.hideTimer = nil
+    end
+
+    frame.hideTimer = C_Timer.NewTimer(duration, function()
+        frame:Hide()
+        frame.hideTimer = nil
+        RefreshLayout()
+    end)
+    RefreshLayout()
+end
+
+local function CheckExhaustionFresh()
+    local UnitAuras = _G.C_UnitAuras
+    if not UnitAuras or type(UnitAuras.GetPlayerAuraBySpellID) ~= "function" then
+        return false, nil
+    end
+
+    local now = GetTime()
+    for _, id in ipairs(EXHAUSTION_IDS) do
+        local aura = UnitAuras.GetPlayerAuraBySpellID(id)
+        if aura and aura.expirationTime then
+            local remaining = aura.expirationTime - now
+            if remaining >= (EXHAUSTION_DURATION - EXHAUSTION_FRESH_WINDOW) then
+                return true, aura.expirationTime
+            end
+        end
+    end
+    return false, nil
+end
+
+local function CheckBloodlustTrigger()
+    if not _bloodlustReady or not _bloodlustPoolData then return end
+
+    local fresh, expirationTime = CheckExhaustionFresh()
+    if not fresh or not expirationTime then return end
+    if expirationTime == _lastExhaustionExpiration then return end
+
+    _lastExhaustionExpiration = expirationTime
+    ActivateBloodlustIcon()
+end
+
+local function SetupBloodlustPool(enabled)
+    if not enabled then
+        ClearBloodlustRuntimeState()
+        if _bloodlustPoolData and _bloodlustPoolData.frame then
+            _bloodlustPoolData.frame:SetParent(nil)
+        end
+        _bloodlustPoolData = nil
+        RefreshLayout()
+        return
+    end
+
+    InitContainer()
+    if not _bloodlustPoolData then
+        _bloodlustPoolData = {}
+    end
+    if not _bloodlustPoolData.frame then
+        _bloodlustPoolData.frame = CreateIconFrame()
+    end
+    local db = getBuffsDB()
+    local config = db and db.trinketPotion or {}
+    _bloodlustPoolData.icon = ResolveBloodlustMonitorIcon(config)
+    _bloodlustPoolData.duration = BLOODLUST_DISPLAY_DURATION
+    if _bloodlustPoolData.frame and _bloodlustPoolData.icon then
+        _bloodlustPoolData.frame.icon:SetTexture(_bloodlustPoolData.icon)
+    end
+    RefreshLayout()
+end
+
 local function TriggerSimple(spellID, poolData)
     local frame = poolData.frame
     local duration = poolData.duration
@@ -426,6 +580,10 @@ local function ScanActiveItems()
         return 0
     end
     local config = db.trinketPotion
+
+    if VFlow.OtherBuffManualOrder and VFlow.OtherBuffManualOrder.Ensure then
+        VFlow.OtherBuffManualOrder.Ensure(config)
+    end
 
     local oldPool = _activeIconPool
     _activeIconPool = {}
@@ -540,6 +698,7 @@ local function ScanActiveItems()
     end
 
     RefreshLayout()
+    SetupBloodlustPool(config.monitorBloodlust == true)
     return unloadedCount
 end
 
@@ -631,30 +790,194 @@ local function IsPassiveEntryVisible(poolData)
     return poolData.active == true
 end
 
+local function IsBloodlustEntryVisible(poolData)
+    return poolData and poolData.frame and poolData.frame.hideTimer ~= nil
+end
+
 local function IsActiveEntryVisible(poolData)
     return poolData.frame and poolData.frame.hideTimer ~= nil
 end
 
+local function ResolveTimedPoolEntry(config, e)
+    if not e or type(e.t) ~= "string" then
+        return nil
+    end
+
+    if e.t == "bloodlust" then
+        if config.monitorBloodlust and _bloodlustPoolData and _bloodlustPoolData.frame then
+            return { pool = "bloodlust", spellID = 0, poolData = _bloodlustPoolData }
+        end
+        return nil
+    end
+
+    if e.t == "trinket_slot" then
+        if not config.autoTrinkets then
+            return nil
+        end
+        local itemID = GetInventoryItemID("player", e.slot)
+        if not itemID then
+            return nil
+        end
+        local itemData = GetItemMonitorInfo(itemID)
+        if not itemData or not _activeIconPool[itemData.spellID] then
+            return nil
+        end
+        return {
+            pool = "active",
+            spellID = itemData.spellID,
+            poolData = _activeIconPool[itemData.spellID],
+        }
+    end
+
+    if e.t == "item" then
+        local itemData = GetItemMonitorInfo(e.id)
+        if not itemData or not _activeIconPool[itemData.spellID] then
+            return nil
+        end
+        return {
+            pool = "active",
+            spellID = itemData.spellID,
+            poolData = _activeIconPool[itemData.spellID],
+        }
+    end
+
+    if e.t == "spell" then
+        local poolData = _activeIconPool[e.id]
+        if not poolData then
+            return nil
+        end
+        return { pool = "active", spellID = e.id, poolData = poolData }
+    end
+
+    return nil
+end
+
+local function BuildTimedEntryListItem(config, e, idx)
+    if not e or type(e.t) ~= "string" then
+        return nil
+    end
+
+    if e.t == "bloodlust" then
+        if not config.monitorBloodlust then
+            return nil
+        end
+        return {
+            name = GetBloodlustMonitorName(),
+            icon = ResolveBloodlustMonitorIcon(config),
+            duration = BLOODLUST_DISPLAY_DURATION,
+            isAuto = true,
+            entryType = "bloodlust",
+            orderIndex = idx,
+        }
+    end
+
+    if e.t == "trinket_slot" then
+        if not config.autoTrinkets then
+            return nil
+        end
+        local itemID = GetInventoryItemID("player", e.slot)
+        if not itemID then
+            return nil
+        end
+        local itemData = GetItemMonitorInfo(itemID)
+        if not itemData then
+            return nil
+        end
+        local itemName, _, _, _, _, _, _, _, _, itemIcon = C_Item.GetItemInfo(itemID)
+        return {
+            itemID = itemID,
+            spellID = itemData.spellID,
+            name = itemName or string.format(L["Item %s"], itemID),
+            icon = itemIcon or itemData.icon or 134400,
+            duration = itemData.duration or config.itemDurations[itemID] or 0,
+            isAuto = true,
+            entryType = "item",
+            orderIndex = idx,
+        }
+    end
+
+    if e.t == "item" then
+        if not config.itemIDs[e.id] then
+            return nil
+        end
+        local itemData = GetItemMonitorInfo(e.id)
+        local itemName, _, _, _, _, _, _, _, _, itemIcon = C_Item.GetItemInfo(e.id)
+        local duration = (itemData and itemData.duration) or config.itemDurations[e.id] or 0
+        return {
+            itemID = e.id,
+            spellID = itemData and itemData.spellID,
+            name = itemName or string.format(L["Item %s"], e.id),
+            icon = itemIcon or (itemData and itemData.icon) or 134400,
+            duration = duration,
+            isAuto = false,
+            entryType = "item",
+            orderIndex = idx,
+        }
+    end
+
+    if e.t == "spell" then
+        if not config.spellIDs[e.id] then
+            return nil
+        end
+        local spellInfo = C_Spell.GetSpellInfo(e.id)
+        return {
+            spellID = e.id,
+            name = (spellInfo and spellInfo.name) or string.format(L["Spell %s"], e.id),
+            icon = (spellInfo and spellInfo.iconID) or 134400,
+            duration = config.spellDurations[e.id] or 0,
+            isAuto = false,
+            entryType = "spell",
+            orderIndex = idx,
+        }
+    end
+
+    return nil
+end
+
 local function CollectOrderedEntries()
     local allEntries = {}
+    local db = getBuffsDB()
+    local config = db and db.trinketPotion
 
-    for spellID, poolData in pairs(_activeIconPool) do
-        if poolData.frame then
-            table.insert(allEntries, { pool = "active", spellID = spellID, poolData = poolData })
+    if config and VFlow.OtherBuffManualOrder and VFlow.OtherBuffManualOrder.Ensure then
+        VFlow.OtherBuffManualOrder.Ensure(config)
+        for _, e in ipairs(config.entryOrder or {}) do
+            local entry = ResolveTimedPoolEntry(config, e)
+            if entry then
+                allEntries[#allEntries + 1] = entry
+            end
         end
+    else
+        if _bloodlustPoolData and _bloodlustPoolData.frame then
+            allEntries[#allEntries + 1] = { pool = "bloodlust", spellID = 0, poolData = _bloodlustPoolData }
+        end
+        for spellID, poolData in pairs(_activeIconPool) do
+            if poolData.frame then
+                allEntries[#allEntries + 1] = { pool = "active", spellID = spellID, poolData = poolData }
+            end
+        end
+        table.sort(allEntries, function(a, b)
+            if a.pool ~= b.pool then
+                if a.pool == "bloodlust" then return true end
+                if b.pool == "bloodlust" then return false end
+                return a.pool == "active"
+            end
+            return a.spellID < b.spellID
+        end)
     end
+
+    local passiveEntries = {}
     for spellID, poolData in pairs(_passiveIconPool) do
         if poolData.frame then
-            table.insert(allEntries, { pool = "passive", spellID = spellID, poolData = poolData })
+            passiveEntries[#passiveEntries + 1] = { pool = "passive", spellID = spellID, poolData = poolData }
         end
     end
-
-    table.sort(allEntries, function(a, b)
-        if a.pool ~= b.pool then
-            return a.pool == "active"
-        end
+    table.sort(passiveEntries, function(a, b)
         return a.spellID < b.spellID
     end)
+    for _, entry in ipairs(passiveEntries) do
+        allEntries[#allEntries + 1] = entry
+    end
 
     return allEntries
 end
@@ -684,7 +1007,9 @@ function RefreshLayout()
     else
         for _, entry in ipairs(allEntries) do
             local poolData = entry.poolData
-            local visible = entry.pool == "active"
+            local visible = entry.pool == "bloodlust"
+                and IsBloodlustEntryVisible(poolData)
+                or entry.pool == "active"
                 and IsActiveEntryVisible(poolData)
                 or IsPassiveEntryVisible(poolData)
             if visible then
@@ -808,12 +1133,22 @@ end
 -- =========================================================
 
 VFlow.on("PLAYER_ENTERING_WORLD", "OtherBuffMonitor", function()
+    _lastExhaustionExpiration = 0
     C_Timer.After(0, function()
         InitContainer()
         ScheduleActiveScan()
         ScanPassiveEntries()
     end)
 end)
+
+C_Timer.After(5, function()
+    _bloodlustReady = true
+end)
+
+VFlow.on("UNIT_AURA", "OtherBuffMonitor", function(_, unit)
+    if unit ~= "player" or not _bloodlustPoolData then return end
+    C_Timer.After(0.05, CheckBloodlustTrigger)
+end, "player")
 
 VFlow.on("PLAYER_EQUIPMENT_CHANGED", "OtherBuffMonitor", function(event, slotID)
     if slotID == 13 or slotID == 14 then
@@ -846,11 +1181,26 @@ VFlow.Store.watch(MODULE_KEY, "OtherBuffMonitor", function(key, value)
         end
 
         if key == "trinketPotion.autoTrinkets" or
+            key == "trinketPotion.monitorBloodlust" or
             key == "trinketPotion.itemIDs" or
             key == "trinketPotion.itemDurations" or
             key == "trinketPotion.spellIDs" or
             key == "trinketPotion.spellDurations" then
             ScheduleActiveScan()
+            return
+        end
+
+        if key == "trinketPotion.entryOrder" then
+            RefreshLayout()
+            return
+        end
+
+        if key == "trinketPotion.bloodlustIconPreset" or
+            key == "trinketPotion.bloodlustUseCustomIcon" or
+            key == "trinketPotion.bloodlustCustomIconID" then
+            local db = getBuffsDB()
+            UpdateBloodlustPoolIcon(db and db.trinketPotion)
+            RefreshLayout()
             return
         end
 
@@ -922,6 +1272,40 @@ VFlow.OtherBuffMonitor = {
     end,
 
     getPassiveDisplayName = GetPassiveDisplayName,
+
+    resolveBloodlustMonitorIcon = ResolveBloodlustMonitorIcon,
+    getBloodlustIconPresetSpellIDs = function()
+        return BLOODLUST_ICON_PRESET_SPELL_IDS
+    end,
+
+    getBloodlustMonitorEntry = function()
+        if not _bloodlustPoolData then
+            return nil
+        end
+        return {
+            name = GetBloodlustMonitorName(),
+            icon = _bloodlustPoolData.icon or GetBloodlustMonitorIcon(),
+            duration = _bloodlustPoolData.duration or BLOODLUST_DISPLAY_DURATION,
+        }
+    end,
+
+    getTimedEntryListItems = function()
+        local db = getBuffsDB()
+        local config = db and db.trinketPotion
+        if not config or not VFlow.OtherBuffManualOrder then
+            return {}
+        end
+        VFlow.OtherBuffManualOrder.Ensure(config)
+        local items = {}
+        for idx, e in ipairs(config.entryOrder or {}) do
+            local item = BuildTimedEntryListItem(config, e, idx)
+            if item then
+                items[#items + 1] = item
+            end
+        end
+        return items
+    end,
+
     refresh = RefreshLayout,
 }
 

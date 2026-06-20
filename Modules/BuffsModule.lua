@@ -4,6 +4,7 @@
   - Core/Style/CooldownStyle.lua：监听本模块并应用 BUFF 区样式
   - Core/Buff/BuffScanner.lua：维护 State.trackedBuffs（列表数据源，只读）
   - Core/Buff/OtherBuffMonitor.lua：其他BUFF（主动+被动）监控、布局与持续时间解析
+  - Core/ManualEntryOrder.lua：主动计时项 entryOrder 归一化（schema: otherBuff）
   例外：ensureDefaultPotionsInitialized 在缺省配置时补全默认药水并落盘（档案级一次写入）。
 ]]
 
@@ -16,6 +17,7 @@ if not VFlow then return end
 local L = VFlow.L
 
 local MODULE_KEY = "VFlow.Buffs"
+local ACTIVE_CONFIG_PATH = "trinketPotion"
 local ModuleControlConstants = VFlow.ModuleControlConstants
 
 if not ModuleControlConstants.CORE_ENABLED then return end
@@ -75,6 +77,15 @@ local DEFAULT_PASSIVE_BUFFS = {
     { iconID = 7636702, spellID = 1266687, duration = 12, hasStacks = true },
 }
 
+local BLOODLUST_ICON_PRESETS = {
+    { spellID = 2825 },
+    { spellID = 32182 },
+    { spellID = 80353 },
+    { spellID = 90355 },
+}
+
+local BLOODLUST_ICON_SELECT_COLOR = { 0.2, 1, 0.2, 1 }
+
 -- =========================================================
 -- SECTION 3: 默认配置
 -- =========================================================
@@ -128,10 +139,15 @@ local function getActiveBuffDefaults()
     config.x = 100
     config.y = 0
     config.autoTrinkets = true
+    config.monitorBloodlust = true
+    config.bloodlustIconPreset = 2825
+    config.bloodlustUseCustomIcon = false
+    config.bloodlustCustomIconID = ""
     config.itemIDs = {}
     config.itemDurations = {}
     config.spellIDs = {}
     config.spellDurations = {}
+    config.entryOrder = {}
     config.defaultPotionsInitialized = false
     config.anchorFrame = "uiparent"
     config.relativePoint = "CENTER"
@@ -160,6 +176,20 @@ local defaults = {
 
 local db = VFlow.getDB(MODULE_KEY, defaults)
 
+local timedEntryReorder = VFlow.ManualEntryReorder and VFlow.ManualEntryReorder.create()
+
+local function bumpActiveDataVersion(cfg)
+    cfg._dataVersion = (cfg._dataVersion or 0) + 1
+    VFlow.Store.set(MODULE_KEY, ACTIVE_CONFIG_PATH .. "._dataVersion", cfg._dataVersion)
+end
+
+local function persistActiveEntryOrder(cfg)
+    if VFlow.OtherBuffManualOrder and VFlow.OtherBuffManualOrder.Ensure then
+        VFlow.OtherBuffManualOrder.Ensure(cfg)
+    end
+    VFlow.Store.set(MODULE_KEY, ACTIVE_CONFIG_PATH .. ".entryOrder", cfg.entryOrder)
+end
+
 local function ensureDefaultPotionsInitialized()
     local config = db.trinketPotion
     if config.defaultPotionsInitialized then
@@ -179,8 +209,12 @@ local function ensureDefaultPotionsInitialized()
     end
 
     config.defaultPotionsInitialized = true
+    if VFlow.OtherBuffManualOrder and VFlow.OtherBuffManualOrder.Ensure then
+        VFlow.OtherBuffManualOrder.Ensure(config)
+    end
     VFlow.Store.set(MODULE_KEY, "trinketPotion.itemIDs", config.itemIDs)
     VFlow.Store.set(MODULE_KEY, "trinketPotion.itemDurations", config.itemDurations)
+    VFlow.Store.set(MODULE_KEY, "trinketPotion.entryOrder", config.entryOrder)
     VFlow.Store.set(MODULE_KEY, "trinketPotion.defaultPotionsInitialized", true)
 end
 
@@ -538,6 +572,10 @@ local function renderOtherBuffConfig(container, activeCfg, passiveCfg)
     Utils.applyDefaults(activeCfg, getActiveBuffDefaults())
     Utils.applyDefaults(passiveCfg, getPassiveBuffDataDefaults())
 
+    if timedEntryReorder then
+        timedEntryReorder.clearUnlessPath(ACTIVE_CONFIG_PATH)
+    end
+
     if not activeCfg._inputItemID then activeCfg._inputItemID = "" end
     if not activeCfg._inputItemDuration then activeCfg._inputItemDuration = "" end
     if not activeCfg._inputSpellID then activeCfg._inputSpellID = "" end
@@ -587,6 +625,7 @@ local function renderOtherBuffConfig(container, activeCfg, passiveCfg)
 
         cfg.itemIDs[itemID] = true
         cfg.itemDurations[itemID] = resolved.duration
+        persistActiveEntryOrder(cfg)
         VFlow.Store.set(MODULE_KEY, "trinketPotion.itemIDs", cfg.itemIDs)
         VFlow.Store.set(MODULE_KEY, "trinketPotion.itemDurations", cfg.itemDurations)
         cfg._inputItemID = ""
@@ -636,6 +675,7 @@ local function renderOtherBuffConfig(container, activeCfg, passiveCfg)
 
         cfg.spellIDs[spellID] = true
         cfg.spellDurations[spellID] = resolved.duration
+        persistActiveEntryOrder(cfg)
         VFlow.Store.set(MODULE_KEY, "trinketPotion.spellIDs", cfg.spellIDs)
         VFlow.Store.set(MODULE_KEY, "trinketPotion.spellDurations", cfg.spellDurations)
         cfg._inputSpellID = ""
@@ -732,7 +772,68 @@ local function renderOtherBuffConfig(container, activeCfg, passiveCfg)
         {
             { type = "subtitle", text = L["Active BUFF"], cols = 24 },
             { type = "separator", cols = 24 },
-            { type = "checkbox", key = "autoTrinkets", label = L["Auto-detect trinkets (slot 13/14)"], cols = 24 },
+            { type = "checkbox", key = "autoTrinkets", label = L["Auto-detect trinkets (slot 13/14)"], cols = 12, compact = true },
+            { type = "checkbox", key = "monitorBloodlust", label = L["Monitor bloodlust"], cols = 12, compact = true },
+            {
+                type = "if",
+                dependsOn = "monitorBloodlust",
+                condition = function(cfg) return cfg.monitorBloodlust end,
+                children = {
+                    {
+                        type = "for",
+                        cols = 2,
+                        dependsOn = { "monitorBloodlust", "bloodlustIconPreset", "bloodlustUseCustomIcon" },
+                        dataSource = function()
+                            return BLOODLUST_ICON_PRESETS
+                        end,
+                        template = {
+                            type = "iconButton",
+                            size = 32,
+                            icon = function(data)
+                                local spellInfo = C_Spell.GetSpellInfo(data.spellID)
+                                return (spellInfo and spellInfo.iconID) or 134400
+                            end,
+                            borderColor = function(data)
+                                if activeCfg.bloodlustUseCustomIcon then
+                                    return nil
+                                end
+                                if (activeCfg.bloodlustIconPreset or 2825) == data.spellID then
+                                    return BLOODLUST_ICON_SELECT_COLOR
+                                end
+                            end,
+                            tooltip = function(data)
+                                return function(tooltip)
+                                    tooltip:SetSpellByID(data.spellID)
+                                    tooltip:AddLine(" ")
+                                    tooltip:AddLine("|cff00ff00" .. L["Click to select icon"] .. "|r", 1, 1, 1)
+                                end
+                            end,
+                            onClick = function(data)
+                                activeCfg.bloodlustUseCustomIcon = false
+                                activeCfg.bloodlustIconPreset = data.spellID
+                                VFlow.Store.set(MODULE_KEY, "trinketPotion.bloodlustUseCustomIcon", false)
+                                VFlow.Store.set(MODULE_KEY, "trinketPotion.bloodlustIconPreset", data.spellID)
+                            end,
+                        },
+                    },
+                    { type = "checkbox", key = "bloodlustUseCustomIcon", label = L["Use custom icon ID"], cols = 8, compact = true },
+                    {
+                        type = "if",
+                        dependsOn = { "monitorBloodlust", "bloodlustUseCustomIcon" },
+                        condition = function(cfg) return cfg.bloodlustUseCustomIcon end,
+                        children = {
+                            {
+                                type = "input",
+                                key = "bloodlustCustomIconID",
+                                label = L["Icon ID"],
+                                cols = 6,
+                                numeric = true,
+                                labelOnLeft = true,
+                            },
+                        },
+                    },
+                },
+            },
             { type = "spacer", height = 8, cols = 24 },
         },
 
@@ -760,100 +861,108 @@ local function renderOtherBuffConfig(container, activeCfg, passiveCfg)
         -- 已监控的计时项列表
         {
             { type = "spacer", height = 10, cols = 24 },
-            { type = "description", text = L["Monitored timed entries (click to delete):"], cols = 24 },
+            {
+                type = "description",
+                text = L["Click two in sequence to swap; Shift+click to remove; Toggle auto items to hide."],
+                cols = 24,
+            },
             { type = "spacer", height = 5, cols = 24 },
             {
                 type = "for",
                 cols = 2,
-                dependsOn = { "autoTrinkets", "itemIDs", "itemDurations", "spellIDs", "spellDurations", "_dataVersion" },
+                dependsOn = {
+                    "autoTrinkets",
+                    "monitorBloodlust",
+                    "bloodlustIconPreset",
+                    "bloodlustUseCustomIcon",
+                    "bloodlustCustomIconID",
+                    "itemIDs",
+                    "itemDurations",
+                    "spellIDs",
+                    "spellDurations",
+                    "entryOrder",
+                    "_dataVersion",
+                },
                 dataSource = function()
-                    local items = {}
-
-                    -- 添加自动检测的饰品
-                    if activeCfg.autoTrinkets and VFlow.OtherBuffMonitor then
-                        local autoItems = VFlow.OtherBuffMonitor.getAutoDetectedItems()
-                        for _, itemData in ipairs(autoItems) do
-                            local itemName, _, _, _, _, _, _, _, _, itemIcon = C_Item.GetItemInfo(itemData.itemID)
-                            table.insert(items, {
-                                itemID = itemData.itemID,
-                                name = itemName or string.format(L["Item %s"], itemData.itemID),
-                                icon = itemIcon or itemData.icon or 134400,
-                                duration = itemData.duration or 0,
-                                isAuto = true,
-                            entryType = "item",
-                            })
-                        end
+                    if VFlow.OtherBuffMonitor and VFlow.OtherBuffMonitor.getTimedEntryListItems then
+                        return VFlow.OtherBuffMonitor.getTimedEntryListItems()
                     end
-
-                    -- 添加手动添加的物品
-                    for itemID in pairs(activeCfg.itemIDs or {}) do
-                        local itemName, _, _, _, _, _, _, _, _, itemIcon = C_Item.GetItemInfo(itemID)
-                        table.insert(items, {
-                            itemID = itemID,
-                            name = itemName or string.format(L["Item %s"], itemID),
-                            icon = itemIcon or 134400,
-                            duration = activeCfg.itemDurations[itemID] or 0,
-                            isAuto = false,
-                            entryType = "item",
-                        })
-                    end
-
-                    -- 添加手动添加的技能
-                    for spellID in pairs(activeCfg.spellIDs or {}) do
-                        local spellInfo = C_Spell.GetSpellInfo(spellID)
-                        table.insert(items, {
-                            spellID = spellID,
-                            name = (spellInfo and spellInfo.name) or string.format(L["Spell %s"], spellID),
-                            icon = (spellInfo and spellInfo.iconID) or 134400,
-                            duration = activeCfg.spellDurations[spellID] or 0,
-                            isAuto = false,
-                            entryType = "spell",
-                        })
-                    end
-
-                    Utils.sortByName(items)
-                    return items
+                    return {}
                 end,
                 template = {
                     type = "iconButton",
                     icon = function(itemData) return itemData.icon end,
                     size = 40,
+                    borderColor = function(itemData)
+                        if not timedEntryReorder or not itemData.orderIndex then
+                            return nil
+                        end
+                        return timedEntryReorder.borderColor(ACTIVE_CONFIG_PATH, itemData.orderIndex)
+                    end,
                     tooltip = function(itemData)
                         return function(tooltip)
                             if itemData.entryType == "spell" then
                                 tooltip:SetSpellByID(itemData.spellID)
+                            elseif itemData.entryType == "bloodlust" then
+                                tooltip:AddLine(itemData.name, 1, 1, 1)
                             else
                                 tooltip:SetItemByID(itemData.itemID)
                             end
                             tooltip:AddLine(" ")
                             tooltip:AddLine(string.format(L["Duration: %d sec"], itemData.duration), 1, 1, 1)
                             tooltip:AddLine(" ")
+                            tooltip:AddLine("|cffaaaaaa" .. L["Left click: click two icons in sequence to swap order"] .. "|r", 1, 1, 1)
                             if itemData.isAuto then
-                                tooltip:AddLine("|cff808080" .. L["Auto-detected trinket (cannot delete)"] .. "|r", 1, 1, 1)
+                                if itemData.entryType == "bloodlust" then
+                                    tooltip:AddLine("|cff808080" .. L["Bloodlust monitor (cannot delete)"] .. "|r", 1, 1, 1)
+                                else
+                                    tooltip:AddLine("|cff808080" .. L["Auto-detected trinket (cannot delete)"] .. "|r", 1, 1, 1)
+                                end
                             else
-                                tooltip:AddLine("|cffff0000" .. L["Click to delete"] .. "|r", 1, 1, 1)
+                                tooltip:AddLine("|cffff0000" .. L["Shift+Left click: remove from monitor"] .. "|r", 1, 1, 1)
                             end
                         end
                     end,
                     onClick = function(itemData)
-                        if itemData.isAuto then
-                            print("|cffff0000VFlow:|r " .. L["Auto-detected trinket cannot be deleted. Disable auto-detect."])
+                        if not timedEntryReorder then
                             return
                         end
-
-                        if itemData.entryType == "spell" then
-                            activeCfg.spellIDs[itemData.spellID] = nil
-                            activeCfg.spellDurations[itemData.spellID] = nil
-                            VFlow.Store.set(MODULE_KEY, "trinketPotion.spellIDs", activeCfg.spellIDs)
-                            VFlow.Store.set(MODULE_KEY, "trinketPotion.spellDurations", activeCfg.spellDurations)
-                        else
-                            activeCfg.itemIDs[itemData.itemID] = nil
-                            activeCfg.itemDurations[itemData.itemID] = nil
-                            VFlow.Store.set(MODULE_KEY, "trinketPotion.itemIDs", activeCfg.itemIDs)
-                            VFlow.Store.set(MODULE_KEY, "trinketPotion.itemDurations", activeCfg.itemDurations)
-                        end
+                        timedEntryReorder.handleClick({
+                            path = ACTIVE_CONFIG_PATH,
+                            orderIndex = itemData.orderIndex,
+                            entryOrder = activeCfg.entryOrder,
+                            bumpVersion = function()
+                                bumpActiveDataVersion(activeCfg)
+                            end,
+                            onOrderSaved = function()
+                                persistActiveEntryOrder(activeCfg)
+                            end,
+                            onShiftRemove = function()
+                                if itemData.isAuto then
+                                    if itemData.entryType == "bloodlust" then
+                                        print("|cffff0000VFlow:|r " .. L["Bloodlust monitor cannot be deleted. Disable the option."])
+                                    else
+                                        print("|cffff0000VFlow:|r " .. L["Auto-detected trinket cannot be deleted. Disable auto-detect."])
+                                    end
+                                    return false
+                                end
+                                if itemData.entryType == "spell" then
+                                    activeCfg.spellIDs[itemData.spellID] = nil
+                                    activeCfg.spellDurations[itemData.spellID] = nil
+                                    VFlow.Store.set(MODULE_KEY, "trinketPotion.spellIDs", activeCfg.spellIDs)
+                                    VFlow.Store.set(MODULE_KEY, "trinketPotion.spellDurations", activeCfg.spellDurations)
+                                else
+                                    activeCfg.itemIDs[itemData.itemID] = nil
+                                    activeCfg.itemDurations[itemData.itemID] = nil
+                                    VFlow.Store.set(MODULE_KEY, "trinketPotion.itemIDs", activeCfg.itemIDs)
+                                    VFlow.Store.set(MODULE_KEY, "trinketPotion.itemDurations", activeCfg.itemDurations)
+                                end
+                                persistActiveEntryOrder(activeCfg)
+                                return true
+                            end,
+                        })
                     end,
-                }
+                },
             },
             { type = "spacer", height = 15, cols = 24 },
         },

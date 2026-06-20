@@ -1,7 +1,7 @@
 --[[ Core 依赖：
   - Core/Item/ItemGroups.lua：主组/自定义组/追加到技能条等布局与图标；按组显示条件（VFlow.State）与 hideInCooldownManager
   - Core/Item/ItemAutoData.lua：手动物品与种族等自动数据（查询）
-  - Core/Item/ItemsManualOrder.lua：entryOrder 归一化（查询/整理）
+  - Core/ManualEntryOrder.lua：entryOrder 归一化（schema: items）
   - Core/Style/CooldownStyle.lua：监听 Items 配置并应用样式
   例外：新档主组无物品时写入示例物品并落盘（applyMainGroupStarterItemsOnce）。
 ]]
@@ -182,8 +182,7 @@ end
 
 applyMainGroupStarterItemsOnce(db)
 
--- 两次点击交换顺序：{ path = configPath, orderIndex = entryOrder 下标 }
-local manualReorderPick
+local entryReorder = VFlow.ManualEntryReorder and VFlow.ManualEntryReorder.create()
 
 local function bumpGroupDataVersion(groupConfig, configPath)
     groupConfig._dataVersion = (groupConfig._dataVersion or 0) + 1
@@ -430,17 +429,10 @@ local function buildItemSpellSelector(groupConfig, options)
                 icon = function(itemData) return itemData.icon end,
                 size = 40,
                 borderColor = function(itemData)
-                    if not itemData.orderIndex then
+                    if not entryReorder or not itemData.orderIndex then
                         return nil
                     end
-                    if
-                        manualReorderPick
-                        and manualReorderPick.path == configPath
-                        and manualReorderPick.orderIndex == itemData.orderIndex
-                    then
-                        return { 1, 0.82, 0.2, 1 }
-                    end
-                    return nil
+                    return entryReorder.borderColor(configPath, itemData.orderIndex)
                 end,
                 tooltip = function(itemData)
                     return function(tooltip)
@@ -468,48 +460,38 @@ local function buildItemSpellSelector(groupConfig, options)
                     end
                 end,
                 onClick = function(itemData)
-                    if IsShiftKeyDown() then
-                        if itemData.isAuto then
-                            print("|cffff0000VFlow:|r " .. L["Auto item: disable auto-detect switch; cannot delete here"])
-                            return
-                        end
-                        if itemData.type == "item" then
-                            groupConfig.itemIDs[itemData.id] = nil
-                        else
-                            groupConfig.spellIDs[itemData.id] = nil
-                        end
-                        if VFlow.ItemsManualOrder and VFlow.ItemsManualOrder.Ensure then
-                            VFlow.ItemsManualOrder.Ensure(groupConfig)
-                        end
-                        manualReorderPick = nil
-                        VFlow.Store.set(MODULE_KEY, configPath .. ".itemIDs", groupConfig.itemIDs)
-                        VFlow.Store.set(MODULE_KEY, configPath .. ".spellIDs", groupConfig.spellIDs)
-                        VFlow.Store.set(MODULE_KEY, configPath .. ".entryOrder", groupConfig.entryOrder)
+                    if not entryReorder then
                         return
                     end
-
-                    if not itemData.orderIndex then
-                        return
-                    end
-                    local oi = itemData.orderIndex
-                    if not manualReorderPick or manualReorderPick.path ~= configPath then
-                        manualReorderPick = { path = configPath, orderIndex = oi }
-                        bumpGroupDataVersion(groupConfig, configPath)
-                        return
-                    end
-                    if manualReorderPick.orderIndex == oi then
-                        manualReorderPick = nil
-                        bumpGroupDataVersion(groupConfig, configPath)
-                        return
-                    end
-                    local order = groupConfig.entryOrder
-                    local a, b = manualReorderPick.orderIndex, oi
-                    if order and order[a] and order[b] then
-                        order[a], order[b] = order[b], order[a]
-                    end
-                    manualReorderPick = nil
-                    VFlow.Store.set(MODULE_KEY, configPath .. ".entryOrder", groupConfig.entryOrder)
-                    bumpGroupDataVersion(groupConfig, configPath)
+                    entryReorder.handleClick({
+                        path = configPath,
+                        orderIndex = itemData.orderIndex,
+                        entryOrder = groupConfig.entryOrder,
+                        bumpVersion = function()
+                            bumpGroupDataVersion(groupConfig, configPath)
+                        end,
+                        onOrderSaved = function()
+                            VFlow.Store.set(MODULE_KEY, configPath .. ".entryOrder", groupConfig.entryOrder)
+                        end,
+                        onShiftRemove = function()
+                            if itemData.isAuto then
+                                print("|cffff0000VFlow:|r " .. L["Auto item: disable auto-detect switch; cannot delete here"])
+                                return false
+                            end
+                            if itemData.type == "item" then
+                                groupConfig.itemIDs[itemData.id] = nil
+                            else
+                                groupConfig.spellIDs[itemData.id] = nil
+                            end
+                            if VFlow.ItemsManualOrder and VFlow.ItemsManualOrder.Ensure then
+                                VFlow.ItemsManualOrder.Ensure(groupConfig)
+                            end
+                            VFlow.Store.set(MODULE_KEY, configPath .. ".itemIDs", groupConfig.itemIDs)
+                            VFlow.Store.set(MODULE_KEY, configPath .. ".spellIDs", groupConfig.spellIDs)
+                            VFlow.Store.set(MODULE_KEY, configPath .. ".entryOrder", groupConfig.entryOrder)
+                            return true
+                        end,
+                    })
                 end,
             }
         },
@@ -527,8 +509,8 @@ local function renderGroupConfig(container, groupConfig, groupName, options)
     options = options or {}
 
     local configPath = options.isCustom and ("customGroups." .. options.groupIndex .. ".config") or "mainGroup"
-    if manualReorderPick and manualReorderPick.path ~= configPath then
-        manualReorderPick = nil
+    if entryReorder then
+        entryReorder.clearUnlessPath(configPath)
     end
 
     Utils.applyDefaults(groupConfig, getDefaultGroupConfig(

@@ -621,12 +621,15 @@ Pool.init("VFlowSlider", "Frame", nil, function(container)
 end)
 
 -- 4. 复选框（Frame + CheckButton + FontString）
+local CHECKBOX_LABEL_X_GAP = 8
+local CHECKBOX_LABEL_Y_OFFSET = -2
+
 Pool.init("VFlowCheckbox", "Frame", nil, function(container)
     container:SetHeight(40)
 
     local cb = CreateFrame("CheckButton", nil, container, "BackdropTemplate")
     cb:SetSize(20, 20)
-    cb:SetPoint("LEFT", 0, 0)
+    cb:SetPoint("LEFT", container, "LEFT", 0, 0)
 
     -- Backdrop
     cb:SetBackdrop({
@@ -649,7 +652,9 @@ Pool.init("VFlowCheckbox", "Frame", nil, function(container)
 
     -- Label (Larger Font)
     local label = container:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    label:SetPoint("LEFT", cb, "RIGHT", 8, 0)
+    label:SetPoint("LEFT", cb, "RIGHT", CHECKBOX_LABEL_X_GAP, CHECKBOX_LABEL_Y_OFFSET)
+    label:SetJustifyH("LEFT")
+    label:SetJustifyV("MIDDLE")
     container.label = label
 
     -- 便捷方法

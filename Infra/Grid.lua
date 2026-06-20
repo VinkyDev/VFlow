@@ -559,11 +559,31 @@ function Grid.render(parent, layout, config, moduleKey, configPath)
     local y = DEFAULT_PADDING
     local currentRowHeight = 0
 
+    local function advanceRow()
+        x = DEFAULT_PADDING
+        y = y + currentRowHeight + DEFAULT_GAP
+        currentRowHeight = 0
+    end
+
+    local function wrapIfNeeded(itemWidth)
+        if x + itemWidth > containerWidth - DEFAULT_PADDING and x > DEFAULT_PADDING then
+            advanceRow()
+        end
+    end
+
+    local function startNewRowIfPartial()
+        local rowRemaining = (containerWidth - DEFAULT_PADDING) - x
+        if x > DEFAULT_PADDING and rowRemaining > DEFAULT_GAP then
+            advanceRow()
+        end
+    end
+
     -- 递归渲染函数
     local function renderItems(items)
         for _, item in ipairs(items) do
             if item.type == "if" then
                 if shouldRenderIf(item, config) then
+                    startNewRowIfPartial()
                     renderItems(item.children or {})
                 end
             elseif item.type == "for" then
@@ -617,11 +637,7 @@ function Grid.render(parent, layout, config, moduleKey, configPath)
                         local itemWidth = colWidth * cols - DEFAULT_GAP
 
                         -- 换行检测
-                        if x + itemWidth > containerWidth - DEFAULT_PADDING and x > DEFAULT_PADDING then
-                            x = DEFAULT_PADDING
-                            y = y + currentRowHeight + DEFAULT_GAP
-                            currentRowHeight = 0
-                        end
+                        wrapIfNeeded(itemWidth)
 
                         -- 创建组件
                         local widget = createWidget(renderTarget, itemCopy, config, moduleKey, configPath)
@@ -632,15 +648,19 @@ function Grid.render(parent, layout, config, moduleKey, configPath)
                         -- 设置位置和尺寸
                         widget:ClearAllPoints()
 
+                        local iconOffsetX = 0
                         if itemCopy.type == "iconButton" then
                             local size = itemCopy.size or 40
-                            local offsetX = (itemWidth - size) / 2
-                            if offsetX < 0 then offsetX = 0 end
-                            widget:SetPoint("TOPLEFT", renderTarget, "TOPLEFT", x + offsetX, -y)
+                            iconOffsetX = (itemWidth - size) / 2
+                            if iconOffsetX < 0 then iconOffsetX = 0 end
+                            widget:SetPoint("TOPLEFT", renderTarget, "TOPLEFT", x + iconOffsetX, -y)
                         else
                             widget:SetPoint("TOPLEFT", renderTarget, "TOPLEFT", x, -y)
                             if widget.SetWidth then
                                 widget:SetWidth(itemWidth)
+                            end
+                            if widget.RefreshVisuals then
+                                widget:RefreshVisuals()
                             end
                         end
 
@@ -664,11 +684,7 @@ function Grid.render(parent, layout, config, moduleKey, configPath)
                 local itemWidth = colWidth * cols - DEFAULT_GAP
 
                 -- 换行检测
-                if x + itemWidth > containerWidth - DEFAULT_PADDING and x > DEFAULT_PADDING then
-                    x = DEFAULT_PADDING
-                    y = y + currentRowHeight + DEFAULT_GAP
-                    currentRowHeight = 0
-                end
+                wrapIfNeeded(itemWidth)
 
                 -- 创建组件
                 local widget = createWidget(renderTarget, item, config, moduleKey, configPath)
@@ -679,12 +695,13 @@ function Grid.render(parent, layout, config, moduleKey, configPath)
                 -- 设置位置和尺寸
                 widget:ClearAllPoints()
 
+                local iconOffsetX = 0
                 if item.type == "iconButton" then
                     -- 图标按钮特殊处理：保持原始尺寸并居中
                     local size = item.size or 40
-                    local offsetX = (itemWidth - size) / 2
-                    if offsetX < 0 then offsetX = 0 end
-                    widget:SetPoint("TOPLEFT", renderTarget, "TOPLEFT", x + offsetX, -y)
+                    iconOffsetX = (itemWidth - size) / 2
+                    if iconOffsetX < 0 then iconOffsetX = 0 end
+                    widget:SetPoint("TOPLEFT", renderTarget, "TOPLEFT", x + iconOffsetX, -y)
                     -- 不强制设置宽度
                 else
                     widget:SetPoint("TOPLEFT", renderTarget, "TOPLEFT", x, -y)
